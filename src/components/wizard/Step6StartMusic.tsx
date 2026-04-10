@@ -33,7 +33,7 @@ export function Step6StartMusic() {
                     </p>
                 </div>
 
-                <div className="bg-white rounded-xl border border-border overflow-hidden">
+                <div className="bg-card rounded-xl border border-border overflow-hidden">
                     <div className="p-5 pb-3 text-center">
                         <div className="text-4xl mb-2">{startPlaylist.emoji}</div>
                         <h3 className="font-semibold">{startPlaylist.name}</h3>

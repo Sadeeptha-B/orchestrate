@@ -20,7 +20,7 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
                 tabIndex={-1}
                 aria-label="Close modal"
             />
-            <div className="relative bg-white rounded-xl border border-border shadow-lg max-w-md w-full p-6 animate-in fade-in">
+            <div className="relative bg-card rounded-xl border border-border shadow-lg max-w-md w-full p-6 animate-in fade-in">
                 {title && <h3 className="text-lg font-semibold mb-4">{title}</h3>}
                 {children}
             </div>

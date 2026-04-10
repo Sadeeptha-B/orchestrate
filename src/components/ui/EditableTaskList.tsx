@@ -114,11 +114,11 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
                         onDragOver={(e) => handleDragOver(e, task.id)}
                         onDrop={(e) => handleDrop(e, task.id)}
                         onDragEnd={handleDragEnd}
-                        className={`flex items-center gap-2 px-4 py-3 bg-white rounded-lg border transition-all ${isDragging
-                                ? 'opacity-40 border-accent/40'
-                                : isDragOver
-                                    ? 'border-accent border-dashed'
-                                    : 'border-border'
+                        className={`flex items-center gap-2 px-4 py-3 bg-card rounded-lg border transition-all ${isDragging
+                            ? 'opacity-40 border-accent/40'
+                            : isDragOver
+                                ? 'border-accent border-dashed'
+                                : 'border-border'
                             }`}
                     >
                         {/* Drag handle */}

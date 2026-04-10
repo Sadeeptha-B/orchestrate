@@ -27,7 +27,7 @@ export function Step2TodolistSync() {
                     </p>
                 </div>
 
-                <div className="bg-white rounded-lg border border-border p-4">
+                <div className="bg-card rounded-lg border border-border p-4">
                     <h3 className="text-sm font-medium text-text-light mb-3">Your tasks so far</h3>
                     <ul className="space-y-1.5 mb-4">
                         {plan.tasks.map((task) => (
@@ -43,7 +43,7 @@ export function Step2TodolistSync() {
                     {CHECKLIST_ITEMS.map((item) => (
                         <label
                             key={item.key}
-                            className="flex items-center gap-3 px-4 py-3 bg-white rounded-lg border border-border cursor-pointer hover:bg-surface-dark/50 transition-colors"
+                            className="flex items-center gap-3 px-4 py-3 bg-card rounded-lg border border-border cursor-pointer hover:bg-surface-dark/50 transition-colors"
                         >
                             <input
                                 type="checkbox"

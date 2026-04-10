@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import { Button } from '../ui/Button';
 import { useDayPlan } from '../../context/DayPlanContext';
+import { useTheme } from '../../hooks/useTheme';
 import { SavedSessions } from '../dashboard/SavedSessions';
 
 const TOTAL_STEPS = 6;
@@ -38,6 +39,7 @@ export function WizardLayout({
 }: WizardLayoutProps) {
     const { plan, editingStep, history, dispatch } = useDayPlan();
     const navigate = useNavigate();
+    const { theme, toggle: toggleTheme } = useTheme();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
     const hasSavedSessions = history.length > 0;
@@ -121,6 +123,13 @@ export function WizardLayout({
                                     Back to Dashboard
                                 </Button>
                             )}
+                            <button
+                                onClick={toggleTheme}
+                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
+                                title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                            >
+                                {theme === 'dark' ? '☀️' : '🌙'}
+                            </button>
                         </div>
                     </div>
                     <ProgressBar current={step} total={TOTAL_STEPS} />

@@ -9,6 +9,7 @@ import { DigitalClock } from './DigitalClock';
 import { TransitionTips } from './TransitionTips';
 import { CheckInModal } from '../checkin/CheckInModal';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
+import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
@@ -20,6 +21,7 @@ export function Dashboard() {
         plan.setupComplete,
         settings.notificationPreference,
     );
+    const { theme, toggle: toggleTheme } = useTheme();
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
@@ -117,6 +119,13 @@ export function Dashboard() {
                                 {panelOpen ? 'Hide Saved' : 'Saved Sessions'}
                             </Button>
                         )}
+                        <button
+                            onClick={toggleTheme}
+                            className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
+                            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                        >
+                            {theme === 'dark' ? '☀️' : '🌙'}
+                        </button>
                     </div>
                 </div>
             </header>
@@ -206,7 +215,7 @@ export function Dashboard() {
                             onChange={(e) => setSaveName(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSaveDay()}
                             placeholder="e.g. Thursday, Apr 10"
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
                             autoFocus
                         />
                     </div>

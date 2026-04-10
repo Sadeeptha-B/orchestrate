@@ -32,13 +32,12 @@ export function MusicPanel() {
                             key={pl.id}
                             onClick={() => setActiveId(isActive ? null : pl.id)}
                             title={pl.description}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-left cursor-pointer transition-colors text-sm ${
-                                isActive
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-left cursor-pointer transition-colors text-sm ${isActive
                                     ? 'bg-accent-subtle border-accent/30 ring-1 ring-accent/20'
                                     : isSuggested
                                         ? 'bg-accent-subtle/50 border-accent/20'
-                                        : 'bg-white border-border hover:bg-surface-dark/50'
-                            }`}
+                                        : 'bg-card border-border hover:bg-surface-dark/50'
+                                }`}
                         >
                             <span className="text-base">{pl.emoji}</span>
                             <span className="font-medium truncate">{pl.workLabel}</span>

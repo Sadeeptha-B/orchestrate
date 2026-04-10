@@ -64,8 +64,8 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
                                 key={f.value}
                                 onClick={() => setFeeling(f.value)}
                                 className={`flex-1 flex flex-col items-center gap-1 py-2.5 rounded-lg border transition-colors cursor-pointer ${feeling === f.value
-                                        ? 'bg-accent-subtle border-accent/30'
-                                        : 'border-border hover:bg-surface-dark/50'
+                                    ? 'bg-accent-subtle border-accent/30'
+                                    : 'border-border hover:bg-surface-dark/50'
                                     }`}
                             >
                                 <span className="text-xl">{f.emoji}</span>
@@ -84,8 +84,8 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
                                 key={wt.value}
                                 onClick={() => setWorkType(wt.value)}
                                 className={`w-full text-left px-3 py-2 text-sm rounded-lg border transition-colors cursor-pointer ${workType === wt.value
-                                        ? 'bg-accent-subtle border-accent/30 text-accent'
-                                        : 'border-border hover:bg-surface-dark/50'
+                                    ? 'bg-accent-subtle border-accent/30 text-accent'
+                                    : 'border-border hover:bg-surface-dark/50'
                                     }`}
                             >
                                 {wt.label}
@@ -122,7 +122,7 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
                         onChange={(e) => setNotes(e.target.value)}
                         placeholder="Any notes? (optional)"
                         rows={2}
-                        className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-white focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none transition-colors"
+                        className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none transition-colors"
                     />
                 </div>
 
