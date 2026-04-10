@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <script>
+    // SPA fallback for GitHub Pages
+    // Stores the original URL and redirects to index.html so React Router can handle routing
+    sessionStorage.redirect = location.href;
+    location.replace(location.pathname.split('/').slice(0, 2).join('/') + '/');
+  </script>
+</head>
+<body></body>
+</html>
