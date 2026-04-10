@@ -88,7 +88,8 @@ type Action =
     | { type: 'SET_EDITING_STEP'; step: number | null }
     | { type: 'SAVE_DAY'; label: string }
     | { type: 'RESTORE_DAY'; savedAt: string }
-    | { type: 'DELETE_SAVED_DAY'; savedAt: string };
+    | { type: 'DELETE_SAVED_DAY'; savedAt: string }
+    | { type: 'IMPORT_SESSIONS'; sessions: SavedDayPlan[] };
 
 interface State {
     plan: DayPlan;
@@ -236,6 +237,12 @@ function reducer(state: State, action: Action): State {
                 ...state,
                 history: state.history.filter((h) => h.savedAt !== action.savedAt),
             };
+
+        case 'IMPORT_SESSIONS': {
+            const existing = new Set(state.history.map((h) => h.savedAt));
+            const newEntries = action.sessions.filter((s) => !existing.has(s.savedAt));
+            return { ...state, history: [...newEntries, ...state.history] };
+        }
 
         default:
             return state;

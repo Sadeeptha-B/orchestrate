@@ -37,13 +37,12 @@ export function WizardLayout({
     hideBack = false,
     hideNext = false,
 }: WizardLayoutProps) {
-    const { plan, editingStep, history, dispatch } = useDayPlan();
+    const { plan, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const { theme, toggle: toggleTheme } = useTheme();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
-    const hasSavedSessions = history.length > 0;
-    const showSidebar = hasSavedSessions && !isEditing;
+    const showSidebar = !isEditing;
     const [panelOpen, setPanelOpen] = useState(showSidebar);
     const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT);
     const dragging = useRef(false);
@@ -61,8 +60,8 @@ export function WizardLayout({
     useEffect(() => {
         const onMouseMove = (e: MouseEvent) => {
             if (!dragging.current) return;
-            // Dragging left edge: moving left = wider, moving right = narrower
-            const delta = startX.current - e.clientX;
+            // Dragging right edge: moving right = wider, moving left = narrower
+            const delta = e.clientX - startX.current;
             const next = Math.min(PANEL_MAX, Math.max(PANEL_MIN, startWidth.current + delta));
             setPanelWidth(next);
         };
@@ -103,6 +102,35 @@ export function WizardLayout({
 
     return (
         <div className="min-h-screen flex">
+            {/* Left sidebar — saved sessions & import */}
+            {showSidebar && panelOpen && (
+                <aside
+                    className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-y-auto relative"
+                    style={{ width: panelWidth }}
+                >
+                    {/* Drag handle */}
+                    <div
+                        onMouseDown={onMouseDown}
+                        className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
+                    />
+                    <div className="p-5 pt-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                Saved Sessions
+                            </h3>
+                            <button
+                                onClick={() => setPanelOpen(false)}
+                                className="text-text-light hover:text-text transition-colors text-lg leading-none cursor-pointer"
+                                title="Hide panel"
+                            >
+                                &times;
+                            </button>
+                        </div>
+                        <SavedSessions compact hideHeading />
+                    </div>
+                </aside>
+            )}
+
             {/* Main wizard area */}
             <div className="flex-1 flex flex-col min-w-0">
                 <header className="px-6 pt-6 pb-4 max-w-2xl mx-auto w-full">
@@ -188,35 +216,6 @@ export function WizardLayout({
                     </div>
                 </footer>
             </div>
-
-            {/* Right sidebar — saved sessions */}
-            {showSidebar && panelOpen && (
-                <aside
-                    className="flex-shrink-0 border-l border-border bg-subtle/50 overflow-y-auto relative"
-                    style={{ width: panelWidth }}
-                >
-                    {/* Drag handle */}
-                    <div
-                        onMouseDown={onMouseDown}
-                        className="absolute inset-y-0 left-0 w-1.5 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
-                    />
-                    <div className="p-5 pt-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                Saved Sessions
-                            </h3>
-                            <button
-                                onClick={() => setPanelOpen(false)}
-                                className="text-text-light hover:text-text transition-colors text-lg leading-none cursor-pointer"
-                                title="Hide panel"
-                            >
-                                &times;
-                            </button>
-                        </div>
-                        <SavedSessions compact hideHeading />
-                    </div>
-                </aside>
-            )}
         </div>
     );
 }
