@@ -28,7 +28,9 @@ On load: if today's plan exists and setup is complete → Dashboard. Otherwise �
 
 **Edit mode**: From the dashboard, the user can click "Edit Plan" to navigate back to `/setup` in editing mode. The wizard shows step navigation pills allowing direct jumps to any step, plus a "Done" / "Back to Dashboard" button to return. All changes take effect immediately via the shared context.
 
-**Save/Restore**: The user can save the current day plan as a named snapshot. A modal prompts for a session name (defaulting to a human-readable date like "Thursday, Apr 10"). Saved sessions are listed on the dashboard (full view with Delete option) and are also accessible from the wizard setup page via a collapsible "Restore Saved" panel (compact view). Restoring replaces the current plan (with confirmation) and navigates to the dashboard. History is persisted in localStorage under a separate key.
+**Save/Restore**: The user can save the current day plan as a named snapshot. A modal prompts for a session name (defaulting to a human-readable date like "Thursday, Apr 10"). Saved sessions are listed on the dashboard (full view with Delete option) and are also accessible from the wizard setup page via a left sidebar panel (compact view with import). Restoring replaces the current plan (with confirmation) and navigates to the dashboard. History is persisted in localStorage under a separate key.
+
+**Export/Import**: Saved sessions can be exported as JSON files — individually (per session) or in bulk (all sessions). Exported files can be imported back via a file picker available on both the dashboard and wizard sidebar. Import validates the JSON structure and deduplicates by `savedAt` timestamp. Supports both single-session and multi-session JSON files.
 
 ---
 
@@ -73,7 +75,7 @@ src/
     ui/EditableTaskList.tsx   — reusable inline-editable task list with native HTML drag-and-drop reordering
     wizard/
       Wizard.tsx              — step router (renders current step component)
-      WizardLayout.tsx        — shared layout: progress bar, always-visible step pills (grayed during setup, clickable in edit mode), collapsible restore-from-saved panel, back/next/done nav
+      WizardLayout.tsx        — shared layout: progress bar, always-visible step pills (grayed during setup, clickable in edit mode), left sidebar with saved sessions & import, back/next/done nav
       Step1Priorities.tsx     — task entry (uses EditableTaskList)
       Step2TodolistSync.tsx   — external sync nudge + checklist
       Step3Categorize.tsx     — main/background classification (uses EditableTaskList with category buttons via renderRight)
@@ -83,10 +85,10 @@ src/
     dashboard/
       Dashboard.tsx           — main dashboard layout with edit/save/new-day controls, resizable saved-sessions sidebar
       SessionTimeline.tsx     — vertical session timeline with task completion toggles; exports CurrentSession (active slot only) and SessionTimeline (all slots)
-      DigitalClock.tsx        — large time display (h:mm a) + date, updates every second
-      MusicPanel.tsx          — horizontal playlist bar with emoji labels, suggested highlight, expandable Spotify embed
-      SavedSessions.tsx       — saved day history list with restore/delete; reusable in compact mode for wizard
-      TransitionTips.tsx      — static music-protocol transition tips
+      DigitalClock.tsx        — large time display (h:mm a) + date with dotted border, updates every second
+      MusicPanel.tsx          — horizontal playlist bar with emoji labels, suggested highlight, always-open Spotify embed (defaults to "Getting Started", persists user selection)
+      SavedSessions.tsx       — saved day history list with restore/delete/export/import; reusable in compact mode for wizard
+      TransitionTips.tsx      — static music-protocol transition tips (aligned with clock in right column)
     checkin/
       CheckInModal.tsx        — hourly check-in dialog with feeling + work type + playlist suggestion
   App.tsx                     — router + context provider
@@ -119,6 +121,7 @@ src/
 | `DELETE_SAVED_DAY` | Remove a saved snapshot from history |
 | `REORDER_TASKS` | Reorder tasks by a new ordered list of task IDs (for drag-and-drop) |
 | `REORDER_SESSION_TASKS` | Reorder tasks within a specific session slot (drag-and-drop) |
+| `IMPORT_SESSIONS` | Merge imported saved sessions into history (deduplicates by savedAt) |
 
 ---
 
@@ -130,7 +133,7 @@ src/
 4. "Start New Day" → wizard restarts with empty state
 5. **Edit Plan** → navigates to wizard with step pills; jump directly to any step; "Done" returns to dashboard
 6. **Save Day** → name prompt modal appears, snapshot appears in Saved Sessions; **Restore** replaces current plan with confirmation
-7. **Wizard Restore** → "Restore Saved" button in wizard header toggles compact saved sessions panel; restoring navigates to dashboard
+7. **Wizard Restore** → left sidebar always visible during initial setup with saved sessions and import option; restoring navigates to dashboard
 8. Hourly check-in fires → modal appears, playlist suggestion matches work type
 9. Browser notifications work when enabled, graceful fallback when denied
 10. Responsive test at 375px, 768px, 1280px
@@ -146,6 +149,8 @@ src/
 - **Session times editable** in settings, with defaults from requirements
 - **Non-linear wizard** — steps always accessible via pills after initial setup; edit mode lets user revisit any step from dashboard
 - **Day save/restore** — snapshots stored in localStorage with user-provided name; restore available from both dashboard and wizard setup; replaces current plan with confirmation dialog
+- **Export/Import** — saved sessions exportable as JSON (single or bulk); importable via file picker on dashboard and wizard; validated and deduplicated on import
+- **Music panel always open** — defaults to "Getting Started" playlist embed on dashboard load; user's latest selection persisted in localStorage
 - **Dark mode** — class-based toggle (`.dark` on `<html>`) with CSS custom property overrides; preference persisted in localStorage; toggle button in both wizard and dashboard headers
 - **Green-themed icon** — favicon SVG recolored from purple to match the green accent palette (`#3d9970`); PWA icons generated from the same source
 

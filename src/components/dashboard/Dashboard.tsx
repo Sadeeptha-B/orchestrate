@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
-import { MusicPanel } from './MusicPanel';
+import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
 import { SavedSessions } from './SavedSessions';
 import { DigitalClock } from './DigitalClock';
 import { TransitionTips } from './TransitionTips';
@@ -162,27 +162,34 @@ export function Dashboard() {
 
                 <main className="flex-1 px-6 py-6 min-w-0">
                     <div className="max-w-6xl mx-auto space-y-6">
-                        {/* Top row: music cards + clock */}
-                        <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
-                            <div className="flex-1 min-w-0">
-                                <MusicPanel />
+                        <MusicProvider>
+                            {/* Row 1: playlist buttons + clock */}
+                            <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+                                <div className="flex-1 min-w-0">
+                                    <PlaylistSelector />
+                                </div>
+                                <div className="lg:w-72 lg:flex-shrink-0">
+                                    <DigitalClock />
+                                </div>
                             </div>
-                            <div className="lg:flex-shrink-0">
-                                <DigitalClock />
-                            </div>
-                        </div>
 
-                        {/* Current session + transition tips */}
-                        <div className="flex flex-col lg:flex-row gap-6">
-                            <div className="flex-1 min-w-0 space-y-2">
-                                <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                    Current Session
-                                </h3>
-                                <CurrentSession />
+                            {/* Row 2: Spotify embed + transition tips */}
+                            <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+                                <div className="flex-1 min-w-0">
+                                    <SpotifyPlayer />
+                                </div>
+                                <aside className="lg:w-72 lg:flex-shrink-0">
+                                    <TransitionTips />
+                                </aside>
                             </div>
-                            <aside className="lg:w-72 lg:flex-shrink-0">
-                                <TransitionTips />
-                            </aside>
+                        </MusicProvider>
+
+                        {/* Current session */}
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                Current Session
+                            </h3>
+                            <CurrentSession />
                         </div>
 
                         {/* All sessions timeline */}

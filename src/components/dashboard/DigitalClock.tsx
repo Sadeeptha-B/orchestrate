@@ -10,7 +10,7 @@ export function DigitalClock() {
     }, []);
 
     return (
-        <div className="text-right select-none">
+        <div className="border border-dotted border-border rounded-lg p-4 text-right select-none">
             <p className="text-5xl font-semibold tracking-tight tabular-nums text-text">
                 {format(now, 'h:mm')}
                 <span className="text-xl ml-1 text-text-light font-medium">{format(now, 'a')}</span>
