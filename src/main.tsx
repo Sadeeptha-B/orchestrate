@@ -13,7 +13,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
     <StrictMode>
-        <BrowserRouter basename="/orchestrate">
+        <BrowserRouter basename="/orchestrate/">
             <App />
         </BrowserRouter>
     </StrictMode>,

@@ -11,6 +11,7 @@ A single-page **React + TypeScript** web app that walks you through a daily task
 - **localStorage** — persistence (no backend, no auth)
 - **Web Notifications API** — optional browser notifications for check-ins
 - **PWA** — installable via web manifest + service worker (network-first caching, offline fallback)
+- **Deployed at `/orchestrate/`** — Vite `base` and BrowserRouter `basename` both set to `/orchestrate/`
 
 State managed via React Context + `useReducer` (no heavy library needed).
 
@@ -39,7 +40,7 @@ On load: if today's plan exists and setup is complete → Dashboard. Otherwise �
 - **`DayPlan`**: date, tasks, taskSessions (sessionId → taskId[]), wizardStep (1–6), setupComplete, checkIns, syncChecklist
 - **`Task`**: id, title, type (`main` | `background` | `unclassified`), assignedSession, completed
 - **`SessionSlot`**: id, name, startTime, endTime (4 fixed slots from requirements, editable in settings)
-- **`CheckIn`**: id, timestamp, feeling, currentWorkType, playlistSuggested, notes
+- **`CheckIn`**: id, timestamp, feeling (`'great'` | `'okay'` | `'struggling'` | `'stuck'`), currentWorkType, playlistSuggested, notes
 - **`WorkType`**: `'coding'` | `'lecture'` | `'reading'` | `'restless'` | `'low-energy'`
 - **`Playlist`**: id, name, workLabel, description, emoji, spotifyUrl, workTypes (static, from music_routine.md)
 - **`SavedDayPlan`**: plan (full DayPlan snapshot), savedAt (ISO timestamp), label (human-readable)
@@ -66,7 +67,7 @@ src/
     useCurrentSession.ts      — time-aware current/remaining session computation
     useHourlyCheckin.ts       — hourly timer within session boundaries
     useNotifications.ts       — Web Notifications API wrapper
-    useTheme.ts               — dark/light mode toggle with localStorage persistence
+    useTheme.ts               — dark/light mode toggle with localStorage persistence, cross-tab sync via useSyncExternalStore
   components/
     ui/Button.tsx             — variant/size button
     ui/Card.tsx               — bordered card wrapper
@@ -83,11 +84,11 @@ src/
       Step5ScheduleBackground.tsx — assign background tasks to sessions
       Step6StartMusic.tsx     — recap + embedded Spotify player for "Start Work" playlist, with "Go to Dashboard" action
     dashboard/
-      Dashboard.tsx           — main dashboard layout with edit/save/new-day controls, resizable saved-sessions sidebar
-      SessionTimeline.tsx     — vertical session timeline with task completion toggles; exports CurrentSession (active slot only) and SessionTimeline (all slots)
+      Dashboard.tsx           — main dashboard layout with edit/save/new-day controls, resizable saved-sessions sidebar, uses decomposed MusicProvider/PlaylistSelector/SpotifyPlayer
+      SessionTimeline.tsx     — vertical session timeline with task completion toggles and inline task editing; exports CurrentSession (active slot only) and SessionTimeline (all slots)
       DigitalClock.tsx        — large time display (h:mm a) + date with dotted border, updates every second
-      MusicPanel.tsx          — horizontal playlist bar with emoji labels, suggested highlight, always-open Spotify embed (defaults to "Getting Started", persists user selection)
-      SavedSessions.tsx       — saved day history list with restore/delete/export/import; reusable in compact mode for wizard
+      MusicPanel.tsx          — exports MusicProvider (shared context), PlaylistSelector (horizontal button bar), SpotifyPlayer (always-open embed with custom URL editing), and MusicPanel (convenience wrapper); supports per-playlist custom URL overrides persisted in localStorage
+      SavedSessions.tsx       — saved day history list with restore/delete/export/import; reusable in compact mode (for wizard sidebar) and full mode (for dashboard sidebar)
       TransitionTips.tsx      — static music-protocol transition tips (aligned with clock in right column)
     checkin/
       CheckInModal.tsx        — hourly check-in dialog with feeling + work type + playlist suggestion
@@ -116,7 +117,7 @@ src/
 | `RESET_DAY` | Clear plan and start fresh |
 | `UPDATE_SETTINGS` | Partial-update app settings |
 | `SET_EDITING_STEP` | Enter/exit wizard edit mode from dashboard |
-| `SAVE_DAY` | Save current plan as a named snapshot in history |
+| `SAVE_DAY` | Save current plan as a named snapshot in history (replaces existing snapshot for the same date) |
 | `RESTORE_DAY` | Replace current plan with a saved snapshot |
 | `DELETE_SAVED_DAY` | Remove a saved snapshot from history |
 | `REORDER_TASKS` | Reorder tasks by a new ordered list of task IDs (for drag-and-drop) |
@@ -143,15 +144,16 @@ src/
 
 ### Decisions
 
-- **No Spotify API integration** — playlists use iframe embeds for in-app playback plus "Open in Spotify" deep links (no OAuth needed)
+- **No Spotify API integration** — playlists use iframe embeds for in-app playback plus "Open in Spotify" deep links (no OAuth needed); per-playlist URL overrides allow the user to swap in a custom Spotify playlist URL for any slot
+- **Decomposed MusicPanel** — `MusicPanel.tsx` exports `MusicProvider`, `PlaylistSelector`, and `SpotifyPlayer` as separate components sharing a context; Dashboard uses the decomposed pattern (not the combined `MusicPanel` wrapper) for flexible layout (Row 1: playlist buttons + clock, Row 2: embed + transition tips)
 - **Native HTML Drag and Drop** — task reordering uses the browser's built-in drag-and-drop API (no library); keeps bundle lean
 - **Manual "Start New Day"** — no auto-reset
 - **Session times editable** in settings, with defaults from requirements
 - **Non-linear wizard** — steps always accessible via pills after initial setup; edit mode lets user revisit any step from dashboard
 - **Day save/restore** — snapshots stored in localStorage with user-provided name; restore available from both dashboard and wizard setup; replaces current plan with confirmation dialog
 - **Export/Import** — saved sessions exportable as JSON (single or bulk); importable via file picker on dashboard and wizard; validated and deduplicated on import
-- **Music panel always open** — defaults to "Getting Started" playlist embed on dashboard load; user's latest selection persisted in localStorage
-- **Dark mode** — class-based toggle (`.dark` on `<html>`) with CSS custom property overrides; preference persisted in localStorage; toggle button in both wizard and dashboard headers
+- **Music panel always open** — defaults to "Getting Started" (Start Work) playlist embed on dashboard load; user's latest selection and per-playlist custom URLs persisted in localStorage
+- **Dark mode** — class-based toggle (`.dark` on `<html>`) with CSS custom property overrides; preference persisted in localStorage; toggle button in both wizard and dashboard headers; syncs across tabs via `StorageEvent` + `useSyncExternalStore`
 - **Green-themed icon** — favicon SVG recolored from purple to match the green accent palette (`#3d9970`); PWA icons generated from the same source
 
 ### Further Considerations

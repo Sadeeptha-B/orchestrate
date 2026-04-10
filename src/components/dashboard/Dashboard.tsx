@@ -25,6 +25,8 @@ export function Dashboard() {
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
+    const [showNewDayModal, setShowNewDayModal] = useState(false);
+    const [newDaySaveName, setNewDaySaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
     const hasSavedSessions = history.length > 0;
 
@@ -67,6 +69,17 @@ export function Dashboard() {
     }, []);
 
     const handleNewDay = () => {
+        setNewDaySaveName(format(new Date(plan.date), 'EEEE, MMM d'));
+        setShowNewDayModal(true);
+    };
+
+    const confirmNewDay = (save: boolean) => {
+        if (save) {
+            const label = newDaySaveName.trim() || format(new Date(plan.date), 'EEEE, MMM d');
+            dispatch({ type: 'SAVE_DAY', label });
+        }
+        setShowNewDayModal(false);
+        setNewDaySaveName('');
         dispatch({ type: 'RESET_DAY' });
         navigate('/setup');
     };
@@ -96,7 +109,10 @@ export function Dashboard() {
         <div className="min-h-screen flex flex-col">
             <header className="px-6 py-4 border-b border-border">
                 <div className="max-w-6xl mx-auto flex items-center justify-between">
-                    <h1 className="text-xl font-semibold text-accent">Orchestrate</h1>
+                    <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
+                        <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
+                        Orchestrate
+                    </h1>
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-text-light">
                             {completedCount}/{totalCount} tasks done
@@ -204,6 +220,44 @@ export function Dashboard() {
             </div>
 
             <CheckInModal open={showCheckin} onClose={dismiss} />
+
+            <Modal
+                open={showNewDayModal}
+                onClose={() => setShowNewDayModal(false)}
+                title="Start New Day"
+            >
+                <div className="space-y-4">
+                    <p className="text-sm text-text-light">
+                        Would you like to save your current session before starting fresh?
+                    </p>
+                    <div>
+                        <label htmlFor="new-day-save-name" className="text-sm text-text-light block mb-1.5">
+                            Session name
+                        </label>
+                        <input
+                            id="new-day-save-name"
+                            type="text"
+                            value={newDaySaveName}
+                            onChange={(e) => setNewDaySaveName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && confirmNewDay(true)}
+                            placeholder="e.g. Thursday, Apr 10"
+                            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setShowNewDayModal(false)}>
+                            Cancel
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => confirmNewDay(false)}>
+                            Don&apos;t Save
+                        </Button>
+                        <Button size="sm" onClick={() => confirmNewDay(true)}>
+                            Save &amp; Start New
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
 
             <Modal
                 open={showSaveModal}

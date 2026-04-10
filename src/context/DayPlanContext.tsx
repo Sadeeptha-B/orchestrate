@@ -221,9 +221,7 @@ function reducer(state: State, action: Action): State {
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };
-            // Replace if same date already saved, otherwise prepend
-            const filtered = state.history.filter((h) => h.plan.date !== plan.date);
-            return { ...state, history: [entry, ...filtered] };
+            return { ...state, history: [entry, ...state.history] };
         }
 
         case 'RESTORE_DAY': {
