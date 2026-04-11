@@ -2,8 +2,8 @@ import { WizardLayout } from './WizardLayout';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-
-const TREVOR_URL = 'https://app.trevorai.com/app/';
+import { TodoistPanel } from '../todoist/TodoistPanel';
+import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 
 export function Step4ScheduleMain() {
     const { plan, settings, dispatch } = useDayPlan();
@@ -119,27 +119,17 @@ export function Step4ScheduleMain() {
                     )}
                 </div>
 
-                {/* Right panel: Trevor AI iframe */}
-                <div className="flex-1 min-w-0 flex flex-col">
-                    <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-medium text-text-light">Schedule tasks in calendar</h3>
-                        <a
-                            href={TREVOR_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-accent hover:underline"
-                        >
-                            Open in new tab ↗
-                        </a>
+                {/* Right panel: Todoist + Google Calendar */}
+                <div className="flex-1 min-w-0 flex flex-col gap-4">
+                    <div>
+                        <h3 className="text-sm font-medium text-text-light mb-2">Tasks</h3>
+                        <div className="rounded-lg border border-border overflow-hidden bg-card" style={{ height: 280 }}>
+                            <TodoistPanel mode="compact" />
+                        </div>
                     </div>
-                    <div className="flex-1 rounded-lg border border-border overflow-hidden bg-white" style={{ minHeight: 500 }}>
-                        <iframe
-                            src={TREVOR_URL}
-                            title="Trevor AI — Calendar Scheduling"
-                            className="w-full h-full border-0"
-                            style={{ minHeight: 500 }}
-                            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-                        />
+                    <div>
+                        <h3 className="text-sm font-medium text-text-light mb-2">Calendar</h3>
+                        <GoogleCalendarEmbed height={300} />
                     </div>
                 </div>
             </div>

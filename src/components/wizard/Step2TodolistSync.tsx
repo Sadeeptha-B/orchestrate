@@ -1,7 +1,6 @@
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
-
-const TREVOR_URL = 'https://app.trevorai.com/app/';
+import { TodoistPanel } from '../todoist/TodoistPanel';
 
 const CHECKLIST_ITEMS = [
     { key: 'reviewTodolist', label: 'I have reviewed my external todolist' },
@@ -38,8 +37,8 @@ export function Step2TodolistSync() {
                             <label
                                 key={intention.id}
                                 className={`flex items-start gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${intention.brokenDown
-                                        ? 'bg-accent-subtle/40 border-accent/20'
-                                        : 'bg-card border-border hover:border-accent/30'
+                                    ? 'bg-accent-subtle/40 border-accent/20'
+                                    : 'bg-card border-border hover:border-accent/30'
                                     }`}
                             >
                                 <input
@@ -96,27 +95,13 @@ export function Step2TodolistSync() {
                     </div>
                 </div>
 
-                {/* Right panel: Trevor AI iframe */}
+                {/* Right panel: Todoist task panel */}
                 <div className="flex-1 min-w-0 flex flex-col">
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="text-sm font-medium text-text-light">Task Manager</h3>
-                        <a
-                            href={TREVOR_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-accent hover:underline"
-                        >
-                            Open in new tab ↗
-                        </a>
                     </div>
-                    <div className="flex-1 rounded-lg border border-border overflow-hidden bg-white" style={{ minHeight: 500 }}>
-                        <iframe
-                            src={TREVOR_URL}
-                            title="Trevor AI — Task Manager"
-                            className="w-full h-full border-0"
-                            style={{ minHeight: 500 }}
-                            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-                        />
+                    <div className="flex-1 rounded-lg border border-border overflow-hidden bg-card" style={{ minHeight: 500 }}>
+                        <TodoistPanel mode="full" />
                     </div>
                 </div>
             </div>

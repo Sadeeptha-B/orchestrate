@@ -8,6 +8,9 @@ import { SavedSessions } from './SavedSessions';
 import { DigitalClock } from './DigitalClock';
 import { TransitionTips } from './TransitionTips';
 import { CheckInModal } from '../checkin/CheckInModal';
+import { TodoistPanel } from '../todoist/TodoistPanel';
+import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
+import { TodoistSetup } from '../todoist/TodoistSetup';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
 import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../ui/Button';
@@ -29,6 +32,8 @@ export function Dashboard() {
     const [newDaySaveName, setNewDaySaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
+    const [calendarOpen, setCalendarOpen] = useState(false);
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
     const hasSavedSessions = history.length > 0;
 
     // Resizable panel
@@ -136,6 +141,9 @@ export function Dashboard() {
                                 {panelOpen ? 'Hide Saved' : 'Saved Sessions'}
                             </Button>
                         )}
+                        <Button variant="ghost" size="sm" onClick={() => setShowSettingsModal(true)}>
+                            Settings
+                        </Button>
                         <button
                             onClick={toggleTheme}
                             className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
@@ -201,7 +209,7 @@ export function Dashboard() {
                             </div>
                         </MusicProvider>
 
-                        {/* Task Manager (Trevor AI) — collapsible */}
+                        {/* Task Manager (Todoist) — collapsible */}
                         <div>
                             <button
                                 onClick={() => setTaskManagerOpen(!taskManagerOpen)}
@@ -219,13 +227,32 @@ export function Dashboard() {
                                 Task Manager
                             </button>
                             {taskManagerOpen && (
-                                <div className="mt-3 rounded-lg border border-border overflow-hidden bg-white" style={{ height: 500 }}>
-                                    <iframe
-                                        src="https://app.trevorai.com/app/"
-                                        title="Trevor AI — Task Manager"
-                                        className="w-full h-full border-0"
-                                        sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-                                    />
+                                <div className="mt-3 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
+                                    <TodoistPanel mode="full" onSetup={() => setShowSettingsModal(true)} />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Calendar (Google) — collapsible */}
+                        <div>
+                            <button
+                                onClick={() => setCalendarOpen(!calendarOpen)}
+                                className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
+                            >
+                                <svg
+                                    className={`w-3 h-3 transition-transform ${calendarOpen ? 'rotate-90' : ''}`}
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                >
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                </svg>
+                                Calendar
+                            </button>
+                            {calendarOpen && (
+                                <div className="mt-3">
+                                    <GoogleCalendarEmbed height={400} onSetup={() => setShowSettingsModal(true)} />
                                 </div>
                             )}
                         </div>
@@ -319,6 +346,14 @@ export function Dashboard() {
                         </Button>
                     </div>
                 </div>
+            </Modal>
+
+            <Modal
+                open={showSettingsModal}
+                onClose={() => setShowSettingsModal(false)}
+                title="Integrations"
+            >
+                <TodoistSetup />
             </Modal>
         </div>
     );

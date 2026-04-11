@@ -42,3 +42,14 @@ Then the next main tasks section should focus on the user scheduling the tasks i
 The background tasks should be nudges/habits. So habits would typically be background tasks, but not all background tasks would be habits. So, what might be a good strategy to schedule the background tasks in? I was thinking being flexible, and frequently nudging the user that these tasks exist, and also allowing a single background task to be scheduled at multiple slots can help. 
 
 You are free to redesign the flow in light of these new requirements, the dashboard should also contain an iframe of the tasks along with the current intention based setup. You are free to make suitable design decisions in the initial iteration of this implementation. 
+
+### Iteration 2.1 — Todoist + Google Calendar Integration
+
+The Trevor AI iframe approach proved non-functional: Trevor AI sets `X-Frame-Options: DENY` and modern browsers block cross-origin cookies (`SameSite` defaults), preventing embedded login.
+
+**Pivot to Option B:**
+- **Todoist REST API (v2)**: Direct API integration using a personal API token (no OAuth, no backend). Users paste their token from Todoist Settings → Integrations → Developer. Token is encrypted client-side using AES-GCM via the Web Crypto API before being stored in localStorage.
+- **Google Calendar embed**: Official embeddable iframe (`https://calendar.google.com/calendar/embed?src={calendarId}&mode=week`). Read-only, works when the user is logged into Google. User-configurable calendar ID.
+- **Data model**: Orchestrate owns the intention-level view. Todoist owns the task-level view. Google Calendar provides time-context. The user's existing Todoist↔Google Calendar sync keeps the latter two in sync automatically.
+
+See [plan_v3.md](./plan_v3.md) for the full implementation plan.

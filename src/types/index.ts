@@ -65,4 +65,8 @@ export interface SavedDayPlan {
 export interface AppSettings {
     notificationPreference: NotificationPreference;
     sessionSlots: SessionSlot[];
+    todoistToken?: string;
+    todoistTokenIV?: string;
+    todoistTokenKey?: string;
+    googleCalendarId?: string;
 }
