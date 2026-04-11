@@ -8,17 +8,17 @@ export function Step1Priorities() {
     const { plan, dispatch } = useDayPlan();
     const [input, setInput] = useState('');
 
-    const addTask = () => {
+    const addIntention = () => {
         const title = input.trim();
         if (!title) return;
-        dispatch({ type: 'ADD_TASK', title });
+        dispatch({ type: 'ADD_INTENTION', title });
         setInput('');
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            addTask();
+            addIntention();
         }
     };
 
@@ -27,15 +27,16 @@ export function Step1Priorities() {
     };
 
     return (
-        <WizardLayout canAdvance={plan.tasks.length > 0} onNext={handleNext}>
+        <WizardLayout canAdvance={plan.intentions.length > 0} onNext={handleNext}>
             <div className="space-y-6 mt-4">
                 <div>
                     <h2 className="text-2xl font-semibold mb-2">
-                        What are the main things on your mind today?
+                        What are your intentions for today?
                     </h2>
                     <p className="text-text-light text-sm">
-                        Write down your priorities — tasks, projects, anything you need to get done.
-                        Click a task to edit it, drag to reorder.
+                        Write down your specific goals for the day — not epics, but concrete intentions.
+                        What do you actually want to accomplish today?
+                        Click an item to edit it, drag to reorder.
                     </p>
                 </div>
 
@@ -45,15 +46,15 @@ export function Step1Priorities() {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder="Add a task..."
+                        placeholder="Add an intention..."
                         className="flex-1 px-4 py-2 rounded-lg border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
                     />
-                    <Button onClick={addTask} disabled={!input.trim()} size="md">
+                    <Button onClick={addIntention} disabled={!input.trim()} size="md">
                         Add
                     </Button>
                 </div>
 
-                <EditableTaskList tasks={plan.tasks} />
+                <EditableTaskList tasks={plan.intentions} />
             </div>
         </WizardLayout>
     );

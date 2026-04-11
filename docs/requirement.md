@@ -11,12 +11,12 @@ I plan to achieve this through a number of steps
 3. Then he is asked to categorize the tasks in terms of main tasks and background tasks. Main tasks are tasks that are the main running threads in the day; eg: implementing a specific feature in code. Background tasks are usually habit based tasks that recur across days. These are tasks like reading, doing c# coding exercises, and so on
 
 4. We can assume that the user works in four time slots, 
-Early morning session -> 6am - 8am
-Morning Sesion -> 9am - 1pm
-Afternoon Session -> 2:30pm - 6:30pm
-Night Session -> 8:30pm - 11pm
+- Early morning session -> **6am - 8am**
+- Morning Sesion -> **9am - 1pm**
+- Afternoon Session -> **2:30pm - 6:30pm**
+- Night Session -> **8:30pm - 11pm**
 
-Based on the time in which starts, the app should loop through the sessions left and tell the user to schedule main tasks within sessions
+    Based on the time in which starts, the app should loop through the sessions left and tell the user to schedule main tasks within sessions
 
 5. Then the app should invite the user to schedule background tasks accordingly within the day based on his main task allocation
 
@@ -30,3 +30,15 @@ The main goal of this proposed app is contextualization and nudging the user tow
 
 
 ## Iteration 2:
+
+In the second iteration, we are changing the app to be more sophisticated. The current "tasks" that we have in the app are to be understood as intentions for the day.
+
+Usually, todo lists tend to be "epics", a pain point we are solving is that todo lists tend to be epics, and when starting a day, we don't tend to think in terms of epics, but in terms of "intentions", of specific goals for the day. The second page should focus on mapping intentions to specific todolists. 
+
+I currently manage my tasks with [Trevor AI](https://app.trevorai.com/app/), we should add a sizeable iframe of this app in the second step. So that it is visible for mapping. In the future, we may migrate to our own inbuilt todolist and calendar management for setup, but for now, this is a preliminary approach. Then, you should loop through each intention and then prompt the user to break down tasks, which he would then do in the corresponding iframe. 
+
+Then the next main tasks section should focus on the user scheduling the tasks into time, in this view also, we will have an iframe, where the user will schedule the tasks he broke down into specific slots, the intentions too ideally should be scheduled, but the way we do this, I need to still decide, you are free to decide on a suitable approach for the time being. 
+
+The background tasks should be nudges/habits. So habits would typically be background tasks, but not all background tasks would be habits. So, what might be a good strategy to schedule the background tasks in? I was thinking being flexible, and frequently nudging the user that these tasks exist, and also allowing a single background task to be scheduled at multiple slots can help. 
+
+You are free to redesign the flow in light of these new requirements, the dashboard should also contain an iframe of the tasks along with the current intention based setup. You are free to make suitable design decisions in the initial iteration of this implementation. 

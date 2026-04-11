@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDayPlan } from '../../context/DayPlanContext';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import type { WorkType, CheckIn } from '../../types';
 
@@ -26,12 +27,20 @@ interface CheckInModalProps {
 }
 
 export function CheckInModal({ open, onClose }: CheckInModalProps) {
-    const { dispatch } = useDayPlan();
+    const { plan, settings, dispatch } = useDayPlan();
+    const { currentSession } = useCurrentSession(settings.sessionSlots);
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
     const [workType, setWorkType] = useState<WorkType | null>(null);
     const [notes, setNotes] = useState('');
 
     const suggestedPlaylist = workType ? getPlaylistForWorkType(workType) : undefined;
+
+    // Background nudges for the current session
+    const bgNudges = currentSession
+        ? (plan.intentionSessions[currentSession.id] ?? [])
+            .map((id) => plan.intentions.find((i) => i.id === id))
+            .filter((i) => i && i.type === 'background' && !i.completed)
+        : [];
 
     const handleSubmit = () => {
         if (!feeling || !workType) return;
@@ -74,6 +83,14 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
                         ))}
                     </div>
                 </div>
+
+                {/* Background nudges for current session */}
+                {bgNudges.length > 0 && (
+                    <div className="px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
+                        <span className="font-medium">Background intentions for this session:</span>{' '}
+                        {bgNudges.map((i) => i!.title).join(', ')}
+                    </div>
+                )}
 
                 {/* Work type */}
                 <div>

@@ -1,10 +1,15 @@
-export interface Task {
+export interface Intention {
     id: string;
     title: string;
     type: 'main' | 'background' | 'unclassified';
-    assignedSession?: string;
+    assignedSessions: string[];
     completed: boolean;
+    brokenDown: boolean;
+    isHabit: boolean;
 }
+
+/** @deprecated Use Intention instead — kept as alias for migration */
+export type Task = Intention;
 
 export interface SessionSlot {
     id: string;
@@ -41,8 +46,8 @@ export interface Playlist {
 
 export interface DayPlan {
     date: string; // ISO date string (YYYY-MM-DD)
-    tasks: Task[];
-    taskSessions: Record<string, string[]>; // sessionId -> taskId[]
+    intentions: Intention[];
+    intentionSessions: Record<string, string[]>; // sessionId -> intentionId[]
     wizardStep: number; // 1–6
     setupComplete: boolean;
     checkIns: CheckIn[];

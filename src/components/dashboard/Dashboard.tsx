@@ -28,6 +28,7 @@ export function Dashboard() {
     const [showNewDayModal, setShowNewDayModal] = useState(false);
     const [newDaySaveName, setNewDaySaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
+    const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const hasSavedSessions = history.length > 0;
 
     // Resizable panel
@@ -102,8 +103,8 @@ export function Dashboard() {
         setSaveName('');
     };
 
-    const completedCount = plan.tasks.filter((t) => t.completed).length;
-    const totalCount = plan.tasks.length;
+    const completedCount = plan.intentions.filter((i) => i.completed).length;
+    const totalCount = plan.intentions.length;
 
     return (
         <div className="min-h-screen flex flex-col">
@@ -115,7 +116,7 @@ export function Dashboard() {
                     </h1>
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-text-light">
-                            {completedCount}/{totalCount} tasks done
+                            {completedCount}/{totalCount} done
                         </span>
                         <Button variant="secondary" size="sm" onClick={openSaveModal}>
                             Save Day
@@ -199,6 +200,35 @@ export function Dashboard() {
                                 </aside>
                             </div>
                         </MusicProvider>
+
+                        {/* Task Manager (Trevor AI) — collapsible */}
+                        <div>
+                            <button
+                                onClick={() => setTaskManagerOpen(!taskManagerOpen)}
+                                className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
+                            >
+                                <svg
+                                    className={`w-3 h-3 transition-transform ${taskManagerOpen ? 'rotate-90' : ''}`}
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                >
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                </svg>
+                                Task Manager
+                            </button>
+                            {taskManagerOpen && (
+                                <div className="mt-3 rounded-lg border border-border overflow-hidden bg-white" style={{ height: 500 }}>
+                                    <iframe
+                                        src="https://app.trevorai.com/app/"
+                                        title="Trevor AI — Task Manager"
+                                        className="w-full h-full border-0"
+                                        sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+                                    />
+                                </div>
+                            )}
+                        </div>
 
                         {/* Current session */}
                         <div className="space-y-2">

@@ -12,11 +12,11 @@ const PANEL_MAX = 480;
 const PANEL_DEFAULT = 288;
 
 const STEP_LABELS = [
-    'Priorities',
+    'Intentions',
     'Todolist Sync',
     'Categorize',
-    'Main Tasks',
-    'Background Tasks',
+    'Main Schedule',
+    'Nudges',
     'Music',
 ];
 
@@ -27,6 +27,8 @@ interface WizardLayoutProps {
     nextLabel?: string;
     hideBack?: boolean;
     hideNext?: boolean;
+    /** When true, removes the max-w-2xl constraint for iframe-heavy steps */
+    wide?: boolean;
 }
 
 export function WizardLayout({
@@ -36,6 +38,7 @@ export function WizardLayout({
     nextLabel = 'Continue',
     hideBack = false,
     hideNext = false,
+    wide = false,
 }: WizardLayoutProps) {
     const { plan, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
@@ -133,7 +136,7 @@ export function WizardLayout({
 
             {/* Main wizard area */}
             <div className="flex-1 flex flex-col min-w-0">
-                <header className="px-6 pt-6 pb-4 max-w-2xl mx-auto w-full">
+                <header className={`px-6 pt-6 pb-4 mx-auto w-full ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                     <div className="flex items-center justify-between mb-4">
                         <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
                             <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
@@ -193,11 +196,11 @@ export function WizardLayout({
                     </div>
                 </header>
 
-                <main className="flex-1 px-6 pb-6 max-w-2xl mx-auto w-full">
+                <main className={`flex-1 px-6 pb-6 mx-auto w-full ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                     <div className="transition-opacity duration-300">{children}</div>
                 </main>
 
-                <footer className="px-6 py-4 border-t border-border max-w-2xl mx-auto w-full flex justify-between">
+                <footer className={`px-6 py-4 border-t border-border mx-auto w-full flex justify-between ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                     {!hideBack && step > 1 ? (
                         <Button variant="ghost" onClick={goBack}>
                             Back

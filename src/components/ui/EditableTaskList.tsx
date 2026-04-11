@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
-import type { Task } from '../../types';
+import type { Intention } from '../../types';
 import { useDayPlan } from '../../context/DayPlanContext';
 
 interface EditableTaskListProps {
-    tasks: Task[];
-    renderRight?: (task: Task) => React.ReactNode;
+    tasks: Intention[];
+    renderRight?: (task: Intention) => React.ReactNode;
 }
 
 export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) {
@@ -15,7 +15,7 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
     const [dragOverId, setDragOverId] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const startEdit = useCallback((task: Task) => {
+    const startEdit = useCallback((task: Intention) => {
         setEditingId(task.id);
         setEditValue(task.title);
         // Focus after render
@@ -28,7 +28,7 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
         if (trimmed) {
             const task = tasks.find((t) => t.id === editingId);
             if (task && task.title !== trimmed) {
-                dispatch({ type: 'UPDATE_TASK', task: { ...task, title: trimmed } });
+                dispatch({ type: 'UPDATE_INTENTION', intention: { ...task, title: trimmed } });
             }
         }
         setEditingId(null);
@@ -85,7 +85,7 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
             reordered.splice(fromIndex, 1);
             reordered.splice(toIndex, 0, dragId);
 
-            dispatch({ type: 'REORDER_TASKS', taskIds: reordered });
+            dispatch({ type: 'REORDER_INTENTIONS', intentionIds: reordered });
             setDragId(null);
             setDragOverId(null);
         },
@@ -161,7 +161,7 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
                         <div className="flex items-center gap-2 flex-shrink-0">
                             {renderRight?.(task)}
                             <button
-                                onClick={() => dispatch({ type: 'REMOVE_TASK', taskId: task.id })}
+                                onClick={() => dispatch({ type: 'REMOVE_INTENTION', intentionId: task.id })}
                                 className="text-text-light hover:text-red-400 transition-colors text-xs cursor-pointer"
                                 aria-label={`Remove ${task.title}`}
                             >

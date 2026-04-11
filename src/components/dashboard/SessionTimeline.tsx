@@ -2,19 +2,19 @@ import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import type { Task, SessionSlot } from '../../types';
+import type { Intention, SessionSlot } from '../../types';
 
-// ---- shared task row hooks (used by both CurrentSession and SessionTimeline) ----
+// ---- shared intention row hooks (used by both CurrentSession and SessionTimeline) ----
 
-function useTaskEditing() {
+function useIntentionEditing() {
     const { plan, dispatch } = useDayPlan();
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editValue, setEditValue] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const startEdit = useCallback((task: Task) => {
-        setEditingId(task.id);
-        setEditValue(task.title);
+    const startEdit = useCallback((intention: Intention) => {
+        setEditingId(intention.id);
+        setEditValue(intention.title);
         requestAnimationFrame(() => inputRef.current?.focus());
     }, []);
 
@@ -22,14 +22,14 @@ function useTaskEditing() {
         if (!editingId) return;
         const trimmed = editValue.trim();
         if (trimmed) {
-            const task = plan.tasks.find((t) => t.id === editingId);
-            if (task && task.title !== trimmed) {
-                dispatch({ type: 'UPDATE_TASK', task: { ...task, title: trimmed } });
+            const intention = plan.intentions.find((i) => i.id === editingId);
+            if (intention && intention.title !== trimmed) {
+                dispatch({ type: 'UPDATE_INTENTION', intention: { ...intention, title: trimmed } });
             }
         }
         setEditingId(null);
         setEditValue('');
-    }, [editingId, editValue, plan.tasks, dispatch]);
+    }, [editingId, editValue, plan.intentions, dispatch]);
 
     const cancelEdit = useCallback(() => {
         setEditingId(null);
@@ -47,21 +47,21 @@ function useTaskEditing() {
     return { editingId, editValue, setEditValue, inputRef, startEdit, commitEdit, handleEditKeyDown };
 }
 
-function useTaskDrag() {
+function useIntentionDrag() {
     const { plan, dispatch } = useDayPlan();
     const [dragId, setDragId] = useState<string | null>(null);
     const [dragOverId, setDragOverId] = useState<string | null>(null);
     const [dragSessionId, setDragSessionId] = useState<string | null>(null);
 
-    const handleDragStart = useCallback((taskId: string, sessionId: string) => {
-        setDragId(taskId);
+    const handleDragStart = useCallback((intentionId: string, sessionId: string) => {
+        setDragId(intentionId);
         setDragSessionId(sessionId);
     }, []);
 
     const handleDragOver = useCallback(
-        (e: React.DragEvent, taskId: string) => {
+        (e: React.DragEvent, intentionId: string) => {
             e.preventDefault();
-            if (taskId !== dragId) setDragOverId(taskId);
+            if (intentionId !== dragId) setDragOverId(intentionId);
         },
         [dragId],
     );
@@ -75,19 +75,19 @@ function useTaskDrag() {
                 setDragSessionId(null);
                 return;
             }
-            const ids = plan.taskSessions[sessionId] ?? [];
+            const ids = plan.intentionSessions[sessionId] ?? [];
             const fromIndex = ids.indexOf(dragId);
             const toIndex = ids.indexOf(targetId);
             if (fromIndex === -1 || toIndex === -1) return;
             const reordered = [...ids];
             reordered.splice(fromIndex, 1);
             reordered.splice(toIndex, 0, dragId);
-            dispatch({ type: 'REORDER_SESSION_TASKS', sessionId, taskIds: reordered });
+            dispatch({ type: 'REORDER_SESSION_INTENTIONS', sessionId, intentionIds: reordered });
             setDragId(null);
             setDragOverId(null);
             setDragSessionId(null);
         },
-        [dragId, dragSessionId, plan.taskSessions, dispatch],
+        [dragId, dragSessionId, plan.intentionSessions, dispatch],
     );
 
     const handleDragEnd = useCallback(() => {
@@ -99,35 +99,34 @@ function useTaskDrag() {
     return { dragId, dragOverId, handleDragStart, handleDragOver, handleDrop, handleDragEnd };
 }
 
-// ---- shared task row renderer ----
+// ---- shared intention row renderer ----
 
-interface TaskRowProps {
-    task: Task;
+interface IntentionRowProps {
+    intention: Intention;
     sessionId: string;
-    editing: ReturnType<typeof useTaskEditing>;
-    drag: ReturnType<typeof useTaskDrag>;
+    editing: ReturnType<typeof useIntentionEditing>;
+    drag: ReturnType<typeof useIntentionDrag>;
 }
 
-function TaskRow({ task, sessionId, editing, drag }: TaskRowProps) {
+function IntentionRow({ intention, sessionId, editing, drag }: IntentionRowProps) {
     const { dispatch } = useDayPlan();
-    const isEditing = editing.editingId === task.id;
-    const isDragging = drag.dragId === task.id;
-    const isDragOver = drag.dragOverId === task.id && drag.dragId !== task.id;
+    const isEditing = editing.editingId === intention.id;
+    const isDragging = drag.dragId === intention.id;
+    const isDragOver = drag.dragOverId === intention.id && drag.dragId !== intention.id;
 
     return (
         <li
             draggable={!isEditing}
-            onDragStart={() => drag.handleDragStart(task.id, sessionId)}
-            onDragOver={(e) => drag.handleDragOver(e, task.id)}
-            onDrop={(e) => drag.handleDrop(e, task.id, sessionId)}
+            onDragStart={() => drag.handleDragStart(intention.id, sessionId)}
+            onDragOver={(e) => drag.handleDragOver(e, intention.id)}
+            onDrop={(e) => drag.handleDrop(e, intention.id, sessionId)}
             onDragEnd={drag.handleDragEnd}
-            className={`flex items-center gap-2 px-2 py-1 rounded transition-all ${
-                isDragging
+            className={`flex items-center gap-2 px-2 py-1 rounded transition-all ${isDragging
                     ? 'opacity-40'
                     : isDragOver
                         ? 'bg-accent-subtle/50 border-l-2 border-accent'
                         : ''
-            }`}
+                }`}
         >
             <span
                 className="cursor-grab active:cursor-grabbing text-text-light/40 hover:text-text-light select-none flex-shrink-0"
@@ -144,15 +143,14 @@ function TaskRow({ task, sessionId, editing, drag }: TaskRowProps) {
             </span>
 
             <button
-                onClick={() => dispatch({ type: 'TOGGLE_TASK_COMPLETE', taskId: task.id })}
-                className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${
-                    task.completed
+                onClick={() => dispatch({ type: 'TOGGLE_INTENTION_COMPLETE', intentionId: intention.id })}
+                className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${intention.completed
                         ? 'bg-success border-success text-white'
                         : 'border-border hover:border-accent'
-                }`}
-                aria-label={`Mark ${task.title} as ${task.completed ? 'incomplete' : 'complete'}`}
+                    }`}
+                aria-label={`Mark ${intention.title} as ${intention.completed ? 'incomplete' : 'complete'}`}
             >
-                {task.completed && (
+                {intention.completed && (
                     <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
@@ -171,22 +169,22 @@ function TaskRow({ task, sessionId, editing, drag }: TaskRowProps) {
                 />
             ) : (
                 <span
-                    className={`flex-1 text-sm cursor-text ${task.completed ? 'line-through text-text-light' : ''}`}
-                    onClick={() => editing.startEdit(task)}
+                    className={`flex-1 text-sm cursor-text ${intention.completed ? 'line-through text-text-light' : ''}`}
+                    onClick={() => editing.startEdit(intention)}
                     title="Click to edit"
                 >
-                    {task.title}
+                    {intention.isHabit && <span className="mr-1">🔄</span>}
+                    {intention.title}
                 </span>
             )}
 
             <span
-                className={`ml-auto text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${
-                    task.type === 'main'
+                className={`ml-auto text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${intention.type === 'main'
                         ? 'bg-accent/10 text-accent'
                         : 'bg-surface-dark text-text-light'
-                }`}
+                    }`}
             >
-                {task.type}
+                {intention.type}
             </span>
         </li>
     );
@@ -198,26 +196,30 @@ function SessionCard({
     session,
     isCurrent,
     isPast,
-    tasks,
+    intentions,
     editing,
     drag,
 }: {
     session: SessionSlot;
     isCurrent: boolean;
     isPast: boolean;
-    tasks: Task[];
-    editing: ReturnType<typeof useTaskEditing>;
-    drag: ReturnType<typeof useTaskDrag>;
+    intentions: Intention[];
+    editing: ReturnType<typeof useIntentionEditing>;
+    drag: ReturnType<typeof useIntentionDrag>;
 }) {
+    // Background nudge banner for active session
+    const bgNudges = isCurrent
+        ? intentions.filter((i) => i.type === 'background' && !i.completed)
+        : [];
+
     return (
         <Card
-            className={`transition-all duration-300 ${
-                isCurrent
+            className={`transition-all duration-300 ${isCurrent
                     ? 'ring-2 ring-accent/30 border-accent/40'
                     : isPast
                         ? 'opacity-50'
                         : ''
-            }`}
+                }`}
         >
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -231,12 +233,19 @@ function SessionCard({
                 </span>
             </div>
 
-            {tasks.length > 0 ? (
+            {/* Background nudge banner */}
+            {bgNudges.length > 0 && (
+                <div className="mb-3 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
+                    Don't forget: {bgNudges.map((i) => i.title).join(', ')}
+                </div>
+            )}
+
+            {intentions.length > 0 ? (
                 <ul className="space-y-1.5">
-                    {tasks.map((task) => (
-                        <TaskRow
-                            key={task.id}
-                            task={task}
+                    {intentions.map((intention) => (
+                        <IntentionRow
+                            key={intention.id}
+                            intention={intention}
                             sessionId={session.id}
                             editing={editing}
                             drag={drag}
@@ -244,7 +253,7 @@ function SessionCard({
                     ))}
                 </ul>
             ) : (
-                <p className="text-xs text-text-light">No tasks scheduled</p>
+                <p className="text-xs text-text-light">No intentions scheduled</p>
             )}
         </Card>
     );
@@ -255,8 +264,8 @@ function SessionCard({
 export function CurrentSession() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
-    const editing = useTaskEditing();
-    const drag = useTaskDrag();
+    const editing = useIntentionEditing();
+    const drag = useIntentionDrag();
 
     if (!currentSession) {
         return (
@@ -266,17 +275,17 @@ export function CurrentSession() {
         );
     }
 
-    const assignedIds = plan.taskSessions[currentSession.id] ?? [];
-    const tasks = assignedIds
-        .map((id) => plan.tasks.find((t) => t.id === id))
-        .filter((t): t is Task => t !== undefined);
+    const assignedIds = plan.intentionSessions[currentSession.id] ?? [];
+    const intentions = assignedIds
+        .map((id) => plan.intentions.find((i) => i.id === id))
+        .filter((i): i is Intention => i !== undefined);
 
     return (
         <SessionCard
             session={currentSession}
             isCurrent
             isPast={false}
-            tasks={tasks}
+            intentions={intentions}
             editing={editing}
             drag={drag}
         />
@@ -288,18 +297,18 @@ export function CurrentSession() {
 export function SessionTimeline() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
-    const editing = useTaskEditing();
-    const drag = useTaskDrag();
+    const editing = useIntentionEditing();
+    const drag = useIntentionDrag();
 
     return (
         <div className="space-y-4">
             {settings.sessionSlots.map((session) => {
                 const isCurrent = currentSession?.id === session.id;
                 const isPast = !isCurrent && isSessionPast(session.endTime);
-                const assignedIds = plan.taskSessions[session.id] ?? [];
-                const tasks = assignedIds
-                    .map((id) => plan.tasks.find((t) => t.id === id))
-                    .filter((t): t is Task => t !== undefined);
+                const assignedIds = plan.intentionSessions[session.id] ?? [];
+                const intentions = assignedIds
+                    .map((id) => plan.intentions.find((i) => i.id === id))
+                    .filter((i): i is Intention => i !== undefined);
 
                 return (
                     <SessionCard
@@ -307,7 +316,7 @@ export function SessionTimeline() {
                         session={session}
                         isCurrent={isCurrent}
                         isPast={isPast}
-                        tasks={tasks}
+                        intentions={intentions}
                         editing={editing}
                         drag={drag}
                     />

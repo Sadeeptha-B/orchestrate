@@ -7,7 +7,7 @@ export function Step5ScheduleBackground() {
     const { plan, settings, dispatch } = useDayPlan();
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
 
-    const backgroundTasks = plan.tasks.filter((t) => t.type === 'background');
+    const backgroundIntentions = plan.intentions.filter((i) => i.type === 'background');
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 6 });
@@ -17,40 +17,45 @@ export function Step5ScheduleBackground() {
         <WizardLayout onNext={handleNext}>
             <div className="space-y-6 mt-4">
                 <div>
-                    <h2 className="text-2xl font-semibold mb-2">Schedule background tasks</h2>
+                    <h2 className="text-2xl font-semibold mb-2">Schedule nudges &amp; habits</h2>
                     <p className="text-text-light text-sm">
-                        Fill in the gaps with your recurring habits and smaller tasks. Main tasks are shown
-                        for context.
+                        Background intentions appear as gentle nudges during your sessions. You can assign
+                        each one to <strong>multiple sessions</strong> — they'll remind you throughout the day.
                     </p>
                 </div>
 
-                {/* Unassigned background tasks */}
-                {backgroundTasks.filter((t) => !t.assignedSession).length > 0 && (
+                {/* Background intentions overview */}
+                {backgroundIntentions.length > 0 && (
                     <div>
-                        <h3 className="text-sm font-medium text-text-light mb-2">Unassigned</h3>
+                        <h3 className="text-sm font-medium text-text-light mb-2">Your nudges</h3>
                         <div className="flex flex-wrap gap-2">
-                            {backgroundTasks
-                                .filter((t) => !t.assignedSession)
-                                .map((task) => (
-                                    <span
-                                        key={task.id}
-                                        className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
-                                    >
-                                        {task.title}
-                                    </span>
-                                ))}
+                            {backgroundIntentions.map((intention) => (
+                                <span
+                                    key={intention.id}
+                                    className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
+                                >
+                                    {intention.isHabit && '🔄 '}{intention.title}
+                                    {intention.assignedSessions.length > 0 && (
+                                        <span className="ml-1 text-accent">
+                                            ({intention.assignedSessions.length} session{intention.assignedSessions.length !== 1 ? 's' : ''})
+                                        </span>
+                                    )}
+                                </span>
+                            ))}
                         </div>
                     </div>
                 )}
 
                 <div className="space-y-4">
                     {remainingSessions.map((session) => {
-                        const assignedIds = plan.taskSessions[session.id] ?? [];
-                        const mainInSession = plan.tasks.filter(
-                            (t) => t.type === 'main' && assignedIds.includes(t.id),
+                        const assignedIds = plan.intentionSessions[session.id] ?? [];
+                        const mainInSession = plan.intentions.filter(
+                            (i) => i.type === 'main' && assignedIds.includes(i.id),
                         );
-                        const bgInSession = backgroundTasks.filter((t) => assignedIds.includes(t.id));
-                        const unassigned = backgroundTasks.filter((t) => !t.assignedSession);
+                        const bgInSession = backgroundIntentions.filter((i) => assignedIds.includes(i.id));
+                        const notInThisSession = backgroundIntentions.filter(
+                            (i) => !assignedIds.includes(i.id),
+                        );
 
                         return (
                             <Card key={session.id}>
@@ -61,58 +66,58 @@ export function Step5ScheduleBackground() {
                                     </span>
                                 </div>
 
-                                {/* Main tasks (read-only context) */}
+                                {/* Main intentions (read-only context) */}
                                 {mainInSession.length > 0 && (
                                     <div className="flex flex-wrap gap-2 mb-2">
-                                        {mainInSession.map((task) => (
+                                        {mainInSession.map((intention) => (
                                             <span
-                                                key={task.id}
+                                                key={intention.id}
                                                 className="px-3 py-1.5 text-xs rounded-full bg-accent/10 text-accent"
                                             >
-                                                {task.title}
+                                                {intention.title}
                                             </span>
                                         ))}
                                     </div>
                                 )}
 
-                                {/* Assigned background tasks */}
+                                {/* Assigned background intentions */}
                                 {bgInSession.length > 0 && (
                                     <div className="flex flex-wrap gap-2 mb-3">
-                                        {bgInSession.map((task) => (
+                                        {bgInSession.map((intention) => (
                                             <button
-                                                key={task.id}
+                                                key={intention.id}
                                                 onClick={() =>
                                                     dispatch({
-                                                        type: 'UNASSIGN_TASK',
-                                                        taskId: task.id,
+                                                        type: 'UNASSIGN_INTENTION',
+                                                        intentionId: intention.id,
                                                         sessionId: session.id,
                                                     })
                                                 }
                                                 className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
-                                                title="Click to unassign"
+                                                title="Click to remove from this session"
                                             >
-                                                {task.title} ×
+                                                {intention.isHabit && '🔄 '}{intention.title} ×
                                             </button>
                                         ))}
                                     </div>
                                 )}
 
-                                {/* Assign buttons */}
-                                {unassigned.length > 0 && (
+                                {/* Assign buttons — show all not-yet-in-this-session */}
+                                {notInThisSession.length > 0 && (
                                     <div className="flex flex-wrap gap-2">
-                                        {unassigned.map((task) => (
+                                        {notInThisSession.map((intention) => (
                                             <button
-                                                key={task.id}
+                                                key={intention.id}
                                                 onClick={() =>
                                                     dispatch({
-                                                        type: 'ASSIGN_TASK',
-                                                        taskId: task.id,
+                                                        type: 'ASSIGN_INTENTION',
+                                                        intentionId: intention.id,
                                                         sessionId: session.id,
                                                     })
                                                 }
                                                 className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                             >
-                                                + {task.title}
+                                                + {intention.isHabit && '🔄 '}{intention.title}
                                             </button>
                                         ))}
                                     </div>
@@ -120,7 +125,7 @@ export function Step5ScheduleBackground() {
 
                                 {mainInSession.length === 0 &&
                                     bgInSession.length === 0 &&
-                                    unassigned.length === 0 && (
+                                    notInThisSession.length === 0 && (
                                         <p className="text-xs text-text-light">Empty session</p>
                                     )}
                             </Card>

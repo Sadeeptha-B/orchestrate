@@ -29,7 +29,9 @@ function validateImport(data: unknown): SavedDayPlan[] | null {
             typeof (item as SavedDayPlan).savedAt !== 'string' ||
             typeof (item as SavedDayPlan).label !== 'string' ||
             !(item as SavedDayPlan).plan ||
-            !Array.isArray((item as SavedDayPlan).plan?.tasks)
+            // Accept both v1 (tasks) and v2 (intentions) formats
+            (!Array.isArray((item as SavedDayPlan).plan?.intentions) &&
+                !Array.isArray((item as unknown as { plan: { tasks: unknown[] } }).plan?.tasks))
         ) {
             return null;
         }
@@ -125,18 +127,19 @@ export function SavedSessions({ compact = false, hideHeading = false }: SavedSes
 
             <div className="space-y-2">
                 {history.map((entry) => {
-                    const taskCount = entry.plan.tasks.length;
-                    const doneCount = entry.plan.tasks.filter((t) => t.completed).length;
-                    const taskNames = entry.plan.tasks.map((t) => t.title).join('\n');
+                    const items = entry.plan.intentions ?? (entry.plan as unknown as { tasks: typeof entry.plan.intentions }).tasks ?? [];
+                    const itemCount = items.length;
+                    const doneCount = items.filter((i) => i.completed).length;
+                    const itemNames = items.map((i) => i.title).join('\n');
 
                     return (
-                        <Card key={entry.savedAt} className="!p-3" title={taskNames}>
+                        <Card key={entry.savedAt} className="!p-3" title={itemNames}>
                             <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0">
                                     <p className="text-sm font-medium truncate">{entry.label}</p>
                                     <p className="text-xs text-text-light">
-                                        {entry.plan.date} &middot; {doneCount}/{taskCount} tasks
-                                        {!compact && ' done'}
+                                        {entry.plan.date} &middot; {doneCount}/{itemCount} done
+                                        {!compact && ''}
                                     </p>
                                 </div>
                                 <div className="flex gap-2 flex-shrink-0">
