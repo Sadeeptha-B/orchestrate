@@ -22,6 +22,8 @@ export interface TodoistTask {
     } | null;
     priority: number;
     project_id: string;
+    section_id: string | null;
+    parent_id: string | null;
     labels: string[];
     child_order: number;
 }
@@ -30,7 +32,16 @@ export interface TodoistProject {
     id: string;
     name: string;
     color: string;
+    parent_id: string | null;
     child_order: number;
+    is_collapsed: boolean;
+}
+
+export interface TodoistSection {
+    id: string;
+    name: string;
+    project_id: string;
+    section_order: number;
 }
 
 /** Paginated response shape from Todoist API v1 */
@@ -105,6 +116,7 @@ export function useTodoist() {
     const { settings } = useDayPlan();
     const [tasks, setTasks] = useState<TodoistTask[]>([]);
     const [projects, setProjects] = useState<TodoistProject[]>([]);
+    const [sections, setSections] = useState<TodoistSection[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const tokenRef = useRef<string | null>(null);
@@ -157,18 +169,30 @@ export function useTodoist() {
         }
     }, [resolveToken]);
 
+    const refreshSections = useCallback(async () => {
+        const token = await resolveToken();
+        if (!token) return;
+        try {
+            const allSections = await fetchAllPages<TodoistSection>(token, '/sections');
+            setSections(allSections);
+        } catch {
+            // silently fail
+        }
+    }, [resolveToken]);
+
     // Auto-fetch on mount and window focus
     useEffect(() => {
         if (!isConfigured) return;
         refreshTasks();
         refreshProjects();
+        refreshSections();
 
         const onFocus = () => {
             refreshTasks();
         };
         window.addEventListener('focus', onFocus);
         return () => window.removeEventListener('focus', onFocus);
-    }, [isConfigured, refreshTasks, refreshProjects]);
+    }, [isConfigured, refreshTasks, refreshProjects, refreshSections]);
 
     const createTask = useCallback(
         async (content: string, opts?: CreateTaskOpts) => {
@@ -231,6 +255,7 @@ export function useTodoist() {
     return {
         tasks,
         projects,
+        sections,
         loading,
         error,
         isConfigured,
@@ -239,6 +264,7 @@ export function useTodoist() {
         reopenTask,
         refreshTasks,
         refreshProjects,
+        refreshSections,
     };
 }
 

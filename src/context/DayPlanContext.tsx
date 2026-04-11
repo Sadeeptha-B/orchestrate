@@ -88,7 +88,13 @@ function loadSettings(): AppSettings {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY);
         if (!raw) return { notificationPreference: 'both', sessionSlots: defaultSessionSlots };
-        return JSON.parse(raw) as AppSettings;
+        const parsed = JSON.parse(raw) as AppSettings & { googleCalendarId?: string };
+        // Migrate legacy single-string googleCalendarId → googleCalendarIds array
+        if (!parsed.googleCalendarIds && parsed.googleCalendarId) {
+            parsed.googleCalendarIds = [parsed.googleCalendarId];
+            delete parsed.googleCalendarId;
+        }
+        return parsed;
     } catch {
         return { notificationPreference: 'both', sessionSlots: defaultSessionSlots };
     }

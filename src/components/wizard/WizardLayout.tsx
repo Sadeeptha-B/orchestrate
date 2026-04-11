@@ -2,9 +2,11 @@ import { useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import { Button } from '../ui/Button';
+import { Modal } from '../ui/Modal';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useTheme } from '../../hooks/useTheme';
 import { SavedSessions } from '../dashboard/SavedSessions';
+import { TodoistSetup } from '../todoist/TodoistSetup';
 
 const TOTAL_STEPS = 5;
 const PANEL_MIN = 220;
@@ -47,6 +49,8 @@ export function WizardLayout({
     const showSidebar = !isEditing;
     const [panelOpen, setPanelOpen] = useState(showSidebar);
     const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT);
+    const [showSettings, setShowSettings] = useState(false);
+    const [showAbout, setShowAbout] = useState(false);
     const dragging = useRef(false);
     const startX = useRef(0);
     const startWidth = useRef(PANEL_DEFAULT);
@@ -157,6 +161,20 @@ export function WizardLayout({
                                 </Button>
                             )}
                             <button
+                                onClick={() => setShowAbout(true)}
+                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"
+                                title="About Orchestrate"
+                            >
+                                ?
+                            </button>
+                            <button
+                                onClick={() => setShowSettings(true)}
+                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
+                                title="Integrations"
+                            >
+                                ⚙
+                            </button>
+                            <button
                                 onClick={toggleTheme}
                                 className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
                                 title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -221,6 +239,46 @@ export function WizardLayout({
                     </div>
                 </footer>
             </div>
+
+            {/* Settings modal */}
+            <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Integrations">
+                <TodoistSetup />
+            </Modal>
+
+            {/* About modal */}
+            <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
+                <div className="space-y-3 text-sm text-text-light">
+                    <p>
+                        Orchestrate is a <strong className="text-text">daily companion app</strong> — not a replacement
+                        for your task manager or calendar. It sits alongside tools like Todoist and Google Calendar to
+                        help you start each day with clarity.
+                    </p>
+                    <p>
+                        Task managers are great at holding lists, but they don't solve the friction of
+                        <strong className="text-text"> contextualizing your day</strong>. Todolists tend to be "epics" —
+                        broad ongoing projects. When starting a new day, you don't think in epics; you think in
+                        <strong className="text-text"> intentions</strong>: specific goals for today.
+                    </p>
+                    <p>
+                        Orchestrate walks you through turning those intentions into a structured day: mapping them
+                        to tasks, scheduling them into sessions, and keeping you on track with music and hourly check-ins.
+                    </p>
+                    <p>
+                        It counters <strong className="text-text">task blindness and time blindness</strong> by
+                        nudging you to recontextualize throughout the day — so you stay connected to what matters.
+                    </p>
+                    <p className="text-xs pt-1 border-t border-border">
+                        Connect Todoist and Google Calendar in{' '}
+                        <button
+                            onClick={() => { setShowAbout(false); setShowSettings(true); }}
+                            className="text-accent hover:underline cursor-pointer"
+                        >
+                            Integrations
+                        </button>{' '}
+                        to get the most out of this app.
+                    </p>
+                </div>
+            </Modal>
         </div>
     );
 }

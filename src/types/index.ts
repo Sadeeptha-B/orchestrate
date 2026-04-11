@@ -68,5 +68,5 @@ export interface AppSettings {
     todoistToken?: string;
     todoistTokenIV?: string;
     todoistTokenKey?: string;
-    googleCalendarId?: string;
+    googleCalendarIds?: string[];
 }

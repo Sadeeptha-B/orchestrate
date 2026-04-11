@@ -37,9 +37,10 @@ Trevor AI sets `X-Frame-Options: DENY` and modern browsers block cross-origin co
 - **Rate limits**: 450 requests/min — more than sufficient.
 
 #### Google Calendar Embed
-- **Method**: Official embeddable iframe URL: `https://calendar.google.com/calendar/embed?src={calendarId}&mode=week`
+- **Method**: Official embeddable iframe URL: `https://calendar.google.com/calendar/embed?src={id1}&src={id2}&mode=week`
+- **Multiple calendars**: Repeating `src` params overlays calendars in different colors within a single embed.
 - **Auth**: None needed — works if user is logged into Google in the same browser. Read-only.
-- **Configurable**: User enters their calendar ID (default: `primary`) in settings.
+- **Configurable**: User adds one or more calendar IDs in settings. Stored as `googleCalendarIds: string[]` (migrated from legacy single-string `googleCalendarId`).
 - **Why this works**: Google Calendar explicitly supports embedding (`X-Frame-Options: ALLOWALL` on embed endpoint).
 
 #### Data Flow
@@ -91,7 +92,7 @@ export interface AppSettings {
     todoistToken?: string;       // encrypted token blob (base64)
     todoistTokenIV?: string;     // AES-GCM IV (base64)
     todoistTokenKey?: string;    // AES key (exported, base64)
-    googleCalendarId?: string;   // e.g. "primary" or user's email
+    googleCalendarIds?: string[];  // array of calendar IDs to overlay
 }
 ```
 
@@ -116,9 +117,10 @@ All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`
 
 #### `src/hooks/useTodoist.ts` — Todoist API hook
 - Decrypts token from settings on mount
-- Exposes: `{ tasks, projects, loading, error, isConfigured, createTask, completeTask, reopenTask, refreshTasks, refreshProjects }`
-- `tasks` fetched via `GET /api/v1/tasks` (paginated, extracts `.results`)
-- `projects` fetched via `GET /api/v1/projects` (paginated, extracts `.results`)
+- Exposes: `{ tasks, projects, sections, loading, error, isConfigured, createTask, completeTask, reopenTask, refreshTasks, refreshProjects, refreshSections }`
+- `tasks` fetched via `GET /api/v1/tasks` (paginated, extracts `.results`) — includes `section_id`, `parent_id` for hierarchy
+- `projects` fetched via `GET /api/v1/projects` (paginated, extracts `.results`) — includes `parent_id` for nesting
+- `sections` fetched via `GET /api/v1/sections` (paginated, extracts `.results`) — groups tasks within projects
 - `createTask(content, opts?)` → `POST /api/v1/tasks`
 - `completeTask(taskId)` → `POST /api/v1/sync` with `item_complete` command
 - `reopenTask(taskId)` → `POST /api/v1/sync` with `item_uncomplete` command
@@ -126,21 +128,28 @@ All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`
 - Caches tasks in React state; `refreshTasks()` to re-fetch; auto-refresh on window focus
 - Returns `isConfigured: false` if no token in settings
 
-#### `src/components/todoist/TodoistPanel.tsx` — Inline task panel
-- Shows Todoist tasks: checkboxes, create-task input, project filter dropdown
-- Two modes: `compact` (minimal) and `full` (expanded with project filter)
+#### `src/components/todoist/TodoistPanel.tsx` — Nested project tree panel
+- Displays tasks in a **collapsible nested tree** mirroring Todoist's sidebar structure:
+  - **Projects** nested via `parent_id` (areas → epics), with Todoist color dots and task count badges
+  - **Sections** within projects group related tasks, with collapsible headers
+  - **Sub-tasks** rendered recursively under parent tasks via `parent_id`
+- Two modes: `compact` (tree only, no create input, hides due dates) and `full` (tree + project picker + create task input)
+- Tree sorted by `child_order` / `section_order` at each level
+- Top-level projects expanded by default; sub-projects start collapsed
+- Create-task input includes a hierarchical project picker dropdown
 - Unconfigured state: shows setup prompt linking to Settings
 - Styled to match Orchestrate's existing card/border design
 
 #### `src/components/todoist/TodoistSetup.tsx` — Settings section
 - Token input (masked), "Test & Save" button, "Disconnect" button
-- Google Calendar ID input (default: `primary`)
+- Google Calendar: add/remove multiple calendar IDs with inline list
 - Links to Todoist developer settings page
 
 #### `src/components/todoist/GoogleCalendarEmbed.tsx` — Calendar embed
-- Accepts `calendarId` prop from settings
+- Reads `googleCalendarIds` array from settings
+- Builds iframe URL with multiple `src=` params to overlay all calendars
 - Google Calendar embed iframe, `mode=week`, current date
-- Fallback message if no calendar ID configured
+- Fallback message if no calendar IDs configured
 
 ---
 
@@ -149,15 +158,14 @@ All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`
 The wizard was originally 6 steps; Step 1 (Set Intentions) and Step 2 (Map to Todolist) were merged into a single step since the todolist provides the epic-level view that aids intention setting. Existing plans are automatically migrated via a `_wizardSteps` version marker.
 
 #### Step 1: Set & Map Intentions (merged from old Steps 1+2)
-**Layout**: Split view — left (intention entry + breakdown walkthrough) + right (TodoistPanel)
+**Layout**: Split view — left (two-phase intention flow) + right (TodoistPanel)
 
 - Left panel (~40%):
-  - Intention input + editable list (add, edit, drag-reorder, delete)
-  - Breakdown checklist: mark each intention as "broken down" into tasks
-  - Quick checks: review todolist, create/update calendar events
+  - **Phase 1 — Set intentions**: Input + editable list (add, edit, drag-reorder, delete). "Start mapping →" button to proceed.
+  - **Phase 2 — Sequential mapping**: Intentions presented one at a time. Current intention highlighted with "Done — next/finish". Progress bar tracks completion. New intentions can still be added (queued for later mapping). Reordering disabled during mapping.
 - Right panel (~60%): `TodoistPanel` full mode — create/complete/filter tasks inline
 - If Todoist not configured: panel shows setup prompt
-- Advance condition: at least one intention added
+- Advance condition: at least one intention added and mapping started
 - Pill label: **"Intentions"**
 
 #### Step 2: Categorize (was Step 3)
@@ -189,7 +197,7 @@ Both below music panel, above session timeline.
 
 Add **Integrations** section (new settings modal or expand existing):
 - Todoist API Token: masked input, test/save/disconnect
-- Google Calendar ID: text input, default `primary`
+- Google Calendar IDs: add/remove list of calendar IDs (overlaid in a single embed)
 - Link to: `https://app.todoist.com/app/settings/integrations/developer`
 
 ---
@@ -233,8 +241,9 @@ REST v2 (`/rest/v2/`) was sunset by Todoist and returns `410 Gone`. All endpoint
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/v1/projects` | GET | List projects — paginated `{ results, next_cursor }` (also token validation) |
-| `/api/v1/tasks` | GET | List active tasks — paginated `{ results, next_cursor }` (`project_id` param) |
+| `/api/v1/projects` | GET | List projects — paginated `{ results, next_cursor }` — includes `parent_id` for hierarchy (also token validation) |
+| `/api/v1/sections` | GET | List sections — paginated `{ results, next_cursor }` — optional `project_id` filter |
+| `/api/v1/tasks` | GET | List active tasks — paginated `{ results, next_cursor }` — includes `section_id`, `parent_id` (`project_id` param) |
 | `/api/v1/tasks` | POST | Create task (JSON body: `{ content, project_id?, ... }`) |
 | `/api/v1/tasks/{id}` | POST | Update task |
 | `/api/v1/sync` | POST | Sync endpoint for complete (`item_complete`) and reopen (`item_uncomplete`) |
@@ -258,3 +267,59 @@ All requests: `Authorization: Bearer {token}`. GET responses paginated JSON. Syn
 - **Parallel data model**: Orchestrate owns intentions/sessions, Todoist owns tasks, GCal provides time context
 - **Multi-session assignment**: Only for background intentions
 - **Step count reduced from 6 to 5** — intention entry and todolist mapping merged into one step
+
+---
+
+### Iteration 3.1 — Bug Fixes, File Cleanup & Step 1 UX Redesign
+
+#### Bug Fixes (all implemented ✅)
+
+| # | Issue | Severity | Fix |
+|---|-------|----------|-----|
+| 1 | `useCurrentSession` used `useMemo` with only `[slots]` — never re-evaluated as time passed, so dashboard showed stale session data | **Critical** | Added a `tick` state that increments every 60s, included in `useMemo` deps |
+| 2 | `RESTORE_DAY` did `structuredClone` without running `migratePlan` — restoring a v1 import crashed the app | **Critical** | Restore now calls `migratePlan()` on the saved plan |
+| 3 | Todoist `refreshTasks`/`refreshProjects` only fetched the first page of paginated results — users with many tasks saw a partial list | Moderate | Added `fetchAllPages<T>()` helper that loops `next_cursor` until exhausted |
+| 4 | No React error boundary — any rendering error crashed the entire app with a white screen | Moderate | Added `ErrorBoundary` component wrapping `<DayPlanProvider>` in `App.tsx`, with "Try Again" and "Reset & Reload" recovery |
+| 5 | Modal `onKeyDown` for Escape was on the backdrop `<div>` (required focus) — pressing Escape anywhere didn't close modals | Moderate | Replaced with `useEffect` document-level `keydown` listener |
+| 6 | No catch-all route — unknown paths rendered blank | Moderate | Added `<Route path="*" element={<Navigate to="/" />} />` |
+| 7 | `SAVE_DAY` appended a new entry every time — saving multiple times created duplicates for the same date | Moderate | Now filters out existing snapshots for the same `plan.date` before prepending |
+| 8 | `package.json` name was still `"routinify"` from before the rename | Minor | Changed to `"orchestrate"` |
+| 9 | `getPlaylistForWorkType` used `as never` cast | Minor | Replaced with `(p.workTypes as string[]).includes(workType)` |
+| 10 | `new Date(plan.date)` in Dashboard parsed `YYYY-MM-DD` as UTC midnight — showed wrong day in negative-offset timezones | Minor | Replaced with `parseISO()` from date-fns |
+
+#### File Renames (wizard steps — implemented ✅)
+
+Wizard was reduced from 6 to 5 steps in v3, but file names and export names still reflected the old numbering. Renamed for consistency:
+
+| Old file | New file | Export |
+|----------|----------|--------|
+| `Step2TodolistSync.tsx` | `Step1Intentions.tsx` | `Step1Intentions` |
+| `Step3Categorize.tsx` | `Step2Categorize.tsx` | `Step2Categorize` |
+| `Step4ScheduleMain.tsx` | `Step3ScheduleMain.tsx` | `Step3ScheduleMain` |
+| `Step5ScheduleBackground.tsx` | `Step4ScheduleBackground.tsx` | `Step4ScheduleBackground` |
+| `Step6StartMusic.tsx` | `Step5StartMusic.tsx` | `Step5StartMusic` |
+
+Only consumer is `Wizard.tsx` — all imports updated. No changes outside `wizard/`.
+
+#### Step 1 UX Redesign — Two-Phase Sequential Flow (implemented ✅)
+
+Replaced the flat all-at-once layout with a guided two-phase approach:
+
+**Phase 1 — Set intentions:**
+- Input field + `EditableTaskList` (drag-reorder, edit, remove)
+- Heading: "What are your intentions for today?"
+- "Start mapping →" button appears once at least one intention exists
+- "Continue" (footer) is disabled until mapping starts — forces the user through the flow
+- Quick Checks section removed (no longer necessary)
+
+**Phase 2 — Sequential mapping (triggered by "Start mapping"):**
+- Input stays available for adding more intentions (they queue at the end for mapping)
+- Progress bar shows `brokenDown / total`
+- Completed intentions collapse into a compact checkmark list
+- **Current intention** is highlighted in a prominent bordered card with "Done — next/finish"
+- Upcoming count shown: "N more intentions after this"
+- Reordering is disabled during mapping (simplifies the sequential flow)
+- When all mapped: success message nudging toward the next step
+- Auto-enters phase 2 if returning with any already-broken-down intentions
+
+**Rationale:** The previous design showed all intentions and the breakdown checklist simultaneously, which was overwhelming. The sequential approach mirrors the actual workflow — one intention at a time — and reduces cognitive load.

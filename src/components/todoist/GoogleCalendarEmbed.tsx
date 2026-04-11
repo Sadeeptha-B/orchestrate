@@ -12,9 +12,9 @@ export function GoogleCalendarEmbed({
     onSetup,
 }: GoogleCalendarEmbedProps) {
     const { settings } = useDayPlan();
-    const calendarId = settings.googleCalendarId;
+    const calendarIds = settings.googleCalendarIds;
 
-    if (!calendarId) {
+    if (!calendarIds || calendarIds.length === 0) {
         return (
             <div
                 className={`flex flex-col items-center justify-center border border-border rounded-lg bg-card text-center p-6 ${className}`}
@@ -32,14 +32,15 @@ export function GoogleCalendarEmbed({
                     </button>
                 ) : (
                     <p className="text-xs text-text-light">
-                        Go to Settings → Integrations to add your calendar ID.
+                        Go to Settings → Integrations to add your calendars.
                     </p>
                 )}
             </div>
         );
     }
 
-    const src = `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(calendarId)}&mode=week&showTitle=0&showNav=1&showPrint=0&showTabs=0&showCalendars=0`;
+    const srcParams = calendarIds.map((id) => `src=${encodeURIComponent(id)}`).join('&');
+    const src = `https://calendar.google.com/calendar/embed?${srcParams}&mode=week&showTitle=0&showNav=1&showPrint=0&showTabs=0&showCalendars=0`;
 
     return (
         <div

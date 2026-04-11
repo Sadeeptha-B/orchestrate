@@ -7,7 +7,8 @@ import { Button } from '../ui/Button';
 export function TodoistSetup() {
     const { settings, dispatch } = useDayPlan();
     const [token, setToken] = useState('');
-    const [calendarId, setCalendarId] = useState(settings.googleCalendarId ?? '');
+    const [calendarIds, setCalendarIds] = useState<string[]>(settings.googleCalendarIds ?? []);
+    const [newCalendarId, setNewCalendarId] = useState('');
     const [testing, setTesting] = useState(false);
     const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -51,10 +52,24 @@ export function TodoistSetup() {
         setStatus('idle');
     };
 
-    const handleSaveCalendar = () => {
+    const handleAddCalendar = () => {
+        const id = newCalendarId.trim();
+        if (!id || calendarIds.includes(id)) return;
+        const updated = [...calendarIds, id];
+        setCalendarIds(updated);
+        setNewCalendarId('');
         dispatch({
             type: 'UPDATE_SETTINGS',
-            settings: { googleCalendarId: calendarId.trim() || undefined },
+            settings: { googleCalendarIds: updated },
+        });
+    };
+
+    const handleRemoveCalendar = (id: string) => {
+        const updated = calendarIds.filter((c) => c !== id);
+        setCalendarIds(updated);
+        dispatch({
+            type: 'UPDATE_SETTINGS',
+            settings: { googleCalendarIds: updated.length > 0 ? updated : undefined },
         });
     };
 
@@ -108,25 +123,41 @@ export function TodoistSetup() {
                 )}
             </div>
 
-            {/* Google Calendar ID */}
+            {/* Google Calendar IDs */}
             <div>
-                <h3 className="text-sm font-semibold mb-2">Google Calendar</h3>
+                <h3 className="text-sm font-semibold mb-2">Google Calendars</h3>
                 <p className="text-xs text-text-light mb-2">
-                    Enter your calendar ID to show a read-only weekly view. Use{' '}
-                    <code className="text-xs bg-surface-dark px-1 py-0.5 rounded">primary</code> or
-                    your email address.
+                    Add calendar IDs to overlay in the weekly view. Use{' '}
+                    <code className="text-xs bg-surface-dark px-1 py-0.5 rounded">primary</code>,
+                    your email, or a calendar ID from Google Calendar settings.
                 </p>
+                {calendarIds.length > 0 && (
+                    <ul className="space-y-1 mb-2">
+                        {calendarIds.map((id) => (
+                            <li key={id} className="flex items-center gap-2 text-sm">
+                                <span className="flex-1 truncate text-text-light">{id}</span>
+                                <button
+                                    onClick={() => handleRemoveCalendar(id)}
+                                    className="text-xs text-red-500 hover:text-red-400 cursor-pointer"
+                                    title="Remove"
+                                >
+                                    ✕
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
                 <div className="flex gap-2">
                     <input
                         type="text"
-                        value={calendarId}
-                        onChange={(e) => setCalendarId(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSaveCalendar()}
+                        value={newCalendarId}
+                        onChange={(e) => setNewCalendarId(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddCalendar()}
                         placeholder="primary"
                         className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
                     />
-                    <Button variant="secondary" size="sm" onClick={handleSaveCalendar}>
-                        Save
+                    <Button variant="secondary" size="sm" onClick={handleAddCalendar} disabled={!newCalendarId.trim()}>
+                        Add
                     </Button>
                 </div>
             </div>

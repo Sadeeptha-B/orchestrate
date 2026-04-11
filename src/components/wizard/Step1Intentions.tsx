@@ -2,17 +2,27 @@ import { useState, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { Button } from '../ui/Button';
+import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
 import { TodoistPanel } from '../todoist/TodoistPanel';
-
-const CHECKLIST_ITEMS = [
-    { key: 'reviewTodolist', label: 'I have reviewed my external todolist' },
-    { key: 'createEvents', label: 'I have created / updated calendar events as needed' },
-];
+import { TodoistSetup } from '../todoist/TodoistSetup';
 
 export function Step1Intentions() {
-    const { plan, dispatch } = useDayPlan();
+    const { plan, settings, dispatch } = useDayPlan();
     const [input, setInput] = useState('');
+    const [showSetup, setShowSetup] = useState(false);
+    const [mappingStarted, setMappingStarted] = useState(
+        () => plan.intentions.some((i) => i.brokenDown),
+    );
+
+    const todoistConfigured = Boolean(
+        settings.todoistToken && settings.todoistTokenIV && settings.todoistTokenKey,
+    );
+    const calendarConfigured = Boolean(
+        settings.googleCalendarIds && settings.googleCalendarIds.length > 0,
+    );
+    const fullyConfigured = todoistConfigured && calendarConfigured;
+    const [bannerDismissed, setBannerDismissed] = useState(false);
 
     const addIntention = () => {
         const title = input.trim();
@@ -28,114 +38,215 @@ export function Step1Intentions() {
         }
     };
 
-    const allBrokenDown = plan.intentions.every((i) => i.brokenDown);
+    const currentMappingIntention = plan.intentions.find((i) => !i.brokenDown);
+    const brokenDownCount = plan.intentions.filter((i) => i.brokenDown).length;
+    const allBrokenDown = plan.intentions.length > 0 && plan.intentions.every((i) => i.brokenDown);
+    const upcomingCount = currentMappingIntention
+        ? plan.intentions.filter((i) => !i.brokenDown && i.id !== currentMappingIntention.id).length
+        : 0;
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 2 });
     };
 
+    const markCurrentBrokenDown = () => {
+        if (!currentMappingIntention) return;
+        dispatch({
+            type: 'MARK_BROKEN_DOWN',
+            intentionId: currentMappingIntention.id,
+            brokenDown: true,
+        });
+    };
+
     return (
-        <WizardLayout canAdvance={plan.intentions.length > 0} onNext={handleNext} wide>
-            <div className="flex flex-col lg:flex-row gap-6 mt-4" style={{ minHeight: '60vh' }}>
-                {/* Left panel: intention entry + breakdown walkthrough */}
-                <div className="lg:w-[40%] flex-shrink-0 space-y-5 overflow-y-auto">
-                    <div>
-                        <h2 className="text-2xl font-semibold mb-2">
-                            Set &amp; map your intentions
-                        </h2>
-                        <p className="text-text-light text-sm">
-                            Write down your specific goals for the day, then break each one
-                            down into actionable tasks in your todolist.
+        <WizardLayout canAdvance={plan.intentions.length > 0 && mappingStarted} onNext={handleNext} wide>
+            {/* Onboarding banner when integrations are not configured */}
+            {!fullyConfigured && !bannerDismissed && (
+                <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle/20 px-5 py-4 flex items-start gap-4">
+                    <span className="text-2xl leading-none mt-0.5">🔗</span>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-text">
+                            Orchestrate works best with Todoist and Google Calendar
                         </p>
+                        <p className="text-xs text-text-light mt-1">
+                            {!todoistConfigured && !calendarConfigured
+                                ? 'Connect your Todoist account and add your Google Calendar to get the full planning experience.'
+                                : !todoistConfigured
+                                    ? 'Connect your Todoist account to manage tasks directly from here.'
+                                    : 'Add your Google Calendar to see your schedule alongside your tasks.'}
+                        </p>
+                        <div className="flex gap-2 mt-3">
+                            <Button size="sm" variant="primary" onClick={() => setShowSetup(true)}>
+                                Set up integrations
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setBannerDismissed(true)}>
+                                Dismiss
+                            </Button>
+                        </div>
                     </div>
+                </div>
+            )}
 
-                    {/* Add intention input */}
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Add an intention..."
-                            className="flex-1 px-4 py-2 rounded-lg border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
-                        />
-                        <Button onClick={addIntention} disabled={!input.trim()} size="md">
-                            Add
-                        </Button>
-                    </div>
+            <div className="flex flex-col lg:flex-row gap-6 mt-4" style={{ minHeight: '60vh' }}>
+                {/* Left panel */}
+                <div className="lg:w-[40%] flex-shrink-0 space-y-5 overflow-y-auto">
+                    {!mappingStarted ? (
+                        /* ── Phase 1: Set intentions ── */
+                        <>
+                            <div>
+                                <h2 className="text-2xl font-semibold mb-2">
+                                    What are your intentions for today?
+                                </h2>
+                                <p className="text-text-light text-sm">
+                                    Intentions are specific goals — not epics. What do you want to
+                                    accomplish today?
+                                </p>
+                            </div>
 
-                    {/* Editable intention list */}
-                    {plan.intentions.length > 0 && (
-                        <EditableTaskList tasks={plan.intentions} />
-                    )}
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    placeholder="Add an intention..."
+                                    className="flex-1 px-4 py-2 rounded-lg border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                                    autoFocus
+                                />
+                                <Button onClick={addIntention} disabled={!input.trim()} size="md">
+                                    Add
+                                </Button>
+                            </div>
 
-                    {/* Intention breakdown checklist */}
-                    {plan.intentions.length > 0 && (
-                        <div className="space-y-2 pt-2 border-t border-border">
-                            <h3 className="text-xs font-medium text-text-light uppercase tracking-wider">
-                                Break down into tasks
-                            </h3>
-                            {plan.intentions.map((intention) => (
-                                <label
-                                    key={intention.id}
-                                    className={`flex items-start gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${intention.brokenDown
-                                        ? 'bg-accent-subtle/40 border-accent/20'
-                                        : 'bg-card border-border hover:border-accent/30'
-                                        }`}
+                            {plan.intentions.length > 0 && (
+                                <EditableTaskList tasks={plan.intentions} />
+                            )}
+
+                            {plan.intentions.length > 0 && (
+                                <Button
+                                    onClick={() => setMappingStarted(true)}
+                                    variant="primary"
+                                    size="md"
                                 >
-                                    <input
-                                        type="checkbox"
-                                        checked={intention.brokenDown}
-                                        onChange={() =>
-                                            dispatch({
-                                                type: 'MARK_BROKEN_DOWN',
-                                                intentionId: intention.id,
-                                                brokenDown: !intention.brokenDown,
-                                            })
-                                        }
-                                        className="w-4 h-4 mt-0.5 rounded border-border text-accent focus:ring-accent/30 accent-accent flex-shrink-0"
-                                    />
-                                    <div className="min-w-0">
-                                        <span className={`text-sm font-medium ${intention.brokenDown ? 'line-through text-text-light' : ''}`}>
-                                            {intention.title}
-                                        </span>
-                                        {!intention.brokenDown && (
-                                            <p className="text-xs text-text-light mt-0.5">
-                                                Break this down into actionable tasks →
-                                            </p>
-                                        )}
-                                    </div>
-                                </label>
-                            ))}
+                                    Start mapping →
+                                </Button>
+                            )}
+                        </>
+                    ) : (
+                        /* ── Phase 2: Sequential mapping ── */
+                        <>
+                            <div>
+                                <h2 className="text-2xl font-semibold mb-2">
+                                    Break down your intentions
+                                </h2>
+                                <p className="text-text-light text-sm">
+                                    Go through each intention and break it into actionable tasks
+                                    in your todolist.
+                                </p>
+                            </div>
 
-                            {allBrokenDown && (
-                                <p className="text-xs text-success font-medium">
-                                    All intentions broken down — nice work!
+                            {/* Add more intentions during mapping */}
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    placeholder="Add another intention..."
+                                    className="flex-1 px-4 py-2 rounded-lg border border-border bg-card text-text text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                                />
+                                <Button onClick={addIntention} disabled={!input.trim()} size="md">
+                                    Add
+                                </Button>
+                            </div>
+
+                            {/* Progress */}
+                            <div>
+                                <div className="flex justify-between text-xs text-text-light mb-1.5">
+                                    <span>Mapping progress</span>
+                                    <span>{brokenDownCount}/{plan.intentions.length}</span>
+                                </div>
+                                <div className="h-1.5 bg-surface-dark rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-accent rounded-full transition-all duration-500 ease-out"
+                                        style={{
+                                            width: plan.intentions.length > 0
+                                                ? `${(brokenDownCount / plan.intentions.length) * 100}%`
+                                                : '0%',
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Already mapped */}
+                            {brokenDownCount > 0 && (
+                                <div className="space-y-1">
+                                    {plan.intentions
+                                        .filter((i) => i.brokenDown)
+                                        .map((intention) => (
+                                            <div
+                                                key={intention.id}
+                                                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-light"
+                                            >
+                                                <svg
+                                                    className="w-4 h-4 text-success flex-shrink-0"
+                                                    fill="none"
+                                                    viewBox="0 0 24 24"
+                                                    stroke="currentColor"
+                                                    strokeWidth={2}
+                                                >
+                                                    <path
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                        d="M5 13l4 4L19 7"
+                                                    />
+                                                </svg>
+                                                <span className="line-through">{intention.title}</span>
+                                            </div>
+                                        ))}
+                                </div>
+                            )}
+
+                            {/* Current intention to map */}
+                            {currentMappingIntention && (
+                                <div className="bg-card rounded-lg border-2 border-accent/30 p-5 space-y-3">
+                                    <div>
+                                        <span className="text-xs font-medium text-accent uppercase tracking-wider">
+                                            Current
+                                        </span>
+                                        <h3 className="text-lg font-semibold mt-1">
+                                            {currentMappingIntention.title}
+                                        </h3>
+                                        <p className="text-sm text-text-light mt-1">
+                                            Break this down into actionable tasks in your todolist →
+                                        </p>
+                                    </div>
+                                    <Button onClick={markCurrentBrokenDown} size="sm">
+                                        Done — {upcomingCount > 0 ? 'next' : 'finish'}
+                                    </Button>
+                                </div>
+                            )}
+
+                            {/* Upcoming count */}
+                            {upcomingCount > 0 && (
+                                <p className="text-xs text-text-light">
+                                    {upcomingCount} more intention{upcomingCount !== 1 ? 's' : ''} after this
                                 </p>
                             )}
-                        </div>
-                    )}
 
-                    {/* Secondary sync checklist */}
-                    <div className="space-y-2 pt-2 border-t border-border">
-                        <h3 className="text-xs font-medium text-text-light uppercase tracking-wider">
-                            Quick checks
-                        </h3>
-                        {CHECKLIST_ITEMS.map((item) => (
-                            <label
-                                key={item.key}
-                                className="flex items-center gap-3 px-4 py-2.5 bg-card rounded-lg border border-border cursor-pointer hover:bg-surface-dark/50 transition-colors"
-                            >
-                                <input
-                                    type="checkbox"
-                                    checked={plan.syncChecklist[item.key] ?? false}
-                                    onChange={() => dispatch({ type: 'TOGGLE_SYNC_ITEM', key: item.key })}
-                                    className="w-4 h-4 rounded border-border text-accent focus:ring-accent/30 accent-accent"
-                                />
-                                <span className="text-sm">{item.label}</span>
-                            </label>
-                        ))}
-                    </div>
+                            {/* All done */}
+                            {allBrokenDown && (
+                                <div className="bg-accent-subtle/40 rounded-lg p-4 text-center">
+                                    <p className="text-sm font-medium text-accent">
+                                        All intentions mapped — nice work!
+                                    </p>
+                                    <p className="text-xs text-text-light mt-1">
+                                        Continue to categorize your intentions.
+                                    </p>
+                                </div>
+                            )}
+                        </>
+                    )}
                 </div>
 
                 {/* Right panel: Todoist task panel */}
@@ -144,10 +255,15 @@ export function Step1Intentions() {
                         <h3 className="text-sm font-medium text-text-light">Task Manager</h3>
                     </div>
                     <div className="flex-1 rounded-lg border border-border overflow-hidden bg-card" style={{ minHeight: 500 }}>
-                        <TodoistPanel mode="full" />
+                        <TodoistPanel mode="full" onSetup={() => setShowSetup(true)} />
                     </div>
                 </div>
             </div>
+
+            {/* Integrations setup modal */}
+            <Modal open={showSetup} onClose={() => setShowSetup(false)} title="Integrations">
+                <TodoistSetup />
+            </Modal>
         </WizardLayout>
     );
 }
