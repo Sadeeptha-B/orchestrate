@@ -1,22 +1,20 @@
 import { useDayPlan } from '../../context/DayPlanContext';
-import { Step1Priorities } from './Step1Priorities';
-import { Step2TodolistSync } from './Step2TodolistSync';
-import { Step3Categorize } from './Step3Categorize';
-import { Step4ScheduleMain } from './Step4ScheduleMain';
-import { Step5ScheduleBackground } from './Step5ScheduleBackground';
-import { Step6StartMusic } from './Step6StartMusic';
+import { Step1Intentions } from './Step1Intentions';
+import { Step2Categorize } from './Step2Categorize';
+import { Step3ScheduleMain } from './Step3ScheduleMain';
+import { Step4ScheduleBackground } from './Step4ScheduleBackground';
+import { Step5StartMusic } from './Step5StartMusic';
 
 const STEPS = [
-    Step1Priorities,
-    Step2TodolistSync,
-    Step3Categorize,
-    Step4ScheduleMain,
-    Step5ScheduleBackground,
-    Step6StartMusic,
+    Step1Intentions,
+    Step2Categorize,
+    Step3ScheduleMain,
+    Step4ScheduleBackground,
+    Step5StartMusic,
 ];
 
 export function Wizard() {
     const { plan } = useDayPlan();
-    const StepComponent = STEPS[plan.wizardStep - 1] ?? Step1Priorities;
+    const StepComponent = STEPS[plan.wizardStep - 1] ?? Step1Intentions;
     return <StepComponent />;
 }

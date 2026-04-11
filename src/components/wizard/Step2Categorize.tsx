@@ -8,13 +8,13 @@ const TYPE_OPTIONS: { value: Intention['type']; label: string; description: stri
     { value: 'background', label: 'Background', description: 'Recurring habit or nudge task' },
 ];
 
-export function Step3Categorize() {
+export function Step2Categorize() {
     const { plan, dispatch } = useDayPlan();
 
     const allCategorized = plan.intentions.every((i) => i.type !== 'unclassified');
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 3 });
     };
 
     return (
@@ -55,8 +55,8 @@ export function Step3Categorize() {
                                 <button
                                     onClick={() => dispatch({ type: 'TOGGLE_HABIT', intentionId: intention.id })}
                                     className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${intention.isHabit
-                                            ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700'
-                                            : 'border-border text-text-light hover:border-amber-400 hover:text-amber-600'
+                                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700'
+                                        : 'border-border text-text-light hover:border-amber-400 hover:text-amber-600'
                                         }`}
                                     title={intention.isHabit ? 'Marked as habit — click to unmark' : 'Mark as recurring habit'}
                                 >

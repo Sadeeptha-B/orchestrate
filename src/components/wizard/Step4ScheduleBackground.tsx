@@ -3,14 +3,14 @@ import { Card } from '../ui/Card';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 
-export function Step5ScheduleBackground() {
+export function Step4ScheduleBackground() {
     const { plan, settings, dispatch } = useDayPlan();
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
 
     const backgroundIntentions = plan.intentions.filter((i) => i.type === 'background');
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 6 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 5 });
     };
 
     return (

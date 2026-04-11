@@ -5,14 +5,14 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 
-export function Step4ScheduleMain() {
+export function Step3ScheduleMain() {
     const { plan, settings, dispatch } = useDayPlan();
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
 
     const mainIntentions = plan.intentions.filter((i) => i.type === 'main');
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 5 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
     };
 
     return (

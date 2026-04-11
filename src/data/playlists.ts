@@ -58,5 +58,5 @@ export const playlists: Playlist[] = [
 ];
 
 export function getPlaylistForWorkType(workType: string): Playlist | undefined {
-    return playlists.find((p) => p.workTypes.includes(workType as never));
+    return playlists.find((p) => (p.workTypes as string[]).includes(workType));
 }

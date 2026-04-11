@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
@@ -75,13 +75,13 @@ export function Dashboard() {
     }, []);
 
     const handleNewDay = () => {
-        setNewDaySaveName(format(new Date(plan.date), 'EEEE, MMM d'));
+        setNewDaySaveName(format(parseISO(plan.date), 'EEEE, MMM d'));
         setShowNewDayModal(true);
     };
 
     const confirmNewDay = (save: boolean) => {
         if (save) {
-            const label = newDaySaveName.trim() || format(new Date(plan.date), 'EEEE, MMM d');
+            const label = newDaySaveName.trim() || format(parseISO(plan.date), 'EEEE, MMM d');
             dispatch({ type: 'SAVE_DAY', label });
         }
         setShowNewDayModal(false);
@@ -97,12 +97,12 @@ export function Dashboard() {
     };
 
     const openSaveModal = () => {
-        setSaveName(format(new Date(plan.date), 'EEEE, MMM d'));
+        setSaveName(format(parseISO(plan.date), 'EEEE, MMM d'));
         setShowSaveModal(true);
     };
 
     const handleSaveDay = () => {
-        const label = saveName.trim() || format(new Date(plan.date), 'EEEE, MMM d');
+        const label = saveName.trim() || format(parseISO(plan.date), 'EEEE, MMM d');
         dispatch({ type: 'SAVE_DAY', label });
         setShowSaveModal(false);
         setSaveName('');

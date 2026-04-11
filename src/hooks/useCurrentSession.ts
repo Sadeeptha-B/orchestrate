@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import type { SessionSlot } from '../types';
 
@@ -8,7 +8,15 @@ function timeToMinutes(time: string): number {
 }
 
 export function useCurrentSession(slots: SessionSlot[]) {
+    const [tick, setTick] = useState(0);
+
+    useEffect(() => {
+        const id = setInterval(() => setTick((t) => t + 1), 60_000);
+        return () => clearInterval(id);
+    }, []);
+
     return useMemo(() => {
+        void tick;
         const now = new Date();
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
         const today = format(now, 'yyyy-MM-dd');
@@ -25,5 +33,5 @@ export function useCurrentSession(slots: SessionSlot[]) {
         });
 
         return { currentSession, remainingSessions, today };
-    }, [slots]);
+    }, [slots, tick]);
 }

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 interface ModalProps {
     open: boolean;
@@ -8,6 +8,15 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, children, title }: ModalProps) {
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [open, onClose]);
+
     if (!open) return null;
 
     return (
@@ -15,7 +24,6 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
             <div
                 className="absolute inset-0 bg-black/30 backdrop-blur-sm"
                 onClick={onClose}
-                onKeyDown={(e) => e.key === 'Escape' && onClose()}
                 role="button"
                 tabIndex={-1}
                 aria-label="Close modal"

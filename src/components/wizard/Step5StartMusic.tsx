@@ -9,7 +9,7 @@ function spotifyPlaylistId(url: string): string {
     return match?.[1] ?? '';
 }
 
-export function Step6StartMusic() {
+export function Step5StartMusic() {
     const { plan, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const startPlaylist = playlists.find((p) => p.id === 'start-work')!;

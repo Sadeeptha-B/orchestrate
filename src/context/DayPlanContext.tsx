@@ -37,8 +37,18 @@ function freshPlan(): DayPlan {
 
 /** Migrate a v1 plan (tasks/taskSessions) to the v2 shape (intentions/intentionSessions). */
 function migratePlan(raw: Record<string, unknown>): DayPlan {
+    // Wizard was reduced from 6 steps to 5 (old Step 1 & 2 merged).
+    // Old step 2+ maps to step N-1; step 1 stays 1.
+    // Only apply when plan was saved under the old 6-step layout.
+    const needsStepMigration = (raw._wizardSteps as number) !== 5;
+    const migrateStep = (s: number) =>
+        needsStepMigration ? Math.min(Math.max(s > 1 ? s - 1 : 1, 1), 5) : Math.min(s, 5);
+
     // Already v2 shape
-    if (Array.isArray(raw.intentions)) return raw as unknown as DayPlan;
+    if (Array.isArray(raw.intentions)) {
+        const plan = raw as unknown as DayPlan;
+        return { ...plan, wizardStep: migrateStep(plan.wizardStep) };
+    }
 
     const v1Tasks = (raw.tasks ?? []) as Array<Record<string, unknown>>;
     const intentions: Intention[] = v1Tasks.map((t) => ({
@@ -55,7 +65,7 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         date: raw.date as string,
         intentions,
         intentionSessions: (raw.taskSessions ?? {}) as Record<string, string[]>,
-        wizardStep: (raw.wizardStep as number) ?? 1,
+        wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
         checkIns: (raw.checkIns ?? []) as CheckIn[],
         syncChecklist: (raw.syncChecklist ?? {}) as Record<string, boolean>,
@@ -290,13 +300,15 @@ function reducer(state: State, action: Action): State {
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };
-            return { ...state, history: [entry, ...state.history] };
+            const filtered = state.history.filter((h) => h.plan.date !== plan.date);
+            return { ...state, history: [entry, ...filtered] };
         }
 
         case 'RESTORE_DAY': {
             const saved = state.history.find((h) => h.savedAt === action.savedAt);
             if (!saved) return state;
-            return { ...state, plan: structuredClone(saved.plan), editingStep: null };
+            const restored = migratePlan(saved.plan as unknown as Record<string, unknown>);
+            return { ...state, plan: restored, editingStep: null };
         }
 
         case 'DELETE_SAVED_DAY':
@@ -336,9 +348,9 @@ export function DayPlanProvider({ children }: { children: ReactNode }) {
         history: loadHistory(),
     }));
 
-    // Persist on every state change
+    // Persist on every state change (include _wizardSteps marker for migration detection)
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state.plan));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.plan, _wizardSteps: 5 }));
     }, [state.plan]);
 
     useEffect(() => {

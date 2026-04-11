@@ -6,14 +6,13 @@ import { useDayPlan } from '../../context/DayPlanContext';
 import { useTheme } from '../../hooks/useTheme';
 import { SavedSessions } from '../dashboard/SavedSessions';
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 5;
 const PANEL_MIN = 220;
 const PANEL_MAX = 480;
 const PANEL_DEFAULT = 288;
 
 const STEP_LABELS = [
     'Intentions',
-    'Todolist Sync',
     'Categorize',
     'Main Schedule',
     'Nudges',

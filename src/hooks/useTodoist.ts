@@ -87,6 +87,20 @@ async function apiFetch<T>(
     return res.json();
 }
 
+/** Fetch all pages from a paginated Todoist API v1 endpoint. */
+async function fetchAllPages<T>(token: string, path: string): Promise<T[]> {
+    let all: T[] = [];
+    let cursor: string | null = null;
+    do {
+        const separator = path.includes('?') ? '&' : '?';
+        const fullPath: string = cursor ? `${path}${separator}cursor=${cursor}` : path;
+        const data: PaginatedResponse<T> = await apiFetch<PaginatedResponse<T>>(token, fullPath);
+        all = [...all, ...data.results];
+        cursor = data.next_cursor;
+    } while (cursor);
+    return all;
+}
+
 export function useTodoist() {
     const { settings } = useDayPlan();
     const [tasks, setTasks] = useState<TodoistTask[]>([]);
@@ -121,8 +135,8 @@ export function useTodoist() {
             setError(null);
             try {
                 const params = projectId ? `?project_id=${projectId}` : '';
-                const data = await apiFetch<PaginatedResponse<TodoistTask>>(token, `/tasks${params}`);
-                setTasks(data.results);
+                const allTasks = await fetchAllPages<TodoistTask>(token, `/tasks${params}`);
+                setTasks(allTasks);
             } catch (e) {
                 setError(e instanceof Error ? e.message : 'Failed to fetch tasks');
             } finally {
@@ -136,8 +150,8 @@ export function useTodoist() {
         const token = await resolveToken();
         if (!token) return;
         try {
-            const data = await apiFetch<PaginatedResponse<TodoistProject>>(token, '/projects');
-            setProjects(data.results);
+            const allProjects = await fetchAllPages<TodoistProject>(token, '/projects');
+            setProjects(allProjects);
         } catch {
             // silently fail — projects are optional UI enhancement
         }
