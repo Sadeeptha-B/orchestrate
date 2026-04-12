@@ -314,7 +314,7 @@ function reducer(state: State, action: Action): State {
             const saved = state.history.find((h) => h.savedAt === action.savedAt);
             if (!saved) return state;
             const restored = migratePlan(saved.plan as unknown as Record<string, unknown>);
-            return { ...state, plan: restored, editingStep: null };
+            return { ...state, plan: { ...restored, date: todayISO() }, editingStep: null };
         }
 
         case 'DELETE_SAVED_DAY':
