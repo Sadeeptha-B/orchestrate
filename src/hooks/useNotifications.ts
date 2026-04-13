@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import type { NotificationPreference } from '../types';
 
+const ICON_PATH = `${import.meta.env.BASE_URL}favicon.svg`;
+
 export function useNotifications() {
     const requestPermission = useCallback(async () => {
         if (!('Notification' in window)) return false;
@@ -19,7 +21,7 @@ export function useNotifications() {
                 if (granted !== 'granted') return;
             }
 
-            new Notification(title, { body, icon: '/favicon.svg' });
+            new Notification(title, { body, icon: ICON_PATH });
         },
         [],
     );

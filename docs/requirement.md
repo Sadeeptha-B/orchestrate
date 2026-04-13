@@ -43,13 +43,22 @@ The background tasks should be nudges/habits. So habits would typically be backg
 
 You are free to redesign the flow in light of these new requirements, the dashboard should also contain an iframe of the tasks along with the current intention based setup. You are free to make suitable design decisions in the initial iteration of this implementation. 
 
-### Iteration 2.1 — Todoist + Google Calendar Integration
+### Iteration 3 — Todoist + Google Calendar Integration
 
 The Trevor AI iframe approach proved non-functional: Trevor AI sets `X-Frame-Options: DENY` and modern browsers block cross-origin cookies (`SameSite` defaults), preventing embedded login.
 
 **Pivot to Option B:**
-- **Todoist REST API (v2)**: Direct API integration using a personal API token (no OAuth, no backend). Users paste their token from Todoist Settings → Integrations → Developer. Token is encrypted client-side using AES-GCM via the Web Crypto API before being stored in localStorage.
+- **Todoist REST API (api/v1)**: Direct API integration using a personal API token (no OAuth, no backend). Users paste their token from Todoist Settings → Integrations → Developer. Token is encrypted client-side using AES-GCM via the Web Crypto API before being stored in localStorage.
 - **Google Calendar embed**: Official embeddable iframe (`https://calendar.google.com/calendar/embed?src={calendarId}&mode=week`). Read-only, works when the user is logged into Google. User-configurable calendar ID.
 - **Data model**: Orchestrate owns the intention-level view. Todoist owns the task-level view. Google Calendar provides time-context. The user's existing Todoist↔Google Calendar sync keeps the latter two in sync automatically.
 
 See [plan_v3.md](./plan_v3.md) for the full implementation plan.
+
+## Iteration 4
+Orchestrate has become much more sophisticated. As of v2 and v3, we have migrated tasks to be intentions. The app flow now focuses on setting intentions for the the day, mapping the intentions to tasks on todoist, and then identifying main intentions and background intentions for the day and afterwards, scheduling the tasks accordingly in google calendar. 
+
+There are some inconsistencies in this model. For one, after creating todoist tasks, we are still relying on scheduling the intentions, which are broader "ideas" rather than tasks, though the user can schedule the tasks themselves in the todoist panel during the schedule step. Further, we are still defining the broader intentions to be main tasks and background tasks. 
+
+When mapping intentions to tasks in the todoist panel, we should keep a record of which tasks have been created when each intention is being mapped. Maybe some form of queue would be good? However, keep in mind that the user may create and delete a task during this mapping step. We will need to capture the final result of the user behavior during mapping, and then aggregate them under a specific intention. Then, when setting the main and background tasks, it is these tasks that should be selected as main and background and the actual scheduling should focus on scheduling these tasks into time, though showing the relationship to the intentions would be useful. Keep in mind that a single intention may have both background and main tasks. 
+
+We will have to plan this change well. 

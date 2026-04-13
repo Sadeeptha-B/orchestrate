@@ -14,7 +14,7 @@ export function Step5StartMusic() {
     const navigate = useNavigate();
     const startPlaylist = playlists.find((p) => p.id === 'start-work')!;
     const spId = spotifyPlaylistId(startPlaylist.spotifyUrl);
-    const isEditing = editingStep !== null || plan.setupComplete;
+    const canSkip = editingStep !== null || plan.setupComplete;
 
     const finish = () => {
         if (!plan.setupComplete) dispatch({ type: 'COMPLETE_SETUP' });
@@ -78,7 +78,7 @@ export function Step5StartMusic() {
                     onClick={finish}
                     className="w-full text-center text-sm text-text-light hover:text-accent transition-colors cursor-pointer"
                 >
-                    {isEditing ? 'Back to dashboard' : 'Skip and go to dashboard'}
+                    {canSkip ? 'Back to dashboard' : 'Skip and go to dashboard'}
                 </button>
 
                 <div className="bg-surface-dark rounded-lg p-4 text-xs text-text-light space-y-2">

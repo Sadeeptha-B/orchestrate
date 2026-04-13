@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { format } from 'date-fns';
 import { useTodoist, type TodoistTask, type TodoistProject, type TodoistSection } from '../../hooks/useTodoist';
 
 // --- Todoist color map (color name → hex) ---
@@ -161,7 +162,7 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
     };
 
     const handleSchedule = async (taskId: string, startTime: string, endTime: string) => {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = format(new Date(), 'yyyy-MM-dd');
         const [sh, sm] = startTime.split(':').map(Number);
         const [eh, em] = endTime.split(':').map(Number);
         const durationMinutes = (eh * 60 + em) - (sh * 60 + sm);
@@ -174,7 +175,7 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
     };
 
     const handleClearSchedule = async (taskId: string) => {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = format(new Date(), 'yyyy-MM-dd');
         await updateTask(taskId, { due_date: today });
     };
 
@@ -623,7 +624,7 @@ function TaskRow({
     const [pickerEnd, setPickerEnd] = useState('');
 
     // Parse existing schedule for today
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
     const hasDueTime = task.due?.date?.includes('T') ?? false;
     const isDueToday = task.due?.date?.startsWith(todayStr) ?? false;
     const scheduledStart = hasDueTime && isDueToday

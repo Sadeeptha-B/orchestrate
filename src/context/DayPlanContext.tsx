@@ -27,11 +27,6 @@ function freshPlan(): DayPlan {
         wizardStep: 1,
         setupComplete: false,
         checkIns: [],
-        syncChecklist: {
-            reviewTodolist: false,
-            createEvents: false,
-            breakDownTasks: false,
-        },
     };
 }
 
@@ -68,7 +63,6 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
         checkIns: (raw.checkIns ?? []) as CheckIn[],
-        syncChecklist: (raw.syncChecklist ?? {}) as Record<string, boolean>,
     };
 }
 
@@ -132,7 +126,6 @@ type Action =
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
-    | { type: 'TOGGLE_SYNC_ITEM'; key: string }
     | { type: 'RESET_DAY' }
     | { type: 'UPDATE_SETTINGS'; settings: Partial<AppSettings> }
     | { type: 'SET_EDITING_STEP'; step: number | null }
@@ -284,18 +277,6 @@ function reducer(state: State, action: Action): State {
                 plan: { ...plan, checkIns: [...plan.checkIns, action.checkIn] },
             };
 
-        case 'TOGGLE_SYNC_ITEM':
-            return {
-                ...state,
-                plan: {
-                    ...plan,
-                    syncChecklist: {
-                        ...plan.syncChecklist,
-                        [action.key]: !plan.syncChecklist[action.key],
-                    },
-                },
-            };
-
         case 'RESET_DAY':
             return { ...state, plan: freshPlan(), editingStep: null };
 
@@ -307,7 +288,7 @@ function reducer(state: State, action: Action): State {
 
         case 'SAVE_DAY': {
             const entry: SavedDayPlan = {
-                plan: structuredClone(plan),
+                plan: { ...structuredClone(plan), _wizardSteps: 5 } as DayPlan,
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };

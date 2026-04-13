@@ -8,9 +8,6 @@ export interface Intention {
     isHabit: boolean;
 }
 
-/** @deprecated Use Intention instead — kept as alias for migration */
-export type Task = Intention;
-
 export interface SessionSlot {
     id: string;
     name: string;
@@ -48,10 +45,9 @@ export interface DayPlan {
     date: string; // ISO date string (YYYY-MM-DD)
     intentions: Intention[];
     intentionSessions: Record<string, string[]>; // sessionId -> intentionId[]
-    wizardStep: number; // 1–6
+    wizardStep: number; // 1–5
     setupComplete: boolean;
     checkIns: CheckIn[];
-    syncChecklist: Record<string, boolean>;
 }
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';

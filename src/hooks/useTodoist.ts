@@ -287,7 +287,20 @@ export function useTodoist() {
             if (!token) return;
             try {
                 await apiFetch(token, `/tasks/${taskId}`, { method: 'DELETE' });
-                setTasks((prev) => prev.filter((t) => t.id !== taskId && t.parent_id !== taskId));
+                setTasks((prev) => {
+                    const removed = new Set<string>([taskId]);
+                    let changed = true;
+                    while (changed) {
+                        changed = false;
+                        for (const t of prev) {
+                            if (!removed.has(t.id) && t.parent_id && removed.has(t.parent_id)) {
+                                removed.add(t.id);
+                                changed = true;
+                            }
+                        }
+                    }
+                    return prev.filter((t) => !removed.has(t.id));
+                });
             } catch (e) {
                 setError(e instanceof Error ? e.message : 'Failed to delete task');
             }
@@ -319,9 +332,23 @@ export function useTodoist() {
             if (!token) return;
             try {
                 await apiFetch(token, `/projects/${projectId}`, { method: 'DELETE' });
-                setProjects((prev) => prev.filter((p) => p.id !== projectId && p.parent_id !== projectId));
-                setTasks((prev) => prev.filter((t) => t.project_id !== projectId));
-                setSections((prev) => prev.filter((s) => s.project_id !== projectId));
+                // Collect all descendant project IDs for cascading removal
+                const removedProjects = new Set<string>([projectId]);
+                setProjects((prev) => {
+                    let changed = true;
+                    while (changed) {
+                        changed = false;
+                        for (const p of prev) {
+                            if (!removedProjects.has(p.id) && p.parent_id && removedProjects.has(p.parent_id)) {
+                                removedProjects.add(p.id);
+                                changed = true;
+                            }
+                        }
+                    }
+                    return prev.filter((p) => !removedProjects.has(p.id));
+                });
+                setTasks((prev) => prev.filter((t) => !removedProjects.has(t.project_id)));
+                setSections((prev) => prev.filter((s) => !removedProjects.has(s.project_id)));
             } catch (e) {
                 setError(e instanceof Error ? e.message : 'Failed to delete project');
             }

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../context/DayPlanContext';
@@ -13,6 +13,7 @@ import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
 import { useTheme } from '../../hooks/useTheme';
+import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
@@ -36,43 +37,7 @@ export function Dashboard() {
     const [showSettingsModal, setShowSettingsModal] = useState(false);
     const hasSavedSessions = history.length > 0;
 
-    // Resizable panel
-    const PANEL_MIN = 220;
-    const PANEL_MAX = 480;
-    const PANEL_DEFAULT = 288;
-    const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT);
-    const dragging = useRef(false);
-    const startX = useRef(0);
-    const startWidth = useRef(PANEL_DEFAULT);
-
-    const onMouseDown = useCallback((e: React.MouseEvent) => {
-        dragging.current = true;
-        startX.current = e.clientX;
-        startWidth.current = panelWidth;
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-    }, [panelWidth]);
-
-    useEffect(() => {
-        const onMouseMove = (e: MouseEvent) => {
-            if (!dragging.current) return;
-            const delta = e.clientX - startX.current;
-            const next = Math.min(PANEL_MAX, Math.max(PANEL_MIN, startWidth.current + delta));
-            setPanelWidth(next);
-        };
-        const onMouseUp = () => {
-            if (!dragging.current) return;
-            dragging.current = false;
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        };
-        window.addEventListener('mousemove', onMouseMove);
-        window.addEventListener('mouseup', onMouseUp);
-        return () => {
-            window.removeEventListener('mousemove', onMouseMove);
-            window.removeEventListener('mouseup', onMouseUp);
-        };
-    }, []);
+    const { panelWidth, onMouseDown } = useResizablePanel();
 
     const handleNewDay = () => {
         setNewDaySaveName(format(parseISO(plan.date), 'EEEE, MMM d'));
@@ -87,7 +52,7 @@ export function Dashboard() {
         setShowNewDayModal(false);
         setNewDaySaveName('');
         dispatch({ type: 'RESET_DAY' });
-        navigate('/setup');
+        navigate('/setup', { state: { fromWelcome: true } });
     };
 
     const handleEditPlan = () => {

@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { SessionSlot, NotificationPreference } from '../types';
 import { useNotifications } from './useNotifications';
-
-function timeToMinutes(time: string): number {
-    const [h, m] = time.split(':').map(Number);
-    return h * 60 + m;
-}
+import { timeToMinutes } from '../lib/time';
 
 function isWithinAnySession(slots: SessionSlot[]): boolean {
     const now = new Date();

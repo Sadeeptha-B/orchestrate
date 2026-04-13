@@ -1,17 +1,16 @@
-import { useState, useRef, useCallback, useEffect, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useTheme } from '../../hooks/useTheme';
+import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { SavedSessions } from '../dashboard/SavedSessions';
 import { TodoistSetup } from '../todoist/TodoistSetup';
+import { AboutContent } from '../ui/AboutContent';
 
 const TOTAL_STEPS = 5;
-const PANEL_MIN = 220;
-const PANEL_MAX = 480;
-const PANEL_DEFAULT = 288;
 
 const STEP_LABELS = [
     'Intentions',
@@ -48,42 +47,9 @@ export function WizardLayout({
     const isEditing = editingStep !== null;
     const showSidebar = !isEditing;
     const [panelOpen, setPanelOpen] = useState(showSidebar);
-    const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT);
+    const { panelWidth, onMouseDown } = useResizablePanel();
     const [showSettings, setShowSettings] = useState(false);
     const [showAbout, setShowAbout] = useState(false);
-    const dragging = useRef(false);
-    const startX = useRef(0);
-    const startWidth = useRef(PANEL_DEFAULT);
-
-    const onMouseDown = useCallback((e: React.MouseEvent) => {
-        dragging.current = true;
-        startX.current = e.clientX;
-        startWidth.current = panelWidth;
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-    }, [panelWidth]);
-
-    useEffect(() => {
-        const onMouseMove = (e: MouseEvent) => {
-            if (!dragging.current) return;
-            // Dragging right edge: moving right = wider, moving left = narrower
-            const delta = e.clientX - startX.current;
-            const next = Math.min(PANEL_MAX, Math.max(PANEL_MIN, startWidth.current + delta));
-            setPanelWidth(next);
-        };
-        const onMouseUp = () => {
-            if (!dragging.current) return;
-            dragging.current = false;
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        };
-        window.addEventListener('mousemove', onMouseMove);
-        window.addEventListener('mouseup', onMouseUp);
-        return () => {
-            window.removeEventListener('mousemove', onMouseMove);
-            window.removeEventListener('mouseup', onMouseUp);
-        };
-    }, []);
 
     const goBack = () => {
         if (step > 1) dispatch({ type: 'SET_WIZARD_STEP', step: step - 1 });
@@ -249,37 +215,17 @@ export function WizardLayout({
 
             {/* About modal */}
             <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
-                <div className="space-y-3 text-sm text-text-light">
-                    <p>
-                        Orchestrate is a <strong className="text-text">daily companion app</strong> — not a replacement
-                        for your task manager or calendar. It sits alongside tools like Todoist and Google Calendar to
-                        help you start each day with clarity.
-                    </p>
-                    <p>
-                        Task managers are great at holding lists, but they don't solve the friction of
-                        <strong className="text-text"> contextualizing your day</strong>. Todolists tend to be "epics" —
-                        broad ongoing projects. When starting a new day, you don't think in epics; you think in
-                        <strong className="text-text"> intentions</strong>: specific goals for today.
-                    </p>
-                    <p>
-                        Orchestrate walks you through turning those intentions into a structured day: mapping them
-                        to tasks, scheduling them into sessions, and keeping you on track with music and hourly check-ins.
-                    </p>
-                    <p>
-                        It counters <strong className="text-text">task blindness and time blindness</strong> by
-                        nudging you to recontextualize throughout the day — so you stay connected to what matters.
-                    </p>
-                    <p className="text-xs pt-1 border-t border-border">
-                        Connect Todoist and Google Calendar in{' '}
-                        <button
-                            onClick={() => { setShowAbout(false); setShowSettings(true); }}
-                            className="text-accent hover:underline cursor-pointer"
-                        >
-                            Integrations
-                        </button>{' '}
-                        to get the most out of this app.
-                    </p>
-                </div>
+                <AboutContent />
+                <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
+                    Connect Todoist and Google Calendar in{' '}
+                    <button
+                        onClick={() => { setShowAbout(false); setShowSettings(true); }}
+                        className="text-accent hover:underline cursor-pointer"
+                    >
+                        Integrations
+                    </button>{' '}
+                    to get the most out of this app.
+                </p>
             </Modal>
         </div>
     );

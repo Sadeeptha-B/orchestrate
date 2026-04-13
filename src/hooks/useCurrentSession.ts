@@ -1,11 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import type { SessionSlot } from '../types';
-
-function timeToMinutes(time: string): number {
-    const [h, m] = time.split(':').map(Number);
-    return h * 60 + m;
-}
+import { timeToMinutes } from '../lib/time';
 
 export function useCurrentSession(slots: SessionSlot[]) {
     const [tick, setTick] = useState(0);

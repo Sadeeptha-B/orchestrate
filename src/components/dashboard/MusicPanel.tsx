@@ -217,15 +217,3 @@ export function SpotifyPlayer() {
         </div>
     );
 }
-
-/** Convenience wrapper: renders both selector + player together (used outside dashboard) */
-export function MusicPanel() {
-    return (
-        <MusicProvider>
-            <div className="space-y-3">
-                <PlaylistSelector />
-                <SpotifyPlayer />
-            </div>
-        </MusicProvider>
-    );
-}

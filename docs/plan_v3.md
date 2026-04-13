@@ -1,51 +1,60 @@
 ## Plan: Orchestrate v3 — Intentions & Todoist Integration
 
-This plan describes the changes for Iteration 2. The core shift: **tasks become intentions**, the app integrates with **Todoist** (REST API + personal token) and **Google Calendar** (embeddable iframe) to replace the non-functional Trevor AI iframe approach.
+This document is the consolidated reference for the Orchestrate v3 codebase. It describes the app's architecture, data model, component structure, integration approach, and all features as currently implemented.
 
-Background tasks become flexible nudges/habits with multi-session assignment.
-
-> **Status:** All phases **complete**. Data model migration, reducer updates, wizard flow, terminology migration, Todoist API integration, Google Calendar embed, and Settings wiring are all implemented and verified.
+Orchestrate is a daily contextualization companion app. It walks the user through setting intentions for the day, mapping them to tasks in Todoist, scheduling them into session slots, and staying on track with music and hourly check-ins. It integrates with **Todoist** (REST API + personal token) and **Google Calendar** (embeddable iframe). No backend — all data in localStorage.
 
 ---
 
-### Conceptual Shift
+### Tech Stack
 
-| v1 Concept | v2 Concept |
-|-----------|-----------|
-| Tasks (generic items) | **Intentions** (specific goals for today, not epics) |
-| Step 1: Set intentions + map to todolist | Step 1: **intention entry + todolist mapping** via inline Todoist panel |
-| Step 2: Categorize | Step 2: same |
-| Step 3: assign main tasks to slots | Step 3: schedule with Google Calendar embed visible for context |
-| Background tasks: single-session | Background tasks: **multi-session nudges/habits**, flexible scheduling |
-| Dashboard: music + timeline | Dashboard: music + timeline + **Todoist panel** + **Google Calendar embed** |
+- **React 19 + TypeScript + Vite** — SPA with type safety, fast builds
+- **Tailwind CSS v4** — green-accented muted palette via `@theme` custom properties, class-based dark mode
+- **React Router** — wizard ↔ dashboard navigation (non-linear, always accessible)
+- **date-fns** — lightweight time/date utils
+- **localStorage** — persistence (no backend, no auth)
+- **Web Notifications API** — optional browser notifications for check-ins
+- **Web Crypto API** — AES-GCM encryption for Todoist API token storage
+- **PWA** — installable via web manifest + service worker (network-first caching, offline fallback)
+- **Deployed at `/orchestrate/`** — Vite `base` and BrowserRouter `basename` both set to `/orchestrate/`
+
+State managed via React Context + `useReducer`.
 
 ---
 
-### Integration Architecture (Todoist + Google Calendar)
+### Conceptual Model
 
-#### Why not Trevor AI iframe?
-Trevor AI sets `X-Frame-Options: DENY` and modern browsers block cross-origin cookies (`SameSite` defaults), making iframe embedding non-functional. Instead, we integrate with the underlying services directly.
+| Concept | Description |
+|---------|-------------|
+| **Intentions** | Specific goals for today (not epics). Entered in Step 1, mapped to Todoist tasks. |
+| **Main intentions** | Primary work threads for the day (exclusive session assignment). |
+| **Background intentions** | Recurring habits or nudge tasks (multi-session assignment). |
+| **Sessions** | 4 configurable time slots (default: Early Morning, Morning, Afternoon, Night). |
+| **Todoist** | External task manager. Orchestrate integrates via API for CRUD and hierarchy browsing. |
+| **Google Calendar** | Read-only embedded iframe for time-context alongside session planning. |
+
+---
+
+### Integration Architecture
 
 #### Todoist API (v1)
-- **Auth method**: Personal API token (user pastes from Todoist Settings → Integrations → Developer). No OAuth, no backend.
-- **Token storage**: Encrypted in localStorage via AES-GCM with a Web Crypto API-derived key (see Security section).
-- **Capabilities used**: List tasks, create tasks, complete tasks, filter by project/label, set due dates/times.
+- **Auth**: Personal API token (user pastes from Todoist Settings → Integrations → Developer). No OAuth, no backend.
+- **Token storage**: Encrypted in localStorage via AES-GCM with a Web Crypto API-derived key.
 - **API base**: `https://api.todoist.com/api/v1/` (unified API — REST v2 was sunset and returns `410 Gone`)
-- **Responses**: Paginated — `GET` endpoints return `{ results: [...], next_cursor: string | null }`
-- **Mutations**: Task create via `POST /api/v1/tasks`. Complete/reopen via Sync endpoint (`POST /api/v1/sync` with `item_complete`/`item_uncomplete` commands). Delete via `DELETE /api/v1/tasks/{id}`.
-- **Projects**: List via paginated `GET /api/v1/projects`. Create via `POST /api/v1/projects` (supports `parent_id` for nested projects). Delete via `DELETE /api/v1/projects/{id}`.
-- **CORS**: Supported (`Access-Control-Allow-Origin: *` for authenticated requests). Vite dev proxy (`/api/todoist → api.todoist.com`) used during development for reliability.
-- **Rate limits**: 450 requests/min — more than sufficient.
+- **Responses**: Paginated — `GET` endpoints return `{ results: [...], next_cursor: string | null }`. All pages fetched via `fetchAllPages<T>()` helper.
+- **Mutations**: Create via `POST /api/v1/tasks`. Complete/reopen via Sync endpoint (`POST /api/v1/sync` with `item_complete`/`item_uncomplete`). Update via `POST /api/v1/tasks/{id}`. Delete via `DELETE /api/v1/tasks/{id}`.
+- **Projects**: List/create/delete via `/api/v1/projects`. Supports `parent_id` for nesting.
+- **Sections**: List via `/api/v1/sections` for within-project grouping.
+- **CORS**: Supported. Vite dev proxy (`/api/todoist → api.todoist.com`) used during development for reliability.
+- **Rate limits**: 450 requests/min.
 
 #### Google Calendar Embed
-- **Method**: Official embeddable iframe URL: `https://calendar.google.com/calendar/embed?src={id1}&src={id2}&mode=week`
-- **Multiple calendars**: Repeating `src` params overlays calendars in different colors within a single embed.
-- **Auth**: None needed — works if user is logged into Google in the same browser. Read-only.
-- **Configurable**: User adds one or more calendar entries in settings. Stored as `googleCalendarIds: GoogleCalendarEntry[]` (migrated from legacy single-string `googleCalendarId` and plain `string[]`). Each entry has `id`, optional `name`, and optional `color`.
-- **Per-calendar colors**: Embed URL includes `&color={hex}` per calendar using Google's accepted 15-color palette.
-- **View mode**: Configurable via `calendarViewMode` setting (`week` | `month` | `agenda`). Displayed as a tab bar directly above the embed. The embed only supports `WEEK`, `MONTH`, and `AGENDA` mode parameters — `DAY` and custom day-count views are not supported by the embed API. Scroll-to-time is also not controllable. Defaults to `week`.
-- **Privacy note**: Private/imported calendars require authentication cookies, which may be blocked in iframes by browser third-party cookie policies. A fallback "Open in Google Calendar" link is provided.
-- **Why this works**: Google Calendar explicitly supports embedding (`X-Frame-Options: ALLOWALL` on embed endpoint).
+- **Method**: Official embeddable iframe URL with multiple `src=` and `color=` params.
+- **Auth**: None needed — works if user is logged into Google. Read-only.
+- **Multiple calendars**: Overlaid in different colors within a single embed.
+- **View mode**: `week` | `month` | `agenda`, configurable via tab bar above the embed. Persisted in settings.
+- **Privacy note**: Private/imported calendars may be blocked by third-party cookie policies. "Open in Google Calendar ↗" fallback link provided.
+- **Per-calendar colors**: 15-color Google palette (Blue, Lavender, Sage, Grape, Flamingo, Banana, Tangerine, Teal, Basil, Blueberry, Tomato, Citron, Cocoa, Graphite, Birch).
 
 #### Data Flow
 ```
@@ -56,240 +65,296 @@ Orchestrate (intentions, session assignments)  ←→  localStorage
         Google Calendar embed  →  Visual schedule (read-only)
 ```
 
-Orchestrate owns the **intention-level** view. Todoist owns the **task-level** view. Google Calendar provides **time-context**. The user's existing Todoist↔Google Calendar integration keeps the latter two in sync automatically.
+Orchestrate owns the **intention-level** view. Todoist owns the **task-level** view. Google Calendar provides **time-context**.
 
 ---
 
 ### Security: API Token Storage
 
-The Todoist personal API token is stored in localStorage, encrypted client-side.
-
 #### Approach: AES-GCM encryption via Web Crypto API
 
-1. **Key derivation**: On first token setup, generate a random 256-bit key using `crypto.subtle.generateKey()`. Store the exported key in a separate localStorage entry.
-2. **Encryption**: `crypto.subtle.encrypt()` with AES-GCM. Store the encrypted token + IV as base64.
-3. **Decryption**: On app load, decrypt the token in memory. Plaintext only held in a JS variable, never persisted unencrypted.
-4. **Token validation**: On save, hit `GET /api/v1/projects` to verify validity before storing.
-5. **Token removal**: "Disconnect Todoist" button wipes both the encrypted token and the key.
+1. **Key generation**: Random 256-bit key via `crypto.subtle.generateKey()`. Exported key stored in a separate localStorage entry.
+2. **Encryption**: `crypto.subtle.encrypt()` with AES-GCM. Encrypted token + IV stored as base64.
+3. **Decryption**: On app load, token decrypted in memory. Plaintext only held in a JS variable, never persisted unencrypted.
+4. **Token validation**: On save, `GET /api/v1/projects` verifies validity before storing.
+5. **Token removal**: "Disconnect Todoist" wipes both the encrypted token and the key.
 
 #### Threat Model
 
 | Threat | Mitigation | Residual risk |
 |--------|-----------|---------------|
-| XSS (script injection) | CSP headers, React's built-in XSS protection, no `dangerouslySetInnerHTML` | If XSS occurs, attacker can call decrypt and steal plaintext. Encryption raises the bar but isn't bulletproof against XSS. |
-| Physical device access | Encryption means token isn't readable in DevTools → localStorage | Attacker with DevTools access could still extract the key from the adjacent localStorage entry |
-| Network sniffing | All Todoist API calls HTTPS | None |
-| Todoist token scope | Personal tokens have full account access | User should be aware. No mitigation possible without OAuth scoped tokens. |
+| XSS | React's XSS protection, no `dangerouslySetInnerHTML` | If XSS occurs, attacker can call decrypt |
+| Physical device access | Encryption raises the bar vs plaintext | Key in adjacent localStorage entry |
+| Network sniffing | All API calls HTTPS | None |
+| Token scope | Personal tokens have full Todoist access | No mitigation without OAuth |
 
-**Bottom line**: Client-side encryption prevents casual exposure (DevTools browsing, localStorage dumps, extensions reading storage) but is not equivalent to server-side token management. Acceptable for a personal-use app.
+Acceptable for a personal-use app.
 
-#### Implementation: `src/lib/crypto.ts`
-- `encryptToken(token: string)` → `{ encrypted, iv, key }` (all base64)
-- `decryptToken(encrypted, iv, key)` → plaintext string
-- Uses Web Crypto API (`AES-GCM`, 256-bit key)
+---
 
-#### New AppSettings fields
+### Data Model
+
 ```ts
+export interface Intention {
+    id: string;
+    title: string;
+    type: 'main' | 'background' | 'unclassified';
+    assignedSessions: string[];     // multi-session for background, exclusive for main
+    completed: boolean;
+    brokenDown: boolean;            // marked in Step 1 mapping phase
+    isHabit: boolean;               // optional flag for background intentions
+}
+
+export interface DayPlan {
+    date: string;                   // YYYY-MM-DD (local time)
+    intentions: Intention[];
+    intentionSessions: Record<string, string[]>;  // sessionId → intentionId[]
+    wizardStep: number;             // 1–5
+    setupComplete: boolean;
+    checkIns: CheckIn[];
+}
+
 export interface AppSettings {
-    notificationPreference: NotificationPreference;
+    notificationPreference: NotificationPreference;  // 'in-app' | 'browser' | 'both'
     sessionSlots: SessionSlot[];
-    todoistToken?: string;       // encrypted token blob (base64)
-    todoistTokenIV?: string;     // AES-GCM IV (base64)
-    todoistTokenKey?: string;    // AES key (exported, base64)
-    googleCalendarIds?: GoogleCalendarEntry[];  // calendar entries with id, name?, color?
+    todoistToken?: string;          // encrypted (base64)
+    todoistTokenIV?: string;        // AES-GCM IV (base64)
+    todoistTokenKey?: string;       // AES key (exported, base64)
+    googleCalendarIds?: GoogleCalendarEntry[];
     calendarViewMode?: CalendarViewMode;  // 'week' | 'month' | 'agenda'
+}
+
+export interface GoogleCalendarEntry {
+    id: string;
+    name?: string;   // user-friendly display name
+    color?: string;  // hex color from Google's accepted palette
 }
 ```
 
----
+**Persistence**: `_wizardSteps: 5` marker is stored alongside the plan in localStorage and in saved history entries to differentiate from the old 6-step layout during migration.
 
-### Data Model Changes (COMPLETED)
-
-Intention interface, DayPlan updates, migration logic — all implemented.
-
----
-
-### Reducer Action Changes (COMPLETED)
-
-All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`, `TOGGLE_HABIT` — all implemented.
+**Migration** (`DayPlanContext.tsx`):
+- v1 plans with `tasks`/`taskSessions` → v2 `intentions`/`intentionSessions` shape
+- `assignedSession: string` → `assignedSessions: string[]`
+- Old 6-step wizard numbers remapped to 5-step equivalents
+- Legacy `googleCalendarId: string` / `googleCalendarIds: string[]` → `GoogleCalendarEntry[]`
 
 ---
 
-### New Components to Build
+### Reducer Actions
 
-#### `src/lib/crypto.ts` — Token encryption utilities
-- AES-GCM encrypt/decrypt via Web Crypto API
-
-#### `src/hooks/useTodoist.ts` — Todoist API hook
-- Decrypts token from settings on mount
-- Exposes: `{ tasks, projects, sections, loading, error, isConfigured, createTask, completeTask, reopenTask, deleteTask, createProject, deleteProject, refreshTasks, refreshProjects, refreshSections }`
-- `tasks` fetched via `GET /api/v1/tasks` (paginated, extracts `.results`) — includes `section_id`, `parent_id` for hierarchy
-- `projects` fetched via `GET /api/v1/projects` (paginated, extracts `.results`) — includes `parent_id` for nesting
-- `sections` fetched via `GET /api/v1/sections` (paginated, extracts `.results`) — groups tasks within projects
-- `createTask(content, opts?)` → `POST /api/v1/tasks`
-- `completeTask(taskId)` → `POST /api/v1/sync` with `item_complete` command
-- `reopenTask(taskId)` → `POST /api/v1/sync` with `item_uncomplete` command
-- `deleteTask(taskId)` → `DELETE /api/v1/tasks/{taskId}` — removes task and children from local state
-- `createProject(name, opts?)` → `POST /api/v1/projects` — supports `parent_id` for nested project creation
-- `deleteProject(projectId)` → `DELETE /api/v1/projects/{projectId}` — removes project, its tasks, and sections from local state
-- Uses `import.meta.env.DEV` to route through Vite proxy in dev (`/api/todoist/api/v1`) or direct in prod
-- Caches tasks in React state; `refreshTasks()` to re-fetch; auto-refresh on window focus
-- Returns `isConfigured: false` if no token in settings
-
-#### `src/components/todoist/TodoistPanel.tsx` — Nested project tree panel
-- Displays tasks in a **collapsible nested tree** mirroring Todoist's sidebar structure:
-  - **Projects** nested via `parent_id` (areas → epics), with Todoist color dots and task count badges
-  - **Sections** within projects group related tasks, with collapsible headers
-  - **Sub-tasks** rendered recursively under parent tasks via `parent_id`
-- Two modes: `compact` (tree only, no create inputs, hides due dates) and `full` (tree + inline task creation + project creation footer)
-- Tree sorted by `child_order` / `section_order` at each level
-- Top-level projects expanded by default; sub-projects start collapsed
-- **Inline task creation**: Hover-visible `+` icon on each project header. Clicking opens an inline input directly under that project. Tasks are automatically created in the correct project.
-- **Task deletion**: Hover-visible `✕` icon on each task row. Deletes task via API.
-- **Project creation**: Footer input with parent project selector dropdown (supports nested creation). "+ New project" button expands the form.
-- **Project deletion**: Hover-visible `✕` icon on each project header. Shows inline Yes/No confirmation before deleting.
-- **Desktop deep link**: Header "Open in Todoist ↗" link uses `todoist://` URL scheme to launch the desktop app (supported since Todoist desktop v9.2.0).
-- Unconfigured state: shows setup prompt linking to Settings
-- Styled to match Orchestrate's existing card/border design
-
-#### `src/components/todoist/TodoistSetup.tsx` — Settings section
-- Token input (masked), "Test & Save" button, "Disconnect" button
-- Google Calendar: add/remove/rename entries, per-calendar color dropdown (15-color Google palette with `●` preview), inline name editing
-- Links to Todoist developer settings page
-
-#### `src/components/todoist/GoogleCalendarEmbed.tsx` — Calendar embed
-- Reads `googleCalendarIds` array of `GoogleCalendarEntry` objects from settings
-- Builds iframe URL with multiple `src=` and `color=` params to overlay all calendars with chosen colors
-- **View mode tab bar** above the iframe: Week / Month / Agenda — persists selection in `calendarViewMode` setting
-- Google Calendar embed iframe, configurable mode, current date
-- "Open in Google Calendar ↗" link for fallback access
-- Fallback message if no calendar IDs configured
+| Action | Description |
+|--------|-------------|
+| `ADD_INTENTION` | Add a new unclassified intention |
+| `REMOVE_INTENTION` | Remove an intention (and unassign from all sessions) |
+| `UPDATE_INTENTION` | Replace an intention by id |
+| `CATEGORIZE_INTENTION` | Set intention type to main or background |
+| `REORDER_INTENTIONS` | Reorder all intentions by a new ID list (drag-and-drop) |
+| `REORDER_SESSION_INTENTIONS` | Reorder intentions within a session slot |
+| `ASSIGN_INTENTION` | Assign to a session (exclusive for main, additive for background) |
+| `UNASSIGN_INTENTION` | Remove from a session |
+| `TOGGLE_INTENTION_COMPLETE` | Toggle completion flag |
+| `MARK_BROKEN_DOWN` | Toggle the breakdown flag (Step 1 mapping) |
+| `TOGGLE_HABIT` | Toggle `isHabit` on a background intention |
+| `SET_WIZARD_STEP` | Navigate to a specific wizard step |
+| `COMPLETE_SETUP` | Mark setup as done |
+| `ADD_CHECKIN` | Log an hourly check-in |
+| `RESET_DAY` | Clear plan and start fresh |
+| `UPDATE_SETTINGS` | Partial-update app settings |
+| `SET_EDITING_STEP` | Enter/exit wizard edit mode from dashboard |
+| `SAVE_DAY` | Save current plan as a named snapshot (deduplicates by date, includes `_wizardSteps` marker) |
+| `RESTORE_DAY` | Replace current plan with a saved snapshot (runs `migratePlan`, stamps today's date) |
+| `DELETE_SAVED_DAY` | Remove a saved snapshot from history |
+| `IMPORT_SESSIONS` | Merge imported saved sessions into history (deduplicates by `savedAt`) |
 
 ---
 
-### Wizard Flow (5 steps — COMPLETED)
+### Project Structure
 
-The wizard was originally 6 steps; Step 1 (Set Intentions) and Step 2 (Map to Todolist) were merged into a single step since the todolist provides the epic-level view that aids intention setting. Existing plans are automatically migrated via a `_wizardSteps` version marker.
+```
+src/
+  types/index.ts              — all TypeScript interfaces
+  data/playlists.ts           — 6 Spotify playlists with URLs + work-type mappings
+  data/sessions.ts            — 4 default session slot definitions
+  context/DayPlanContext.tsx   — React context + useReducer, localStorage sync, migration logic
+  lib/
+    crypto.ts                 — AES-GCM encrypt/decrypt via Web Crypto API
+    time.ts                   — shared timeToMinutes utility
+  hooks/
+    useCurrentSession.ts      — time-aware current/remaining session computation (updates every 60s)
+    useHourlyCheckin.ts       — hourly timer within session boundaries
+    useNotifications.ts       — Web Notifications API wrapper
+    useTheme.ts               — dark/light mode toggle with localStorage persistence, cross-tab sync
+    useTodoist.ts             — Todoist API hook (paginated fetch, CRUD, token decrypt)
+    useResizablePanel.ts      — shared drag-to-resize panel logic (used by wizard sidebar + dashboard sidebar)
+  components/
+    Welcome.tsx               — Welcome screen with greeting, step timeline, About modal, first-time nudge
+    ui/
+      AboutContent.tsx        — shared About Orchestrate text (used by Welcome and WizardLayout modals)
+      Button.tsx              — variant/size button
+      Card.tsx                — bordered card wrapper
+      EditableTaskList.tsx    — inline-editable list with native HTML drag-and-drop reordering
+      ErrorBoundary.tsx       — React error boundary with "Try Again" / "Reset & Reload" recovery
+      Modal.tsx               — overlay modal with ✕ close button and Escape key handling
+      ProgressBar.tsx         — step progress indicator
+    wizard/
+      Wizard.tsx              — step router (renders current step component)
+      WizardLayout.tsx        — shared layout: progress bar, step pills, resizable sidebar, back/next/done nav, integrations + about modals
+      Step1Intentions.tsx     — two-phase intention entry + sequential mapping (split view with TodoistPanel)
+      Step2Categorize.tsx     — main/background classification with habit toggle
+      Step3ScheduleMain.tsx   — assign main intentions to sessions (split view: schedule + Todoist + GCal)
+      Step4ScheduleBackground.tsx — assign background intentions to sessions (multi-session, same layout)
+      Step5StartMusic.tsx     — recap + embedded Spotify player for Start Work playlist
+    dashboard/
+      Dashboard.tsx           — main dashboard with music, Todoist, calendar, timeline, check-ins, save/restore
+      SessionTimeline.tsx     — vertical session timeline with completion toggles, inline editing, drag reorder; exports CurrentSession + SessionTimeline
+      DigitalClock.tsx        — large time display + date (updates every second)
+      MusicPanel.tsx          — exports MusicProvider (shared context), PlaylistSelector (button bar), SpotifyPlayer (embed with custom URL editing)
+      SavedSessions.tsx       — saved day history with restore/delete/export/import; compact mode for wizard sidebar
+      TransitionTips.tsx      — static music-protocol transition tips
+    checkin/
+      CheckInModal.tsx        — hourly check-in with feeling + work type + playlist suggestion + recontextualize option
+    todoist/
+      TodoistPanel.tsx        — collapsible nested project tree (projects → sections → tasks → sub-tasks)
+      TodoistSetup.tsx        — Todoist token setup + Google Calendar entries with per-calendar color/name
+      GoogleCalendarEmbed.tsx — configurable multi-calendar embed with view mode tabs
+  App.tsx                     — router + context provider + error boundary
+  main.tsx                    — entry point with BrowserRouter (basename=/orchestrate/)
+  index.css                   — Tailwind import + @theme color definitions + dark mode overrides
+```
 
-#### Step 1: Set & Map Intentions (merged from old Steps 1+2)
-**Layout**: Split view — left (two-phase intention flow) + right (TodoistPanel)
+---
 
-- Left panel (~40%):
-  - **Phase 1 — Set intentions**: Input + editable list (add, edit, drag-reorder, delete). "Start mapping →" button to proceed.
-  - **Phase 2 — Sequential mapping**: Intentions presented one at a time. Current intention highlighted with "Done — next/finish". Progress bar tracks completion. New intentions can still be added (queued for later mapping). Reordering disabled during mapping.
-- Right panel (~60%): `TodoistPanel` full mode — create/complete/delete tasks inline, create/delete projects
-- TodoistPanel container constrained to `min-h-[400px] max-h-[70vh]` to prevent the panel from pushing navigation buttons off-screen on smaller viewports; the internal project tree area scrolls independently.
-- If Todoist not configured: panel shows setup prompt
-- Advance condition: at least one intention added and mapping started
+### Routing
+
+| Route | Condition | Renders |
+|-------|-----------|---------|
+| `/` | `setupComplete` | `<Dashboard />` |
+| `/` | `!setupComplete` | `<Welcome />` |
+| `/setup` | `setupComplete` OR `fromWelcome` state | `<Wizard />` |
+| `/setup` | otherwise | `<Navigate to="/" />` |
+| `*` | any | `<Navigate to="/" />` |
+
+The `fromWelcome` pattern: Welcome and "Start New Day" navigate to `/setup` with `{ state: { fromWelcome: true } }`. This state is ephemeral — reloading `/setup` mid-wizard returns to Welcome, re-grounding the user.
+
+---
+
+### Wizard Flow (5 steps)
+
+#### Step 1: Set & Map Intentions
+**Layout**: Split view — left (two-phase intention flow) + right (TodoistPanel full mode). Wide layout.
+
+- **Phase 1 — Set intentions**: Input + `EditableTaskList` (drag-reorder, edit, remove). "Start mapping →" button appears once at least one intention exists. Footer "Continue" is disabled until mapping starts.
+- **Phase 2 — Sequential mapping**: Intentions presented one at a time. Current intention highlighted in a bordered card with "Done — next/finish". Progress bar shows `brokenDown / total`. Current intention title is click-to-edit inline. New intentions can be added during mapping. Auto-enters Phase 2 if returning with already-broken-down or categorized intentions.
+- **Right panel**: `TodoistPanel` full mode, constrained to `min-h-[400px] max-h-[70vh]`. Shows setup prompt if Todoist not configured.
+- **Onboarding banner**: Shown when Todoist or Google Calendar not configured. Dismissible.
+- **Advance condition**: at least one intention added AND mapping started.
 - Pill label: **"Intentions"**
 
-#### Step 2: Categorize (was Step 3)
+#### Step 2: Categorize
+- Main / Background pills per intention. Habit toggle (🔄) appears for background intentions.
+- Advance condition: all intentions categorized.
+- Pill label: **"Categorize"**
 
-#### Step 3: Schedule Main Intentions (was Step 4)
-**Layout**: Two-row layout — top row is split view, bottom row is full-width calendar
+#### Step 3: Schedule Main Intentions
+**Layout**: Top row split (schedule left + Todoist compact right), bottom row full-width calendar. Wide layout.
+- Session cards show assigned main intentions (click to unassign) + unassigned pills (click to assign). Main intentions are exclusive to one session.
+- Only remaining sessions (by current time) are shown.
+- Pill label: **"Main Schedule"**
 
-- Top-left (~50%): session-slot assignment UI (unassigned intentions + session cards)
-- Top-right (~50%): `TodoistPanel` compact mode, fixed 500px height with internal scroll
-- Bottom: `GoogleCalendarEmbed` full-width, 450px height with view mode tabs (Week/Month/Agenda)
-- Note encouraging user to schedule broken-down tasks via the panel
+#### Step 4: Schedule Background / Nudges
+**Layout**: Same as Step 3.
+- Background intentions can be assigned to **multiple sessions**. Session cards show main intentions (read-only context) + assigned background (click to remove) + available background (click to add).
+- Habit badge (🔄) shown on habit intentions.
+- Pill label: **"Nudges"**
 
-#### Step 4: Schedule Background / Nudges (was Step 5)
-**Layout**: Same two-row layout as Step 3 — session scheduling left, Todoist right, calendar below
+#### Step 5: Start Music
+- Recap with embedded Spotify player for the Start Work playlist. "Go to Dashboard" button completes setup.
+- "Skip and go to dashboard" / "Back to dashboard" link below.
+- Music protocol tips.
+- Pill label: **"Music"**
 
-- Top-left (~50%): session-slot cards with main intentions (read-only context) + background intention assignment
-- Top-right (~50%): `TodoistPanel` compact mode, fixed 500px height
-- Bottom: `GoogleCalendarEmbed` full-width, 450px height with view mode tabs
-
-#### Step 5: Start Music (was Step 6)
-
----
-
-### Dashboard Changes
-
-Replace the Trevor AI collapsible section with:
-1. **Task Manager** (collapsed): `TodoistPanel` full mode
-2. **Calendar** (collapsed): `GoogleCalendarEmbed`
-
-Both below music panel, above session timeline.
-
-#### Hourly Check-In Recontextualization
-
-During hourly check-ins, the `CheckInModal` offers a **"Reschedule Sessions"** option that allows the user to recontextualize mid-day:
-
-- A nudge section appears in the modal: "Need to reschedule? If things have shifted, you can recontextualize your remaining sessions."
-- Clicking "Reschedule Sessions" logs the current check-in (if feeling + work type are filled), then navigates to Step 3 (Schedule Main Intentions) in **edit mode** — `editingStep` and `wizardStep` both set to 3.
-- The user can rearrange session assignments using the full scheduling UI, then click "Done" to return to the dashboard.
-- `CheckInModal` accepts an optional `onRecontextualize` callback prop; the Dashboard passes a handler that dispatches `SET_EDITING_STEP` + `SET_WIZARD_STEP` and navigates to `/setup`.
+#### Step Navigation
+- **During setup**: Pills for visited steps are clickable (backward). Next step pill clickable when `canAdvance` is true. Cannot skip ahead.
+- **After setup (edit mode)**: All pills freely clickable. "Done" / "Back to Dashboard" button returns to dashboard.
 
 ---
 
-### Settings Page
+### Dashboard
 
-Add **Integrations** section (new settings modal or expand existing):
-- Todoist API Token: masked input, test/save/disconnect
-- Google Calendar IDs: add/remove list of calendar IDs (overlaid in a single embed)
-- Link to: `https://app.todoist.com/app/settings/integrations/developer`
+**Header**: Logo, completion counter, Save Day / Edit Plan / Start New Day / Saved Sessions / Settings / theme toggle.
 
----
+**Layout** (top to bottom):
+1. **Music**: Row 1 — `PlaylistSelector` (horizontal buttons) + `DigitalClock`. Row 2 — `SpotifyPlayer` (embed with custom URL support) + `TransitionTips`.
+2. **Task Manager** (collapsible): `TodoistPanel` full mode, 400px height.
+3. **Calendar** (collapsible): `GoogleCalendarEmbed` with view mode tabs.
+4. **Current Session**: Active session card with intention completion toggles, inline editing, drag reorder, background nudge banner.
+5. **Timeline**: All session cards with past sessions dimmed.
 
-### Implementation Order (ALL COMPLETED)
+**Saved Sessions sidebar**: Resizable left panel (via `useResizablePanel`). Import/export JSON. Restore with confirmation.
 
-#### Phase 2: Todoist Integration ✅
-11. `src/lib/crypto.ts` — AES-GCM encrypt/decrypt
-12. `AppSettings` update — Add todoist/calendar fields to types + context
-13. `src/hooks/useTodoist.ts` — API hook (migrated to Todoist API v1)
-14. `TodoistSetup` component — Settings UI
-15. `TodoistPanel` component — Inline task list
-16. `GoogleCalendarEmbed` component
-
-#### Phase 3: Wire Integration ✅
-17. Step 2 update — Replace Trevor AI iframe with TodoistPanel
-18. Step 4 update — Replace iframe with TodoistPanel + GoogleCalendarEmbed
-19. Dashboard update — Replace Trevor AI section
-20. Settings modal/page — Wire TodoistSetup
+**Music panel**: `MusicProvider` shares state. Per-playlist custom URL overrides persisted in localStorage. Last selection persisted. Check-in playlist suggestions surface as "Suggested" badge.
 
 ---
 
-### Verification
+### Hourly Check-In
 
-1. Configure Todoist token in settings → tasks load
-2. Walk all 5 wizard steps with Todoist panel in Steps 1 and 3
-3. Create task via inline `+` on project header → appears in Todoist
-4. Complete task → syncs
-5. Delete task via hover `✕` → removed from Todoist
-6. Create nested project via parent selector → appears nested in tree
-7. Delete project with inline confirmation → removed with its tasks/sections
-8. "Open in Todoist ↗" launches desktop app via `todoist://`
-9. Google Calendar embed shows current week
-10. Settings: disconnect → panel shows setup prompt
-11. Large task lists scroll within the panel without pushing wizard nav buttons off-screen
-7. Settings: invalid token → error message
-8. Token stored encrypted (DevTools: not plaintext)
-9. `vite build` → full flow works
-10. Responsive test at 375px, 768px, 1280px
+- Fires on next whole hour, then every 60 minutes, while within a session and setup is complete.
+- Modal: feeling (great/okay/struggling/stuck) + work type + playlist suggestion + optional notes.
+- Background nudge reminder for the current session.
+- **Recontextualize option**: "Reschedule Sessions" logs check-in, then navigates to Step 3 in edit mode.
 
 ---
 
-### Todoist API Reference (v1 — unified API)
+### Save/Restore
 
-REST v2 (`/rest/v2/`) was sunset by Todoist and returns `410 Gone`. All endpoints migrated to the unified v1 API.
+- **Save Day**: Prompts for name (defaults to formatted date). Replaces existing snapshot for same date. Includes `_wizardSteps: 5` marker for migration safety.
+- **Restore**: Replaces current plan. Runs `migratePlan()` on the saved data. Stamps today's date.
+- **Start New Day**: Offers to save current session first, then resets and navigates to wizard.
+- **Export/Import**: JSON files — individual or bulk. Validates structure and deduplicates by `savedAt`.
+
+---
+
+### Dark Mode
+
+- Class-based toggle (`.dark` on `<html>`) with CSS custom property overrides.
+- Persisted in localStorage (`orchestrate-theme`).
+- Synced across tabs via `StorageEvent` + `useSyncExternalStore`.
+- Toggle button in wizard header, dashboard header, and Welcome screen.
+- PWA theme-color meta tag updated on toggle.
+
+---
+
+### Todoist API Reference
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/v1/projects` | GET | List projects — paginated `{ results, next_cursor }` — includes `parent_id` for hierarchy (also token validation) |
-| `/api/v1/sections` | GET | List sections — paginated `{ results, next_cursor }` — optional `project_id` filter |
-| `/api/v1/tasks` | GET | List active tasks — paginated `{ results, next_cursor }` — includes `section_id`, `parent_id` (`project_id` param) |
-| `/api/v1/tasks` | POST | Create task (JSON body: `{ content, project_id?, ... }`) |
-| `/api/v1/tasks/{id}` | POST | Update task |
-| `/api/v1/sync` | POST | Sync endpoint for complete (`item_complete`) and reopen (`item_uncomplete`) |
+| `/api/v1/projects` | GET | List projects (paginated, includes `parent_id`) — also used for token validation |
+| `/api/v1/projects` | POST | Create project (`parent_id` for nesting) |
+| `/api/v1/projects/{id}` | DELETE | Delete project |
+| `/api/v1/sections` | GET | List sections (paginated) |
+| `/api/v1/tasks` | GET | List active tasks (paginated, includes `section_id`, `parent_id`) |
+| `/api/v1/tasks` | POST | Create task |
+| `/api/v1/tasks/{id}` | POST | Update task (`due_datetime`, `duration`, `duration_unit`) |
+| `/api/v1/tasks/{id}` | DELETE | Delete task |
+| `/api/v1/sync` | POST | Complete (`item_complete`) / Reopen (`item_uncomplete`) |
 
-All requests: `Authorization: Bearer {token}`. GET responses paginated JSON. Sync uses `application/x-www-form-urlencoded` with `commands` parameter.
+All requests: `Authorization: Bearer {token}`. Dev proxy: `/api/todoist/* → https://api.todoist.com/*`.
 
-#### Dev Proxy (vite.config.ts)
-```
-/api/todoist/* → https://api.todoist.com/* (changeOrigin, path rewrite)
-```
-`useTodoist.ts` uses `/api/todoist/api/v1` in dev, direct `https://api.todoist.com/api/v1` in production.
+**Local state cleanup on delete**: Both `deleteTask` and `deleteProject` recursively collect all descendant IDs before filtering local state, ensuring deeply nested children are removed.
+
+---
+
+### TodoistPanel Component
+
+Displays tasks in a **collapsible nested tree** mirroring Todoist's sidebar:
+- **Projects** nested via `parent_id`, with Todoist color dots and task count badges.
+- **Sections** group tasks within projects, with collapsible headers.
+- **Sub-tasks** rendered recursively under parent tasks.
+- **Two modes**: `compact` (read-only tree, hides due dates/create inputs) and `full` (tree + inline task/project creation).
+- **Task scheduling**: ⏱ icon on hover opens inline time range picker (start/end). Duration sent to Todoist API. "Clear" resets to date-only. Scheduled times displayed in both modes.
+- **Desktop deep link**: "Open in Todoist ↗" uses `todoist://` URL scheme.
+- **All date operations use local time** (`date-fns format`) to avoid UTC/timezone mismatches.
 
 ---
 
@@ -298,208 +363,71 @@ All requests: `Authorization: Bearer {token}`. GET responses paginated JSON. Syn
 - **Todoist API v1 + personal token** instead of Trevor AI iframe (iframe blocked; REST v2 sunset)
 - **Google Calendar embed** for read-only calendar context (officially supported)
 - **Client-side token encryption** (AES-GCM via Web Crypto API)
-- **No backend** for this phase
+- **No backend**
 - **Parallel data model**: Orchestrate owns intentions/sessions, Todoist owns tasks, GCal provides time context
 - **Multi-session assignment**: Only for background intentions
-- **Step count reduced from 6 to 5** — intention entry and todolist mapping merged into one step
+- **Step count: 5** — intention entry and todolist mapping merged into one step
+- **No Spotify API** — playlists use iframe embeds + deep links; per-playlist custom URL overrides
+- **Decomposed MusicPanel** — `MusicProvider`, `PlaylistSelector`, `SpotifyPlayer` as separate exports for flexible layout
+- **Native HTML Drag and Drop** — no library, keeps bundle lean
+- **Manual "Start New Day"** — no auto-reset
+- **Non-linear wizard** — step pills always accessible; edit mode from dashboard
+- **Music panel always open** — defaults to Start Work playlist
+- **Green-themed icon** — favicon SVG (`#3d9970`); PWA icons generated from same source
 
 ---
 
-### Iteration 3.1 — Bug Fixes, File Cleanup & Step 1 UX Redesign
+### Verification Checklist
 
-#### Bug Fixes (all implemented ✅)
-
-| # | Issue | Severity | Fix |
-|---|-------|----------|-----|
-| 1 | `useCurrentSession` used `useMemo` with only `[slots]` — never re-evaluated as time passed, so dashboard showed stale session data | **Critical** | Added a `tick` state that increments every 60s, included in `useMemo` deps |
-| 2 | `RESTORE_DAY` did `structuredClone` without running `migratePlan` — restoring a v1 import crashed the app | **Critical** | Restore now calls `migratePlan()` on the saved plan |
-| 3 | Todoist `refreshTasks`/`refreshProjects` only fetched the first page of paginated results — users with many tasks saw a partial list | Moderate | Added `fetchAllPages<T>()` helper that loops `next_cursor` until exhausted |
-| 4 | No React error boundary — any rendering error crashed the entire app with a white screen | Moderate | Added `ErrorBoundary` component wrapping `<DayPlanProvider>` in `App.tsx`, with "Try Again" and "Reset & Reload" recovery |
-| 5 | Modal `onKeyDown` for Escape was on the backdrop `<div>` (required focus) — pressing Escape anywhere didn't close modals | Moderate | Replaced with `useEffect` document-level `keydown` listener |
-| 6 | No catch-all route — unknown paths rendered blank | Moderate | Added `<Route path="*" element={<Navigate to="/" />} />` |
-| 7 | `SAVE_DAY` appended a new entry every time — saving multiple times created duplicates for the same date | Moderate | Now filters out existing snapshots for the same `plan.date` before prepending |
-| 8 | `package.json` name was still `"routinify"` from before the rename | Minor | Changed to `"orchestrate"` |
-| 9 | `getPlaylistForWorkType` used `as never` cast | Minor | Replaced with `(p.workTypes as string[]).includes(workType)` |
-| 10 | `new Date(plan.date)` in Dashboard parsed `YYYY-MM-DD` as UTC midnight — showed wrong day in negative-offset timezones | Minor | Replaced with `parseISO()` from date-fns |
-
-#### File Renames (wizard steps — implemented ✅)
-
-Wizard was reduced from 6 to 5 steps in v3, but file names and export names still reflected the old numbering. Renamed for consistency:
-
-| Old file | New file | Export |
-|----------|----------|--------|
-| `Step2TodolistSync.tsx` | `Step1Intentions.tsx` | `Step1Intentions` |
-| `Step3Categorize.tsx` | `Step2Categorize.tsx` | `Step2Categorize` |
-| `Step4ScheduleMain.tsx` | `Step3ScheduleMain.tsx` | `Step3ScheduleMain` |
-| `Step5ScheduleBackground.tsx` | `Step4ScheduleBackground.tsx` | `Step4ScheduleBackground` |
-| `Step6StartMusic.tsx` | `Step5StartMusic.tsx` | `Step5StartMusic` |
-
-Only consumer is `Wizard.tsx` — all imports updated. No changes outside `wizard/`.
-
-#### Step 1 UX Redesign — Two-Phase Sequential Flow (implemented ✅)
-
-Replaced the flat all-at-once layout with a guided two-phase approach:
-
-**Phase 1 — Set intentions:**
-- Input field + `EditableTaskList` (drag-reorder, edit, remove)
-- Heading: "What are your intentions for today?"
-- "Start mapping →" button appears once at least one intention exists
-- "Continue" (footer) is disabled until mapping starts — forces the user through the flow
-- Quick Checks section removed (no longer necessary)
-
-**Phase 2 — Sequential mapping (triggered by "Start mapping"):**
-- Input stays available for adding more intentions (they queue at the end for mapping)
-- Progress bar shows `brokenDown / total`
-- Completed intentions collapse into a compact checkmark list
-- **Current intention** is highlighted in a prominent bordered card with "Done — next/finish"
-- Current intention title is **click-to-edit** inline (commit on Enter/blur, cancel on Escape) — allows fixing typos without leaving mapping phase
-- Upcoming count shown: "N more intentions after this"
-- Reordering is disabled during mapping (simplifies the sequential flow)
-- When all mapped: success message nudging toward the next step
-- Auto-enters phase 2 if returning with any already-broken-down or categorized intentions
-
-**Rationale:** The previous design showed all intentions and the breakdown checklist simultaneously, which was overwhelming. The sequential approach mirrors the actual workflow — one intention at a time — and reduces cognitive load.
+1. Walk all 5 wizard steps — add intentions, map sequentially, categorize, schedule, start music
+2. Start app at different times → only remaining sessions offered in Steps 3–4
+3. Complete wizard → dashboard loads. Refresh → loads from localStorage.
+4. "Start New Day" → save prompt → wizard restarts with empty state
+5. "Edit Plan" → wizard with step pills; jump to any step; "Done" returns
+6. "Save Day" → name prompt; snapshot appears in Saved Sessions; restore replaces with confirmation
+7. Wizard sidebar: saved sessions + import always visible during initial setup; restore navigates to dashboard
+8. Hourly check-in fires within session → modal appears; playlist suggestion matches work type
+9. "Reschedule Sessions" → navigates to Step 3 in edit mode
+10. Configure Todoist token → tasks load; create/complete/delete/schedule tasks via panel
+11. Delete project/task with nested children → all descendants removed from local state
+12. Google Calendar embed shows configured calendars with correct colors
+13. Export/import JSON sessions — validates and deduplicates
+14. Dark mode toggle persists across reload and syncs across tabs
+15. Browser notifications work when enabled; graceful fallback when denied
+16. Token stored encrypted (not plaintext in DevTools)
+17. `vite build` → serve `dist/` → full flow works
+18. Responsive test at 375px, 768px, 1280px
 
 ---
 
-### Iteration 3.3 — Wizard Navigation Improvements (implemented ✅)
+### Historical Bug Fixes (all resolved)
 
-#### Setup-mode step pill navigation
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | `useCurrentSession` never re-evaluated as time passed | Added `tick` state that increments every 60s |
+| 2 | `RESTORE_DAY` without `migratePlan` crashed on v1 imports | Restore calls `migratePlan()` |
+| 3 | Todoist pagination only fetched first page | `fetchAllPages<T>()` loops `next_cursor` |
+| 4 | No error boundary — white screen on error | `ErrorBoundary` wrapping `<DayPlanProvider>` |
+| 5 | Modal Escape required focus on backdrop | Document-level `keydown` listener |
+| 6 | No catch-all route | `<Route path="*">` |
+| 7 | `SAVE_DAY` duplicated on repeated saves | Filters by `plan.date` before prepending |
+| 8 | `RESTORE_DAY` preserved stale date → discarded on reload | Stamps `date: todayISO()` |
+| 9 | `SAVE_DAY` didn't include `_wizardSteps` marker → corrupted wizard step on restore | Saved plans now include `_wizardSteps: 5` |
+| 10 | "Start New Day" navigated to `/setup` without `fromWelcome` → bounced to Welcome | Passes `{ state: { fromWelcome: true } }` |
+| 11 | Notification icon path wrong in production (`/favicon.svg` vs `/orchestrate/`) | Uses `import.meta.env.BASE_URL` prefix |
+| 12 | `deleteProject`/`deleteTask` only removed direct children from local state | Recursive descendant collection before filtering |
+| 13 | `TodoistPanel` used UTC date (`toISOString().slice`) → wrong day near midnight | Replaced with `format(new Date(), 'yyyy-MM-dd')` (local time) |
+| 14 | `new Date(plan.date)` parsed YYYY-MM-DD as UTC midnight | Replaced with `parseISO()` from date-fns |
 
-Previously, step pills were only clickable after setup was complete ("Edit day" mode). During initial setup, navigation was limited to the Back/Continue footer buttons.
+### Dead Code Removed
 
-**Changes:**
-- **Backward navigation via pills**: During setup, pills for all previously visited steps are clickable, allowing the user to jump back freely (e.g., return to Step 1 from Step 3 to add another intention).
-- **Forward navigation to next step via pill**: The next immediate step pill is clickable when `canAdvance` is true — same condition that gates the Continue button. Users cannot skip ahead to steps beyond the next one.
-- **Post-setup (Edit day)**: Unchanged — all pills are freely clickable.
+- `useLocalStorage` hook (unused — localStorage managed directly in context and MusicPanel)
+- `syncChecklist` field and `TOGGLE_SYNC_ITEM` action (vestigial from v1 todolist sync step)
+- `Task` type alias (deprecated, never imported)
+- `MusicPanel` convenience wrapper (unused — dashboard uses decomposed pattern)
 
-**Implementation** (`WizardLayout.tsx`):
-```ts
-const canClick = plan.setupComplete
-    ? !isCurrent
-    : (stepNum < step) || (stepNum === step + 1 && canAdvance);
-```
+### Deduplication
 
-**Step 1 return handling**: `mappingStarted` state now also checks `i.type !== 'unclassified'` so that returning to Step 1 after categorization correctly enters Phase 2 instead of resetting to Phase 1.
-
----
-
-### Iteration 3.2 — Welcome Screen & Restore Fix (implemented ✅)
-
-#### Bug Fix: `RESTORE_DAY` date stamping
-
-| # | Issue | Severity | Fix |
-|---|-------|----------|-----|
-| 11 | `RESTORE_DAY` preserved the saved plan's original date — restoring an old session worked in memory but was discarded on page reload (date mismatch in `loadPlan()`) | **Critical** | Restore now stamps the active plan with `date: todayISO()`. The saved history entry retains the original date. |
-
-#### Welcome Screen — `src/components/Welcome.tsx` (new)
-
-When `setupComplete` is `false`, the `/` route now renders a **Welcome screen** instead of immediately redirecting to the wizard. This provides a calm, intentional entry point that greets the user before they begin planning.
-
-**Structure:**
-- App logo + "Orchestrate" heading
-- Time-aware greeting ("Good morning/afternoon/evening") + formatted date
-- Main card with contextual heading and CTA button
-- Horizontal **step timeline** (circles + connecting lines) showing planning progress
-- First-time vs returning user distinction
-
-**Two modes:**
-- **Fresh day** (no intentions, step 1): "Start your day with clarity" heading, "Plan Your Day" button. Timeline shows all steps in muted/inactive state with step 1 highlighted.
-- **Resuming** (partially completed setup): "Pick up where you left off" heading, intention count, "Resume Planning" button. Timeline shows completed steps (filled accent circles with checkmarks), current step (accent-outlined), and future steps (muted).
-
-**Step timeline design:**
-- Round numbered circles for each stage, connected by horizontal lines
-- Completed steps: filled accent background, white checkmark, accent connecting line
-- Current step: accent border with accent tint background, accent text
-- Future steps: muted border, muted text
-- Labels below each circle
-
-**First-time user nudge:**
-- Detected when: no intentions, wizard at step 1, and no saved session history
-- Tagline replaced with: "New here? [Learn what Orchestrate does]" — inline link opens About modal
-- Returning users see the standard tagline: "Counter task blindness. Stay connected to what matters."
-
-**About modal:**
-- Accessible via `?` button in top-right (next to theme toggle), matching the wizard's existing style
-- Same content as the wizard's About modal (app philosophy, contextualizing vs epics, task/time blindness)
-- First-time nudge also opens this modal
-
-#### Routing Changes — `App.tsx`
-
-| Route | Before | After |
-|-------|--------|-------|
-| `/` (setup incomplete) | `<Navigate to="/setup" replace />` | `<Welcome />` |
-| `/setup` (setup incomplete, direct access/reload) | `<Wizard />` always | `<Navigate to="/" replace />` — redirects to Welcome |
-| `/setup` (via Welcome button) | N/A | `<Wizard />` — allowed via `fromWelcome` location state |
-| `/setup` (setup complete) | `<Wizard />` | `<Wizard />` (unchanged) |
-
-**`fromWelcome` state pattern:** The Welcome screen navigates to `/setup` with `{ state: { fromWelcome: true } }`. The route checks `location.state.fromWelcome` — if `true`, renders the Wizard; otherwise redirects to `/`. This state is ephemeral (lost on reload), so reloading `/setup` mid-wizard always returns to the Welcome screen, re-grounding the user after a context switch.
-
-#### New file
-
-| File | Purpose |
-|------|---------|
-| `src/components/Welcome.tsx` | Welcome screen component with greeting, step timeline, About modal, first-time nudge |
-
----
-
-### Iteration 3.4 — Todoist Scheduling, Calendar Enhancements & Modal UX (implemented ✅)
-
-#### Todoist Task Scheduling (time-range within the day)
-
-Since Orchestrate manages tasks *within* a single day, tasks need to be schedulable to specific time windows — not just marked with a due date.
-
-**API integration** (`src/hooks/useTodoist.ts`):
-- Added `duration` field (`{ amount: number; unit: string } | null`) to `TodoistTask` interface
-- Added `updateTask(taskId, updates)` function — calls `POST /api/v1/tasks/{id}` with `due_datetime`, `duration`, `duration_unit` fields
-- Optimistically updates local task state after successful API call
-- `updateTask` exposed in the hook's return value
-
-**UI** (`src/components/todoist/TodoistPanel.tsx`):
-
-| Feature | Details |
-|---------|---------|
-| Time range picker | Two `<input type="time">` fields (start/end) in `TaskRow`, shown on ⏱ icon click |
-| Duration computation | `handleSchedule()` calculates duration in minutes from start → end, sends to Todoist API |
-| Schedule display | Formatted as "9:00 AM – 1:00 PM" in both compact and full task row modes |
-| Clear schedule | "Clear" button resets to date-only due (`due_date` without `due_datetime`) |
-| Visual indicator | ⏱ icon stays accent-colored when task has a scheduled time |
-| Dark mode | `dark:[color-scheme:dark]` on time inputs for native dark mode clock icon support |
-| Indentation | Picker container uses `paddingLeft: ${52 + depth * 16}px` to align with task text |
-| Prop threading | `onSchedule` / `onClearSchedule` threaded through `ProjectTreeNode` → `SectionGroup` → `TaskRow` |
-
-#### Google Calendar Embed Improvements
-
-| Change | Rationale |
-|--------|-----------|
-| Removed `sandbox` attribute from iframe | Was blocking authentication cookies needed for private/imported calendars |
-| Per-calendar `&color={hex}` in embed URL | Google embed ignores account calendar colors; explicit `color` param applies chosen color |
-| "Open in Google Calendar ↗" link | Fallback for users with third-party cookie restrictions |
-| Cookie/privacy warning note | Explains why private calendars may not appear in the embed |
-
-#### Per-Calendar Color & Name Support
-
-**New type** (`src/types/index.ts`):
-```ts
-export interface GoogleCalendarEntry {
-    id: string;
-    name?: string;   // user-friendly display name
-    color?: string;  // hex color from Google's accepted palette
-}
-```
-
-**Settings UI** (`src/components/todoist/TodoistSetup.tsx`):
-- Calendar list shows: colored `●` preview dot, inline editable name, color dropdown, remove button
-- Color dropdown uses Google's 15-color palette with `● ColorName` format (colored dot via inline style)
-- Add flow includes "Calendar ID" + "Name (optional)" inputs
-- Palette: Blue, Lavender, Sage, Grape, Flamingo, Banana, Tangerine, Teal, Basil, Blueberry, Tomato, Citron, Cocoa, Graphite, Birch
-
-**Migration** (`src/context/DayPlanContext.tsx`):
-- Legacy `googleCalendarId: string` → `[{ id }]`
-- Legacy `googleCalendarIds: string[]` → `GoogleCalendarEntry[]` (detects `typeof [0] === 'string'`)
-
-#### Modal Close Button (`src/components/ui/Modal.tsx`)
-
-- Added `✕` close button at `absolute top-3 right-3`
-- Title gets `pr-6` to avoid overlap with the close button
-- Uses the existing `onClose` callback
+- `timeToMinutes` → extracted to `src/lib/time.ts` (shared by `useCurrentSession` and `useHourlyCheckin`)
+- Resizable panel logic → extracted to `src/hooks/useResizablePanel.ts` (shared by `WizardLayout` and `Dashboard`)
+- About modal text → extracted to `src/components/ui/AboutContent.tsx` (shared by `WizardLayout` and `Welcome`)
