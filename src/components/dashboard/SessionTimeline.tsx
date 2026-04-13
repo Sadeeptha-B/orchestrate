@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { Card } from '../ui/Card';
+import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoist } from '../../hooks/useTodoist';
@@ -123,6 +124,12 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) 
                 {title}
             </span>
 
+            {linkedTask.estimatedMinutes != null && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light flex-shrink-0 tabular-nums">
+                    {linkedTask.estimatedMinutes}m
+                </span>
+            )}
+
             <span
                 className={`ml-auto text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${linkedTask.type === 'main'
                     ? 'bg-accent/10 text-accent'
@@ -189,9 +196,27 @@ function SessionCard({
                     )}
                     <h4 className="font-medium text-sm">{session.name}</h4>
                 </div>
-                <span className="text-xs text-text-light">
-                    {session.startTime} – {session.endTime}
-                </span>
+                <div className="flex items-center gap-2">
+                    {(() => {
+                        const [sh, sm] = session.startTime.split(':').map(Number);
+                        const [eh, em] = session.endTime.split(':').map(Number);
+                        const totalMin = (eh * 60 + em) - (sh * 60 + sm);
+                        const estTotal = tasksInSession.reduce((s, lt) => s + (lt.estimatedMinutes ?? 0), 0);
+                        if (estTotal === 0) return null;
+                        const h = Math.floor(estTotal / 60);
+                        const m = estTotal % 60;
+                        const fmt = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+                        const over = estTotal > totalMin;
+                        return (
+                            <span className={`text-[10px] tabular-nums ${over ? 'text-amber-600 dark:text-amber-400' : 'text-text-light'}`}>
+                                {fmt} est.{over && ' \u26a0'}
+                            </span>
+                        );
+                    })()}
+                    <span className="text-xs text-text-light">
+                        {session.startTime} \u2013 {session.endTime}
+                    </span>
+                </div>
             </div>
 
             {/* Background nudge banner */}
@@ -276,35 +301,15 @@ export function SessionTimeline() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoist();
-    const drag = useTaskDrag();
-
-    const intentionMap = useMemo(
-        () => new Map(plan.intentions.map((i) => [i.id, i])),
-        [plan.intentions],
-    );
 
     return (
-        <div className="space-y-4">
-            {settings.sessionSlots.map((session) => {
-                const isCurrent = currentSession?.id === session.id;
-                const isPast = !isCurrent && isSessionPast(session.endTime);
-                const taskIds = plan.taskSessions[session.id] ?? [];
-
-                return (
-                    <SessionCard
-                        key={session.id}
-                        session={session}
-                        isCurrent={isCurrent}
-                        isPast={isPast}
-                        taskIds={taskIds}
-                        linkedTasks={plan.linkedTasks}
-                        taskMap={taskMap}
-                        intentions={intentionMap}
-                        drag={drag}
-                    />
-                );
-            })}
-        </div>
+        <SessionTimelineBar
+            sessions={settings.sessionSlots}
+            taskSessions={plan.taskSessions}
+            linkedTasks={plan.linkedTasks}
+            taskMap={taskMap}
+            currentSessionId={currentSession?.id}
+        />
     );
 }
 

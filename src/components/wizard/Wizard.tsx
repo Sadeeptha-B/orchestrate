@@ -1,12 +1,12 @@
 import { useDayPlan } from '../../context/DayPlanContext';
 import { Step1Intentions } from './Step1Intentions';
-import { Step2Categorize } from './Step2Categorize';
+import { Step2Refine } from './Step2Refine';
 import { Step3Schedule } from './Step3Schedule';
 import { Step4StartMusic } from './Step4StartMusic';
 
 const STEPS = [
     Step1Intentions,
-    Step2Categorize,
+    Step2Refine,
     Step3Schedule,
     Step4StartMusic,
 ];

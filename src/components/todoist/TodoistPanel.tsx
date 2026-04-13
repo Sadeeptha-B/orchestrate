@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { format } from 'date-fns';
 import { useTodoist, type TodoistTask, type TodoistProject, type TodoistSection } from '../../hooks/useTodoist';
@@ -129,7 +129,20 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         refreshSections,
     } = useTodoist();
 
-    const { plan } = useDayPlan();
+    const { plan, dispatch } = useDayPlan();
+
+    // After initial Todoist fetch, clean up any linked tasks that no longer exist in Todoist
+    const hasCleanedUp = useRef(false);
+    useEffect(() => {
+        if (hasCleanedUp.current || loading || tasks.length === 0) return;
+        hasCleanedUp.current = true;
+        const fetchedIds = new Set(tasks.map((t) => t.id));
+        for (const lt of plan.linkedTasks) {
+            if (!fetchedIds.has(lt.todoistId)) {
+                dispatch({ type: 'UNLINK_TASK', todoistId: lt.todoistId });
+            }
+        }
+    }, [loading, tasks, plan.linkedTasks, dispatch]);
 
     // Persistent map: todoistId → intention title (always available, not just in linking mode)
     const persistentLinks = useMemo(() => {
@@ -141,6 +154,17 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         }
         return map;
     }, [plan.linkedTasks, plan.intentions]);
+
+    // Persistent map: todoistId → estimatedMinutes (for auto-filling schedule end times)
+    const estimateMap = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const lt of plan.linkedTasks) {
+            if (lt.estimatedMinutes) {
+                map.set(lt.todoistId, lt.estimatedMinutes);
+            }
+        }
+        return map;
+    }, [plan.linkedTasks]);
 
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectParentId, setNewProjectParentId] = useState<string>('');
@@ -227,6 +251,41 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         await deleteProject(projectId);
     };
 
+    // Wrap complete/delete to also unlink from the day plan
+    const handleCompleteTask = useCallback(
+        (taskId: string) => {
+            completeTask(taskId);
+            if (plan.linkedTasks.some((lt) => lt.todoistId === taskId)) {
+                dispatch({ type: 'UNLINK_TASK', todoistId: taskId });
+            }
+        },
+        [completeTask, plan.linkedTasks, dispatch],
+    );
+
+    const handleDeleteTask = useCallback(
+        (taskId: string) => {
+            // Collect all descendant IDs that will be cascade-removed
+            const toRemove = new Set<string>([taskId]);
+            let changed = true;
+            while (changed) {
+                changed = false;
+                for (const t of tasks) {
+                    if (!toRemove.has(t.id) && t.parent_id && toRemove.has(t.parent_id)) {
+                        toRemove.add(t.id);
+                        changed = true;
+                    }
+                }
+            }
+            deleteTask(taskId);
+            for (const id of toRemove) {
+                if (plan.linkedTasks.some((lt) => lt.todoistId === id)) {
+                    dispatch({ type: 'UNLINK_TASK', todoistId: id });
+                }
+            }
+        },
+        [deleteTask, tasks, plan.linkedTasks, dispatch],
+    );
+
     const handleSchedule = async (taskId: string, startTime: string, endTime: string) => {
         const today = format(new Date(), 'yyyy-MM-dd');
         const [sh, sm] = startTime.split(':').map(Number);
@@ -292,9 +351,9 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
                         key={node.project.id}
                         node={node}
                         depth={0}
-                        onComplete={completeTask}
+                        onComplete={handleCompleteTask}
                         onCreateTask={createTask}
-                        onDeleteTask={deleteTask}
+                        onDeleteTask={handleDeleteTask}
                         onDeleteProject={handleDeleteProject}
                         onSchedule={handleSchedule}
                         onClearSchedule={handleClearSchedule}
@@ -303,6 +362,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
                         compact={mode === 'compact'}
                         linking={linking}
                         persistentLinks={persistentLinks}
+                        estimateMap={estimateMap}
                     />
                 ))}
             </div>
@@ -382,6 +442,7 @@ function ProjectTreeNode({
     compact,
     linking,
     persistentLinks,
+    estimateMap,
 }: {
     node: ProjectNode;
     depth: number;
@@ -396,6 +457,7 @@ function ProjectTreeNode({
     compact: boolean;
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
+    estimateMap: Map<string, number>;
 }) {
     const [collapsed, setCollapsed] = useState(depth > 0);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -553,6 +615,7 @@ function ProjectTreeNode({
                             compact={compact}
                             linking={linking}
                             persistentLinks={persistentLinks}
+                            estimateMap={estimateMap}
                         />
                     ))}
 
@@ -575,6 +638,7 @@ function ProjectTreeNode({
                                 subTaskMap={subTaskMap}
                                 compact={compact}
                                 persistentLinks={persistentLinks}
+                                estimateMap={estimateMap}
                             />
                         );
                     })}
@@ -596,6 +660,7 @@ function ProjectTreeNode({
                             compact={compact}
                             linking={linking}
                             persistentLinks={persistentLinks}
+                            estimateMap={estimateMap}
                         />
                     ))}
                 </div>
@@ -619,6 +684,7 @@ function SectionGroup({
     compact,
     linking,
     persistentLinks,
+    estimateMap,
 }: {
     section: TodoistSection;
     tasks: TodoistTask[];
@@ -632,6 +698,7 @@ function SectionGroup({
     compact: boolean;
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
+    estimateMap: Map<string, number>;
 }) {
     const [collapsed, setCollapsed] = useState(false);
 
@@ -670,6 +737,7 @@ function SectionGroup({
                         compact={compact}
                         linking={linking}
                         persistentLinks={persistentLinks}
+                        estimateMap={estimateMap}
                     />
                 ))}
         </div>
@@ -690,6 +758,7 @@ function TaskRow({
     compact,
     linking,
     persistentLinks,
+    estimateMap,
 }: {
     task: TodoistTask;
     depth: number;
@@ -702,6 +771,7 @@ function TaskRow({
     compact: boolean;
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
+    estimateMap: Map<string, number>;
 }) {
     const children = subTaskMap.get(task.id);
     const [childrenCollapsed, setChildrenCollapsed] = useState(false);
@@ -922,7 +992,18 @@ function TaskRow({
                     <input
                         type="time"
                         value={pickerStart}
-                        onChange={(e) => setPickerStart(e.target.value)}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            setPickerStart(val);
+                            const est = estimateMap.get(task.id);
+                            if (est && val) {
+                                const [h, m] = val.split(':').map(Number);
+                                const total = h * 60 + m + est;
+                                setPickerEnd(
+                                    `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`,
+                                );
+                            }
+                        }}
                         className="px-1.5 py-0.5 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 dark:[color-scheme:dark]"
                         autoFocus
                     />
@@ -976,6 +1057,7 @@ function TaskRow({
                         compact={compact}
                         linking={linking}
                         persistentLinks={persistentLinks}
+                        estimateMap={estimateMap}
                     />
                 ))}
         </div>

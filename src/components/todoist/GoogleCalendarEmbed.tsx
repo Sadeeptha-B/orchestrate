@@ -97,7 +97,7 @@ export function GoogleCalendarEmbed({
                 </a>
             </div>
             <p className="text-[10px] text-text-light mb-1.5">
-                Private or imported calendars (e.g. Todoist sync) may not appear here due to browser cookie restrictions. Make them <strong>public</strong> in Google Calendar settings, or use the link above.
+                Private or imported calendars (e.g. Todoist sync) may not appear here due to browser cookie restrictions. Make them <strong>public</strong> in Google Calendar settings, or use the link above
             </p>
             <div
                 className="rounded-lg border border-border overflow-hidden"

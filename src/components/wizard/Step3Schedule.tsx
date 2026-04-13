@@ -1,22 +1,13 @@
 import { useState, useMemo } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
+import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoist } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { timeToMinutes } from '../../lib/time';
-import type { LinkedTask, SessionSlot } from '../../types';
-
-/** Format minutes since midnight to a short label like "6am", "2:30pm". */
-function formatHour(minutes: number): string {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    const suffix = h >= 12 ? 'pm' : 'am';
-    const display = h > 12 ? h - 12 : h === 0 ? 12 : h;
-    return m === 0 ? `${display}${suffix}` : `${display}:${String(m).padStart(2, '0')}${suffix}`;
-}
+import type { LinkedTask } from '../../types';
 
 export function Step3Schedule() {
     const { plan, settings, dispatch } = useDayPlan();
@@ -51,33 +42,40 @@ export function Step3Schedule() {
         return groups;
     }, [mainTasks]);
 
-    // Timeline bounds: span from earliest slot start to latest slot end across ALL configured slots
-    const { dayStart, dayEnd, hourMarks } = useMemo(() => {
-        const allSlots = settings.sessionSlots;
-        const start = Math.min(...allSlots.map((s) => timeToMinutes(s.startTime)));
-        const end = Math.max(...allSlots.map((s) => timeToMinutes(s.endTime)));
-        const marks: number[] = [];
-        const firstHour = Math.floor(start / 60) * 60;
-        for (let m = firstHour; m <= end; m += 60) {
-            if (m >= start) marks.push(m);
-        }
-        return { dayStart: start, dayEnd: end, hourMarks: marks };
-    }, [settings.sessionSlots]);
-
-    const totalMinutes = dayEnd - dayStart;
-
-    /** Convert a session slot to left% and width% on the timeline. */
-    const slotPosition = (slot: SessionSlot) => {
-        const start = timeToMinutes(slot.startTime);
-        const end = timeToMinutes(slot.endTime);
-        return {
-            left: ((start - dayStart) / totalMinutes) * 100,
-            width: ((end - start) / totalMinutes) * 100,
-        };
-    };
-
     const getTaskTitle = (todoistId: string) =>
         taskMap.get(todoistId)?.content ?? todoistId;
+
+    const getTaskLabel = (lt: LinkedTask) => {
+        const title = getTaskTitle(lt.todoistId);
+        if (lt.estimatedMinutes) {
+            return `${title} — ${lt.estimatedMinutes >= 60 ? `${(lt.estimatedMinutes / 60).toFixed(lt.estimatedMinutes % 60 ? 1 : 0)}h` : `${lt.estimatedMinutes}m`}`;
+        }
+        return title;
+    };
+
+    const getSessionCapacity = (sessionId: string) => {
+        const session = remainingSessions.find((s) => s.id === sessionId);
+        if (!session) return null;
+        const [sh, sm] = session.startTime.split(':').map(Number);
+        const [eh, em] = session.endTime.split(':').map(Number);
+        const totalMinutes = (eh * 60 + em) - (sh * 60 + sm);
+        const assignedIds = plan.taskSessions[sessionId] ?? [];
+        const estimatedTotal = assignedIds.reduce((sum, id) => {
+            const lt = plan.linkedTasks.find((t) => t.todoistId === id);
+            return sum + (lt?.estimatedMinutes ?? 0);
+        }, 0);
+        return { totalMinutes, estimatedTotal };
+    };
+
+    const formatDuration = (minutes: number) => {
+        const h = Math.floor(minutes / 60);
+        const m = minutes % 60;
+        if (h === 0) return `${m}m`;
+        if (m === 0) return `${h}h`;
+        return `${h}h ${m}m`;
+    };
+
+    const hasAnyAssignment = Object.values(plan.taskSessions).some((ids) => ids.length > 0);
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
@@ -86,7 +84,7 @@ export function Step3Schedule() {
     const selectedSession = remainingSessions.find((s) => s.id === selectedSessionId);
 
     return (
-        <WizardLayout onNext={handleNext} wide>
+        <WizardLayout onNext={handleNext} wide hideNext={phase === 'assign'} canAdvance={phase === 'time'}>
             {phase === 'assign' ? (
                 /* ── Phase 1: High-level session assignment ── */
                 <div className="flex flex-col gap-5 mt-4" style={{ minHeight: '60vh' }}>
@@ -111,7 +109,7 @@ export function Step3Schedule() {
                                             className="px-3 py-1.5 text-xs rounded-full bg-accent-subtle text-accent border border-accent/20"
                                             title={intentionMap.get(lt.intentionId)?.title}
                                         >
-                                            {getTaskTitle(lt.todoistId)}
+                                            {getTaskLabel(lt)}
                                         </span>
                                     ))}
                             </div>
@@ -129,7 +127,7 @@ export function Step3Schedule() {
                                         className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
                                         title={intentionMap.get(lt.intentionId)?.title}
                                     >
-                                        {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
+                                        {lt.isHabit && '🔄 '}{getTaskLabel(lt)}
                                         {lt.assignedSessions.length > 0 && (
                                             <span className="ml-1 text-accent">
                                                 ({lt.assignedSessions.length} session{lt.assignedSessions.length !== 1 ? 's' : ''})
@@ -142,83 +140,14 @@ export function Step3Schedule() {
                     )}
 
                     {/* ── Timeline ── */}
-                    <div className="space-y-1">
-                        {/* Hour labels */}
-                        <div className="relative h-5" style={{ marginLeft: 0, marginRight: 0 }}>
-                            {hourMarks.map((m) => (
-                                <span
-                                    key={m}
-                                    className="absolute text-[10px] text-text-light -translate-x-1/2"
-                                    style={{ left: `${((m - dayStart) / totalMinutes) * 100}%` }}
-                                >
-                                    {formatHour(m)}
-                                </span>
-                            ))}
-                        </div>
-
-                        {/* Timeline track */}
-                        <div className="relative h-2 rounded-full bg-border/40">
-                            {/* Tick marks */}
-                            {hourMarks.map((m) => (
-                                <div
-                                    key={m}
-                                    className="absolute top-0 bottom-0 w-px bg-border"
-                                    style={{ left: `${((m - dayStart) / totalMinutes) * 100}%` }}
-                                />
-                            ))}
-                        </div>
-
-                        {/* Session blocks positioned on the timeline */}
-                        <div className="relative" style={{ minHeight: 80 }}>
-                            {remainingSessions.map((session) => {
-                                const { left, width } = slotPosition(session);
-                                const isSelected = session.id === selectedSessionId;
-                                const assignedIds = plan.taskSessions[session.id] ?? [];
-                                const sessionMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));
-                                const sessionBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
-
-                                return (
-                                    <button
-                                        key={session.id}
-                                        onClick={() => setSelectedSessionId(session.id)}
-                                        className={`absolute top-0 rounded-lg border p-2 cursor-pointer transition-colors text-left overflow-hidden ${isSelected
-                                                ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
-                                                : 'border-border bg-card hover:border-accent/40'
-                                            }`}
-                                        style={{ left: `${left}%`, width: `${width}%`, minHeight: 70 }}
-                                    >
-                                        <div className="flex items-baseline justify-between gap-1 mb-1.5">
-                                            <span className="text-[11px] font-medium truncate">{session.name}</span>
-                                            <span className="text-[9px] text-text-light flex-shrink-0">
-                                                {session.startTime}–{session.endTime}
-                                            </span>
-                                        </div>
-                                        <div className="flex flex-wrap gap-1">
-                                            {sessionMain.map((lt) => (
-                                                <span
-                                                    key={lt.todoistId}
-                                                    className="px-1.5 py-0.5 text-[9px] rounded-full bg-accent/15 text-accent leading-tight"
-                                                >
-                                                    {getTaskTitle(lt.todoistId)}
-                                                </span>
-                                            ))}
-                                            {sessionBg.map((lt) => (
-                                                <span
-                                                    key={lt.todoistId}
-                                                    className="px-1.5 py-0.5 text-[9px] rounded-full bg-surface-dark text-text-light leading-tight"
-                                                >
-                                                    {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
-                                                </span>
-                                            ))}
-                                            {sessionMain.length === 0 && sessionBg.length === 0 && (
-                                                <span className="text-[9px] text-text-light">Empty</span>
-                                            )}
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
+                    <SessionTimelineBar
+                        sessions={remainingSessions}
+                        taskSessions={plan.taskSessions}
+                        linkedTasks={plan.linkedTasks}
+                        taskMap={taskMap}
+                        selectedSessionId={selectedSessionId}
+                        onSelectSession={setSelectedSessionId}
+                    />
 
                     {/* ── Selected session detail panel ── */}
                     {selectedSession && (() => {
@@ -244,6 +173,17 @@ export function Step3Schedule() {
                                             {selectedSession.startTime} – {selectedSession.endTime}
                                         </span>
                                     </h3>
+                                    {(() => {
+                                        const cap = getSessionCapacity(selectedSession.id);
+                                        if (!cap || cap.estimatedTotal === 0) return null;
+                                        const over = cap.estimatedTotal > cap.totalMinutes;
+                                        return (
+                                            <span className={`text-xs tabular-nums ${over ? 'text-amber-600 dark:text-amber-400' : 'text-text-light'}`}>
+                                                {formatDuration(cap.estimatedTotal)} / {formatDuration(cap.totalMinutes)} scheduled
+                                                {over && ' ⚠'}
+                                            </span>
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* Assigned main tasks grouped by intention */}
@@ -268,7 +208,7 @@ export function Step3Schedule() {
                                                             className="px-3 py-1.5 text-xs rounded-full bg-accent text-white cursor-pointer hover:bg-accent/80 transition-colors"
                                                             title="Click to unassign"
                                                         >
-                                                            {getTaskTitle(lt.todoistId)} ×
+                                                            {getTaskLabel(lt)} ×
                                                         </button>
                                                     ))}
                                                 </div>
@@ -293,7 +233,7 @@ export function Step3Schedule() {
                                                 className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
                                                 title="Click to remove from this session"
                                             >
-                                                {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)} ×
+                                                {lt.isHabit && '🔄 '}{getTaskLabel(lt)} ×
                                             </button>
                                         ))}
                                     </div>
@@ -328,7 +268,7 @@ export function Step3Schedule() {
                                                                     }
                                                                     className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                                 >
-                                                                    + {getTaskTitle(lt.todoistId)}
+                                                                    + {getTaskLabel(lt)}
                                                                 </button>
                                                             ))}
                                                         </div>
@@ -357,7 +297,7 @@ export function Step3Schedule() {
                                                     }
                                                     className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                 >
-                                                    + {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
+                                                    + {lt.isHabit && '🔄 '}{getTaskLabel(lt)}
                                                 </button>
                                             ))}
                                         </div>
@@ -379,7 +319,7 @@ export function Step3Schedule() {
                     )}
 
                     <div className="flex justify-end pt-2">
-                        <Button onClick={() => setPhase('time')}>
+                        <Button onClick={() => setPhase('time')} disabled={!hasAnyAssignment}>
                             Schedule times →
                         </Button>
                     </div>
@@ -427,7 +367,7 @@ export function Step3Schedule() {
                                                 key={lt.todoistId}
                                                 className="px-2 py-0.5 text-[10px] rounded-full bg-accent/10 text-accent"
                                             >
-                                                {getTaskTitle(lt.todoistId)}
+                                                {getTaskLabel(lt)}
                                             </span>
                                         ))}
                                         {sessionBg.map((lt) => (
@@ -435,7 +375,7 @@ export function Step3Schedule() {
                                                 key={lt.todoistId}
                                                 className="px-2 py-0.5 text-[10px] rounded-full bg-surface-dark text-text-light"
                                             >
-                                                {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
+                                                {lt.isHabit && '🔄 '}{getTaskLabel(lt)}
                                             </span>
                                         ))}
                                         {sessionMain.length === 0 && sessionBg.length === 0 && (

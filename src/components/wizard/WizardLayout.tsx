@@ -14,7 +14,7 @@ const TOTAL_STEPS = 4;
 
 const STEP_LABELS = [
     'Intentions',
-    'Categorize',
+    'Refine',
     'Schedule',
     'Music',
 ];

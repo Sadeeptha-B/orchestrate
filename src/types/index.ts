@@ -15,6 +15,7 @@ export interface LinkedTask {
     assignedSessions: string[];                           // session slot IDs
     completed: boolean;
     isHabit: boolean;
+    estimatedMinutes: number | null;                      // null = not yet estimated
 }
 
 export interface SessionSlot {

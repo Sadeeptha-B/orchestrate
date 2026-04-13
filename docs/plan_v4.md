@@ -2,9 +2,11 @@
 
 ## Overview
 
-Shift Orchestrate's unit of scheduling and categorization from **intentions** to **Todoist tasks**. Intentions remain as high-level grouping headers, but individual tasks linked during Step 1 mapping become the primary items that are categorized (main/background) in Step 2 and scheduled into sessions in Steps 3–4.
+Shift Orchestrate's unit of scheduling and categorization from **intentions** to **Todoist tasks**. Intentions remain as high-level grouping headers, but individual tasks linked during Step 1 mapping become the primary items that are categorized (main/background) in Step 2 and scheduled into sessions in Step 3.
 
-This requires changes to the data model, reducer, all 5 wizard steps, the TodoistPanel, and the dashboard.
+The wizard now has **4 steps** (Intentions → Categorize → Schedule → Music). The original Step 3 (Main Schedule) and Step 4 (Background Schedule) were merged into a single unified Schedule step with a two-phase layout. Step 5 (Start Music) became Step 4.
+
+This requires changes to the data model, reducer, all 4 wizard steps, the TodoistPanel, and the dashboard.
 
 ### Motivation
 
@@ -198,29 +200,37 @@ Handle the v3 → v4 migration path:
 - Intentions with **0 linked tasks**: show "No tasks linked" message with a prompt to go back to Step 1
 - **`canAdvance`:** All linked tasks across all intentions must have `type !== 'unclassified'`
 
-### 3.3 — Step 3: Schedule Main Tasks
+### 3.3 — Step 3: Schedule (Merged Main + Background)
 
-**File:** `src/components/wizard/Step3ScheduleMain.tsx`
+**File:** `src/components/wizard/Step3Schedule.tsx` (formerly `Step3ScheduleMain.tsx` — `Step4ScheduleBackground.tsx` deleted)
 
-- Filter `plan.linkedTasks` by `type === 'main'`
-- Group tasks by parent intention (using `intentionId`)
-- **Session cards** show assignable tasks grouped under intention headers
-- Main tasks are **exclusive** to one session (assigning to a new session removes from the old one)
-- **Layout:** Left panel = session cards with assign/unassign per task. Right panel = TodoistPanel (compact) + GoogleCalendarEmbed below.
+Main and background scheduling merged into a single step with a **two-phase layout**:
 
-### 3.4 — Step 4: Schedule Background Tasks
+**Phase 1 — High-level session assignment:**
+- **SessionTimelineBar** — reusable proportional timeline component showing sessions as blocks with hour labels. Interactive mode: clicking a session selects it.
+- Unassigned main tasks shown as accent chips above the timeline
+- Background/nudge tasks shown with session count badges
+- **Selected session detail panel** below the timeline:
+  - Assigned main tasks (grouped by intention) — click to unassign
+  - Assigned background tasks — click to unassign
+  - Unassigned main tasks — click to assign (exclusive: removes from other sessions)
+  - Unassigned background tasks — click to assign (multi-session allowed)
+- "Schedule times →" button transitions to Phase 2
 
-**File:** `src/components/wizard/Step4ScheduleBackground.tsx`
+**Phase 2 — Time scheduling with Todoist + Calendar:**
+- "← Edit assignments" link returns to Phase 1
+- **Horizontal session summary** — compact cards showing session name, time, and assigned task chips
+- **Side-by-side layout:** TodoistPanel (2/5 width, filtered to linked tasks via `filterToTaskIds`) + GoogleCalendarEmbed (3/5 width)
+- User schedules specific times for tasks in Todoist, reflected in the embedded calendar
 
-- Filter `plan.linkedTasks` by `type === 'background'`
-- Group tasks by parent intention
+**Key behaviors:**
+- Main tasks are **exclusive** to one session (assigning removes from other sessions)
 - Background tasks can be assigned to **multiple sessions** (nudge pattern)
-- Session cards show **main tasks as read-only context** (greyed) plus assignable background tasks
-- **Nudge banner** at top: lists all unscheduled background tasks
+- Assignment logic is type-based in the reducer, not in the UI
 
-### 3.5 — Step 5: Start Music
+### 3.4 — Step 4: Start Music
 
-**File:** `src/components/wizard/Step5StartMusic.tsx`
+**File:** `src/components/wizard/Step4StartMusic.tsx` (formerly `Step5StartMusic.tsx`)
 
 - Minor: update completion counter to count **linked tasks** instead of intentions
 
@@ -232,25 +242,42 @@ Handle the v3 → v4 migration path:
 
 **File:** `src/components/dashboard/SessionTimeline.tsx`
 
-**`IntentionRow` → `TaskRow` refactor:**
-- Resolve display title from Todoist task cache (not from local data)
-- Show **stale indicator** if task not found in cache
-- Show **parent intention** as a small label/badge
+The `SessionTimeline` export now uses the shared **`SessionTimelineBar`** component (same as the wizard’s Phase 1 timeline) instead of the previous card-based layout. It passes `currentSessionId` for the pulse indicator on the active session.
+
+**`CurrentSession`:** Remains as a detailed card view with `SessionCard`, showing the active session with drag-to-reorder, completion checkboxes, and nudge banners. Uses `TaskRow` component with:
+- Display title resolved from Todoist task cache
+- Stale indicator if task not found in cache
+- Parent intention as a small label/badge
 - Checkbox toggles `TOGGLE_TASK_COMPLETE`
 - Drag handle for reorder within session
 - Type badge (main / background)
 
-**`SessionCard`:**
-- Tasks **grouped under intention headers** within each session
-- Background nudges banner reads from background tasks (not intentions)
+### 4.1.1 — SessionTimelineBar (Reusable Component)
 
-**`CurrentSession`:** Same structure, backed by task-level data.
+**File:** `src/components/ui/SessionTimelineBar.tsx` — **NEW**
 
-### 4.2 — Dashboard
+Extracted reusable timeline visualization used by both Step 3 (wizard) and SessionTimeline (dashboard):
+- Proportionally positioned session blocks on a horizontal track
+- Hour labels along the top, track line with session blocks below
+- Task chips inside each session block (accent for main, muted for background)
+- **Interactive mode** (optional `onSelectSession` + `selectedSessionId`): renders blocks as `<button>` with selection ring
+- **Dashboard mode** (optional `currentSessionId`): renders pulse animation on the active session
+- Non-interactive mode renders `<div>` blocks
+- Internal utilities: `timeToMinutes()`, `formatHour()` for proportional positioning
+
+### 4.2 — Dashboard Layout
 
 **File:** `src/components/dashboard/Dashboard.tsx`
 
 - **Completion counter:** `completed LinkedTasks / total LinkedTasks` (replaces intention-based counter)
+- **Section order** (top to bottom):
+  1. Playlist selector + Digital clock
+  2. Spotify player + Transition tips
+  3. **Timeline** (SessionTimelineBar) — moved up from bottom
+  4. **Current Session** — moved below timeline
+  5. **Task Manager** (Todoist) — collapsible, with **Linked Tasks / All Tasks toggle**
+  6. **Calendar** (Google) — collapsible
+- **Task Manager filter toggle:** Two pill buttons ("Linked Tasks" / "All Tasks") switch between filtered view (only tasks mapped to intentions via `filterToTaskIds`) and full Todoist tree. Defaults to "Linked Tasks".
 
 ### 4.3 — Saved Sessions
 
@@ -283,6 +310,8 @@ interface TodoistPanelProps {
     mode?: 'compact' | 'full';
     onSetup?: () => void;
     linking?: LinkingProps;
+    /** When set, only show projects that contain tasks with these IDs (plus their ancestors). */
+    filterToTaskIds?: Set<string>;
 }
 ```
 
@@ -292,6 +321,14 @@ interface TodoistPanelProps {
 - CRUD operations remain available
 - **Completion button stays visible** (always available, not hidden during linking)
 - Tasks linked to other intentions show the owner intention's title in amber
+
+### 5.2 — Task Tree Filtering
+
+New `filterToTaskIds?: Set<string>` prop on `TodoistPanel`. When set, the project tree is pruned via `pruneTree()` to only include nodes (projects, sections, tasks) that contain — directly or via descendants — at least one task in the provided set. Ancestor projects are preserved to maintain the tree structure.
+
+**Used by:**
+- **Step 3 Phase 2** — filters to only show tasks mapped to intentions (`linkedTaskIds`)
+- **Dashboard Task Manager** — "Linked Tasks" toggle filters to `linkedTaskIds`, "All Tasks" shows full tree
 
 ### 5.3 — Persistent Linked Task Indicators (post-plan)
 
@@ -336,7 +373,9 @@ Used by all components that need to resolve `todoistId` → display info.
 v1 (tasks/taskSessions, 6-step wizard)
   → v2 (intentions/intentionSessions, 5-step wizard)  [existing]
     → v3 (same as v2, but with GoogleCalendarEntry[])  [existing]
-      → v4 (linkedTasks/taskSessions, intention.linkedTaskIds)  [NEW]
+      → v4 (linkedTasks/taskSessions, intention.linkedTaskIds, 4-step wizard)  [NEW]
+
+`_wizardSteps` marker: `4`. Migration handles 5→4 step transition (step 4→3, step 5→4) via `migratePlan()`.
 ```
 
 **v3 → v4 specifics:**
@@ -359,13 +398,14 @@ v1 (tasks/taskSessions, 6-step wizard)
 | `src/context/DayPlanContext.tsx` | New actions, remove old actions, migration, persistence |
 | `src/components/wizard/Step1Intentions.tsx` | Linking mode integration with TodoistPanel |
 | `src/components/wizard/Step2Categorize.tsx` | **Complete rewrite** — task-level categorization |
-| `src/components/wizard/Step3ScheduleMain.tsx` | Schedule tasks (grouped by intention) |
-| `src/components/wizard/Step4ScheduleBackground.tsx` | Schedule background tasks |
-| `src/components/wizard/Step5StartMusic.tsx` | Update completion counter |
+| `src/components/wizard/Step3Schedule.tsx` | **Merged** main + background scheduling with two-phase layout (was `Step3ScheduleMain.tsx`) |
+| ~~`src/components/wizard/Step4ScheduleBackground.tsx`~~ | **Deleted** — merged into Step3Schedule |
+| `src/components/wizard/Step4StartMusic.tsx` | Update completion counter (was `Step5StartMusic.tsx`) |
+| `src/components/ui/SessionTimelineBar.tsx` | **NEW** — reusable proportional timeline visualization |
 | `src/components/todoist/TodoistPanel.tsx` | Linking mode (Link/Unlink buttons, highlighting), persistent link indicators, inline editing, confetti |
 | `src/hooks/useTodoist.ts` | Expose `taskMap`, `updateTask` accepts `content` field |
-| `src/components/dashboard/SessionTimeline.tsx` | `TaskRow` refactor, intention-grouped layout |
-| `src/components/dashboard/Dashboard.tsx` | Update completion counter |
+| `src/components/dashboard/SessionTimeline.tsx` | `SessionTimeline` uses `SessionTimelineBar`; `CurrentSession` keeps `SessionCard`/`TaskRow` |
+| `src/components/dashboard/Dashboard.tsx` | Completion counter, reordered layout, Task Manager filter toggle |
 | `src/components/dashboard/SavedSessions.tsx` | v4 format validation |
 | `src/components/ui/EditableTaskList.tsx` | Update type signature (currently `Intention[]`) |
 
@@ -383,9 +423,9 @@ Recommended sequence to minimize broken intermediate states:
 4. **TodoistPanel** — Add linking mode props and checkbox rendering
 5. **Step 1** — Wire up linking mode during mapping
 6. **Step 2** — Rewrite for task-level categorization
-7. **Steps 3–4** — Refactor to schedule tasks instead of intentions
-8. **Step 5** — Update counter
-9. **Dashboard** — `SessionTimeline`, `Dashboard`, `SavedSessions`
+7. **Step 3** — Unified schedule with two-phase layout + `SessionTimelineBar`
+8. **Step 4** — Update counter (renamed from Step 5)
+9. **Dashboard** — `SessionTimeline` (uses `SessionTimelineBar`), `Dashboard` (reorder + filter toggle), `SavedSessions`
 10. **EditableTaskList** — Update type signature
 11. **Migration testing** — v3 saved sessions → restore → verify
 
@@ -420,6 +460,11 @@ The following changes were made after the core v4 implementation, refining the U
 | 5 | **Edit intentions navigation** | Step1Intentions Phase 2 | "← Want to change intentions?" subtle text link above mapping progress, returns to Phase 1 for intention editing. |
 | 6 | **Confetti on completion** | TodoistPanel `TaskRow` | `canvas-confetti` burst on the complete button click, originating from button position. New dependency: `canvas-confetti`. |
 | 7 | **Persistent linked task indicators** | TodoistPanel | Reads `plan.linkedTasks` + `plan.intentions` from `useDayPlan()` context. Computes `persistentLinks` map (todoistId → intention title) via `useMemo`. Threaded through component tree. Amber "linked to: {title}" label and accent highlight show at all times — not just during linking mode. Survives reloads via localStorage persistence. |
+| 8 | **Merged Step 3 + Step 4** | Wizard | Combined main and background scheduling into a single Step 3 with a two-phase layout. Wizard reduced from 5 to 4 steps. File renames: `Step3ScheduleMain.tsx` → `Step3Schedule.tsx`, `Step5StartMusic.tsx` → `Step4StartMusic.tsx`. `Step4ScheduleBackground.tsx` deleted. `WizardLayout` updated: `TOTAL_STEPS=4`, labels `['Intentions','Categorize','Schedule','Music']`. |
+| 9 | **SessionTimelineBar** | `ui/SessionTimelineBar.tsx` | Extracted reusable proportional timeline from Step3Schedule. Used by both the wizard (interactive mode with `onSelectSession`) and the dashboard (read-only with `currentSessionId` pulse). |
+| 10 | **TodoistPanel tree filtering** | TodoistPanel | New `filterToTaskIds` prop with `pruneTree()` utility. Prunes project tree to only show projects containing specified task IDs. Used by Step 3 Phase 2 and Dashboard Task Manager. |
+| 11 | **Dashboard layout reorder** | Dashboard | Timeline moved after music rows, Current Session below timeline. Task Manager and Calendar remain collapsible at bottom. |
+| 12 | **Dashboard Task Manager filter toggle** | Dashboard | "Linked Tasks" / "All Tasks" pill toggle on the Task Manager. Defaults to filtered view showing only tasks mapped to intentions. Uses `filterToTaskIds` prop on `TodoistPanel`. |
 
 ### Dependencies Added
 
@@ -434,3 +479,245 @@ The following changes were made after the core v4 implementation, refining the U
 2. **Re-linking in edit mode:** Returning to Step 1 from the dashboard should reflect current link state and allow modifications without losing scheduling data for unchanged links. Needs careful state management.
 
 3. **Performance:** Memoize `taskMap` computation (`useMemo` on `tasks` array). Link/Unlink button rendering in TodoistPanel should remain efficient for large task lists — avoid re-renders on unrelated state changes.
+
+---
+---
+
+# Orchestrate v4.1 — Step 2 Time Estimation & Per-Intention Flow
+
+## Overview
+
+Redesign Step 2 (Categorize) from a flat "categorize all at once" view into a **per-intention sequential flow** that combines categorization, time estimation, and optional task breakdown — with the TodoistPanel on the right for creating sub-tasks on the fly.
+
+### Motivation
+
+The v4 scheduling flow (Step 3) asks users to assign tasks to sessions, but time estimation is implicit — users must mentally gauge whether tasks fit into session slots. This creates friction and often leads to over-packed sessions. By explicitly prompting for time estimates *before* scheduling, users arrive at Step 3 with concrete data that informs better session assignments.
+
+Additionally, tasks estimated at over an hour are likely too coarse-grained for effective scheduling. The new flow nudges users to break these down into smaller parts via the TodoistPanel, which is already available for task creation.
+
+---
+
+## Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Breakdown behavior | Original task stays linked; sub-tasks are created alongside | User retains the parent context; sub-tasks become their own schedulable units |
+| Estimate storage | Orchestrate only (`LinkedTask.estimatedMinutes`) | Estimates are planning data, not Todoist metadata; avoids API writes |
+| Phase structure | Combined per-intention loop | Categorize + estimate together per intention reduces context-switching |
+| Background task cap | Max 30 min per estimate | Background tasks are nudges/habits — short by nature; can be scheduled multiple times/day |
+| >1hr nudge | Advisory, not blocking | User is invited to break down but can proceed without splitting |
+| Estimate input | Quick-select preset pills + custom number input | Presets (15m, 30m, 45m, 1hr) reduce friction; custom covers edge cases |
+
+---
+
+## Phase 1: Data Model Changes
+
+**File:** `src/types/index.ts`
+
+### 1.1 — Extend `LinkedTask`
+
+Add an optional time estimate field:
+
+```ts
+export interface LinkedTask {
+    todoistId: string;
+    intentionId: string;
+    type: 'main' | 'background' | 'unclassified';
+    assignedSessions: string[];
+    completed: boolean;
+    isHabit: boolean;
+    estimatedMinutes: number | null;              // NEW — null = not yet estimated
+}
+```
+
+---
+
+## Phase 2: Reducer & Context Changes
+
+**File:** `src/context/DayPlanContext.tsx`
+
+### 2.1 — New Action
+
+| Action | Payload | Behavior |
+|--------|---------|----------|
+| `SET_TASK_ESTIMATE` | `{ todoistId: string; minutes: number }` | Updates `LinkedTask.estimatedMinutes` for the matching task |
+
+Add to the `Action` union type.
+
+### 2.2 — Update Existing Actions
+
+- **`LINK_TASK`**: Initialize `estimatedMinutes: null` when creating a new `LinkedTask` entry.
+
+### 2.3 — Migration
+
+Existing `LinkedTask` entries (from v4 plans saved before this change) that lack `estimatedMinutes` should default to `null` during `migratePlan()`. Since `null` is the "not yet estimated" sentinel, this is safe — users will be prompted to provide estimates on their next session.
+
+---
+
+## Phase 3: Step 2 Rewrite
+
+**File:** `src/components/wizard/Step2Categorize.tsx` — **Complete rewrite**
+
+### 3.1 — Layout
+
+Two-column flex layout mirroring Step 1 Phase 2:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Progress: "Intention 2 of 5"                            │
+├────────────────────────┬─────────────────────────────────┤
+│  Left panel (40%)      │  Right panel (60%)              │
+│                        │                                 │
+│  Intention title       │  TodoistPanel                   │
+│  ─────────────────     │  (full mode, linking enabled    │
+│  Task 1               │   for current intention)        │
+│    [Main] [Background] │                                 │
+│    ⏱ [15m][30m][45m][1h][__] │                          │
+│    ⚠ "Over an hour..." │                                 │
+│  Task 2               │                                 │
+│    [Main] [Background] │                                 │
+│    ⏱ [15m][30m][45m][1h][__] │                          │
+│  ...                   │                                 │
+│                        │                                 │
+│  [← Prev] [Done → Next intention]                       │
+└────────────────────────┴─────────────────────────────────┘
+```
+
+- **Left panel** (`lg:w-[40%]`): per-intention task list with categorization + estimation
+- **Right panel** (`flex-1`): TodoistPanel in full mode with linking enabled for the current intention
+
+### 3.2 — Per-Intention Sequential Flow
+
+Internal state:
+
+```ts
+const [currentIntentionIndex, setCurrentIntentionIndex] = useState(0);
+```
+
+- **Progress indicator**: "Intention 2 of 5" at the top of the left panel
+- **"Done — next intention →"** button advances `currentIntentionIndex`; on last intention, advances to Step 3
+- **"← Previous intention"** link to go back (hidden on first intention)
+
+### 3.3 — Left Panel Per Intention
+
+For each linked task under the current intention:
+
+1. **Task title** — resolved from `taskMap`; stale indicator if not found
+2. **Main / Background pills** — categorization (existing behavior)
+3. **Habit toggle (🔄)** — shown when type is `background` (existing behavior)
+4. **Time estimate input**:
+   - **Preset pills**: `15m`, `30m`, `45m`, `1hr` — one-click selection
+   - **Custom input**: small numeric field for arbitrary minutes
+   - Selected preset or custom value is highlighted
+   - **Background tasks**: input clamped at max 30 min; if user attempts >30, show validation: *"Background tasks are capped at 30 min per scheduling (they can be scheduled multiple times)"*
+   - **Estimate > 60 min**: amber nudge banner below the task — *"This task is over an hour. Consider breaking it into smaller parts using the task panel →"*. Non-blocking — user can proceed.
+5. **Stale task handling** — greyed out, ⚠ icon, "Remove" button (existing behavior)
+
+### 3.4 — Right Panel (TodoistPanel)
+
+Same pattern as Step 1 Phase 2:
+
+```tsx
+<TodoistPanel
+    mode="full"
+    onSetup={() => setShowSetup(true)}
+    linking={{
+        linkingIntentionId: currentIntention.id,
+        linkedTaskIds: currentIntention.linkedTaskIds,
+        allLinkedTasks: plan.linkedTasks,
+        intentionTitles: intentionTitleMap,
+        onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentIntention.id, todoistId }),
+        onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
+    }}
+/>
+```
+
+This allows users to:
+- **Create new sub-tasks** in Todoist when a task is too large
+- **Link newly created tasks** to the current intention
+- **See persistent link indicators** for tasks linked to other intentions
+
+### 3.5 — Advancement Logic
+
+The internal "Done — next intention" button validates that all linked tasks for the **current intention** are categorized and estimated before advancing. The WizardLayout's `canAdvance` checks all intentions globally.
+
+```ts
+const canAdvanceIntention = currentLinkedTasks.length > 0 &&
+    currentLinkedTasks.every(lt => lt.type !== 'unclassified' && lt.estimatedMinutes !== null);
+
+const canAdvanceStep = plan.linkedTasks.length > 0 &&
+    plan.linkedTasks.every(lt => lt.type !== 'unclassified' && lt.estimatedMinutes !== null);
+```
+
+Intentions with **0 linked tasks**: show *"No tasks linked to this intention"* message with prompt to link tasks via the TodoistPanel on the right.
+
+---
+
+## Phase 4: Step 3 Estimate Display
+
+**File:** `src/components/wizard/Step3Schedule.tsx`
+
+### 4.1 — Assign Phase Enhancements
+
+- **Task chips** in the unassigned pool and session detail show estimated minutes: `"Implement API — 45m"`
+- **Session capacity indicator**: For the selected session, show total estimated time for assigned tasks vs. session slot duration (computed from `settings.sessionSlots` start/end times). Example: `"2h 15m / 4h scheduled"`
+- **Over-capacity warning**: Soft amber warning when assigned estimates exceed session duration — *"Assigned tasks exceed session time by 45m"*
+
+### 4.2 — Background Task Display
+
+Background task chips show estimate with a `×N` multiplier if assigned to multiple sessions: `"Reading — 30m ×3"`
+
+---
+
+## Phase 5: Dashboard Estimate Display
+
+**Files:** `src/components/dashboard/SessionTimeline.tsx`, `src/components/dashboard/Dashboard.tsx`
+
+### 5.1 — TaskRow in CurrentSession
+
+- Show estimated minutes as a small badge next to the task title: `"45m"`
+
+### 5.2 — Session Header
+
+- Show total estimated time for the session's tasks vs. session slot duration
+
+---
+
+## Files Changed
+
+| File | Change Scope |
+|------|-------------|
+| `src/types/index.ts` | Add `estimatedMinutes` to `LinkedTask` |
+| `src/context/DayPlanContext.tsx` | New `SET_TASK_ESTIMATE` action, update `LINK_TASK` initializer, migration for missing field |
+| `src/components/wizard/Step2Categorize.tsx` | **Complete rewrite** — per-intention flow with categorization + estimation + TodoistPanel |
+| `src/components/wizard/Step3Schedule.tsx` | Estimate badges on task chips, session capacity indicator |
+| `src/components/dashboard/SessionTimeline.tsx` | Estimate badge on TaskRow |
+| `src/components/dashboard/Dashboard.tsx` | Session total estimate display |
+
+**No changes needed:** `src/hooks/useTodoist.ts`, `src/components/todoist/TodoistPanel.tsx` (reuse existing linking mode)
+
+---
+
+## Implementation Order
+
+1. **Types** — Add `estimatedMinutes` to `LinkedTask`
+2. **Reducer** — `SET_TASK_ESTIMATE` action, `LINK_TASK` initializer, migration
+3. **Step 2** — Complete rewrite with per-intention flow, estimation UI, TodoistPanel integration
+4. **Step 3** — Estimate badges and session capacity indicators (parallel with Step 2)
+5. **Dashboard** — Estimate display in TaskRow and session headers (parallel with Step 2)
+
+---
+
+## Verification Checklist
+
+1. **Type safety:** `tsc --noEmit` — zero errors
+2. **New field initialization:** Link a task in Step 1 → verify `estimatedMinutes: null` in state
+3. **Per-intention flow:** Navigate through all intentions in Step 2 → categorization + estimation persists across navigation
+4. **Background 30min cap:** Set type to background, enter >30 → verify input clamps with validation message
+5. **>1hr nudge:** Enter 75 min estimate → verify amber nudge appears, user can still proceed
+6. **Task breakdown:** From the nudge, create sub-tasks in TodoistPanel, link them → verify they appear under the same intention with their own estimate fields
+7. **Advancement guard:** Step 2 blocks advancement until all tasks are categorized AND estimated
+8. **Step 3 display:** Verify estimate badges on task chips and session capacity indicator
+9. **Migration:** Load a v4 plan saved before this change (no `estimatedMinutes` on LinkedTasks) → no errors, estimates default to `null`
+10. **Persistence:** Set estimates, refresh page → verify they persist from localStorage
+11. **Session capacity:** Assign tasks totaling >session duration → verify soft over-capacity warning

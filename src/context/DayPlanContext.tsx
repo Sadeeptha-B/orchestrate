@@ -81,11 +81,15 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
 
     // --- v2/v3 → v4: if plan has intentionSessions but no taskSessions/linkedTasks ---
     if (Array.isArray(raw.linkedTasks) && raw.taskSessions !== undefined) {
-        // Already v4 shape
+        // Already v4 shape — ensure estimatedMinutes exists on all LinkedTask entries (v4.1 migration)
+        const migratedLinkedTasks = (raw.linkedTasks as Array<Record<string, unknown>>).map((lt) => ({
+            ...(lt as unknown as LinkedTask),
+            estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
+        }));
         return {
             date: raw.date as string,
             intentions,
-            linkedTasks: raw.linkedTasks as LinkedTask[],
+            linkedTasks: migratedLinkedTasks,
             taskSessions: raw.taskSessions as Record<string, string[]>,
             wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
             setupComplete: (raw.setupComplete as boolean) ?? false,
@@ -163,6 +167,7 @@ type Action =
     | { type: 'LINK_TASK'; intentionId: string; todoistId: string }
     | { type: 'UNLINK_TASK'; todoistId: string }
     | { type: 'CATEGORIZE_TASK'; todoistId: string; taskType: LinkedTask['type'] }
+    | { type: 'SET_TASK_ESTIMATE'; todoistId: string; minutes: number }
     | { type: 'TOGGLE_TASK_HABIT'; todoistId: string }
     | { type: 'ASSIGN_TASK'; todoistId: string; sessionId: string }
     | { type: 'UNASSIGN_TASK'; todoistId: string; sessionId: string }
@@ -283,6 +288,7 @@ function reducer(state: State, action: Action): State {
                     assignedSessions: [],
                     completed: false,
                     isHabit: false,
+                    estimatedMinutes: null,
                 }];
             }
             return { ...state, plan: { ...plan, intentions, linkedTasks } };
@@ -305,6 +311,13 @@ function reducer(state: State, action: Action): State {
         case 'CATEGORIZE_TASK': {
             const linkedTasks = plan.linkedTasks.map((lt) =>
                 lt.todoistId === action.todoistId ? { ...lt, type: action.taskType } : lt,
+            );
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'SET_TASK_ESTIMATE': {
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId ? { ...lt, estimatedMinutes: action.minutes } : lt,
             );
             return { ...state, plan: { ...plan, linkedTasks } };
         }

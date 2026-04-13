@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../context/DayPlanContext';
@@ -33,6 +33,7 @@ export function Dashboard() {
     const [newDaySaveName, setNewDaySaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
+    const [taskManagerFiltered, setTaskManagerFiltered] = useState(true);
     const [calendarOpen, setCalendarOpen] = useState(false);
     const [showSettingsModal, setShowSettingsModal] = useState(false);
     const hasSavedSessions = history.length > 0;
@@ -81,6 +82,11 @@ export function Dashboard() {
 
     const completedCount = plan.linkedTasks.filter((lt) => lt.completed).length;
     const totalCount = plan.linkedTasks.length;
+
+    const linkedTaskIds = useMemo(
+        () => new Set(plan.linkedTasks.map((lt) => lt.todoistId)),
+        [plan.linkedTasks],
+    );
 
     return (
         <div className="min-h-screen flex flex-col">
@@ -180,6 +186,22 @@ export function Dashboard() {
                             </div>
                         </MusicProvider>
 
+                        {/* All sessions timeline */}
+                        <div>
+                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
+                                Timeline
+                            </h3>
+                            <SessionTimeline />
+                        </div>
+
+                        {/* Current session */}
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                Current Session
+                            </h3>
+                            <CurrentSession />
+                        </div>
+
                         {/* Task Manager (Todoist) — collapsible */}
                         <div>
                             <button
@@ -198,9 +220,35 @@ export function Dashboard() {
                                 Task Manager
                             </button>
                             {taskManagerOpen && (
-                                <div className="mt-3 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
-                                    <TodoistPanel mode="full" onSetup={() => setShowSettingsModal(true)} />
-                                </div>
+                                <>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <button
+                                            onClick={() => setTaskManagerFiltered(true)}
+                                            className={`px-3 py-1 text-xs rounded-full border transition-colors cursor-pointer ${taskManagerFiltered
+                                                    ? 'bg-accent text-white border-accent'
+                                                    : 'border-border text-text-light hover:border-accent hover:text-accent'
+                                                }`}
+                                        >
+                                            Linked Tasks
+                                        </button>
+                                        <button
+                                            onClick={() => setTaskManagerFiltered(false)}
+                                            className={`px-3 py-1 text-xs rounded-full border transition-colors cursor-pointer ${!taskManagerFiltered
+                                                    ? 'bg-accent text-white border-accent'
+                                                    : 'border-border text-text-light hover:border-accent hover:text-accent'
+                                                }`}
+                                        >
+                                            All Tasks
+                                        </button>
+                                    </div>
+                                    <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
+                                        <TodoistPanel
+                                            mode="full"
+                                            onSetup={() => setShowSettingsModal(true)}
+                                            filterToTaskIds={taskManagerFiltered ? linkedTaskIds : undefined}
+                                        />
+                                    </div>
+                                </>
                             )}
                         </div>
 
@@ -226,22 +274,6 @@ export function Dashboard() {
                                     <GoogleCalendarEmbed height={400} onSetup={() => setShowSettingsModal(true)} />
                                 </div>
                             )}
-                        </div>
-
-                        {/* Current session */}
-                        <div className="space-y-2">
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                Current Session
-                            </h3>
-                            <CurrentSession />
-                        </div>
-
-                        {/* All sessions timeline */}
-                        <div>
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
-                                Timeline
-                            </h3>
-                            <SessionTimeline />
                         </div>
                     </div>
                 </main>
