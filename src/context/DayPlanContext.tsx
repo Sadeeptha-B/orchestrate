@@ -36,9 +36,19 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
     // Wizard was reduced from 6 steps to 5 (old Step 1 & 2 merged).
     // Old step 2+ maps to step N-1; step 1 stays 1.
     // Only apply when plan was saved under the old 6-step layout.
-    const needsStepMigration = (raw._wizardSteps as number) !== 5;
-    const migrateStep = (s: number) =>
-        needsStepMigration ? Math.min(Math.max(s > 1 ? s - 1 : 1, 1), 5) : Math.min(s, 5);
+    const wizardSteps = raw._wizardSteps as number;
+    const migrateStep = (s: number) => {
+        // v1 (6 steps) → v2 (5 steps): step 2+ maps to step N-1
+        if (wizardSteps !== 5 && wizardSteps !== 4) {
+            s = Math.max(s > 1 ? s - 1 : 1, 1);
+        }
+        // v3/v4 (5 steps) → v4 (4 steps): old step 4 (nudges) merged into 3, step 5 → 4
+        if (wizardSteps === 5) {
+            if (s === 4) s = 3;
+            else if (s === 5) s = 4;
+        }
+        return Math.min(s, 4);
+    };
 
     // --- v1 → v2: convert tasks to intentions ---
     let intentions: Intention[];
@@ -393,7 +403,7 @@ function reducer(state: State, action: Action): State {
 
         case 'SAVE_DAY': {
             const entry: SavedDayPlan = {
-                plan: { ...structuredClone(plan), _wizardSteps: 5 } as DayPlan,
+                plan: { ...structuredClone(plan), _wizardSteps: 4 } as DayPlan,
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };
@@ -447,7 +457,7 @@ export function DayPlanProvider({ children }: { children: ReactNode }) {
 
     // Persist on every state change (include _wizardSteps marker for migration detection)
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.plan, _wizardSteps: 5 }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.plan, _wizardSteps: 4 }));
     }, [state.plan]);
 
     useEffect(() => {

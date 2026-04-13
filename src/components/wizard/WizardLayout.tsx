@@ -10,13 +10,12 @@ import { SavedSessions } from '../dashboard/SavedSessions';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { AboutContent } from '../ui/AboutContent';
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 4;
 
 const STEP_LABELS = [
     'Intentions',
     'Categorize',
-    'Main Schedule',
-    'Nudges',
+    'Schedule',
     'Music',
 ];
 

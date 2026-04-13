@@ -86,9 +86,31 @@ interface TodoistPanelProps {
     mode?: 'compact' | 'full';
     onSetup?: () => void;
     linking?: LinkingProps;
+    /** When set, only show projects that contain tasks with these IDs (plus their ancestors). */
+    filterToTaskIds?: Set<string>;
 }
 
-export function TodoistPanel({ mode = 'full', onSetup, linking }: TodoistPanelProps) {
+/** Prune a project tree to only include nodes that contain (directly or via descendants) at least one task in `taskIds`. */
+function pruneTree(nodes: ProjectNode[], taskIds: Set<string>): ProjectNode[] {
+    const result: ProjectNode[] = [];
+    for (const node of nodes) {
+        const prunedChildren = pruneTree(node.children, taskIds);
+        const hasMatchingTasks = node.tasks.some((t) => taskIds.has(t.id));
+        if (hasMatchingTasks || prunedChildren.length > 0) {
+            result.push({
+                ...node,
+                children: prunedChildren,
+                tasks: hasMatchingTasks ? node.tasks : [],
+                sections: hasMatchingTasks
+                    ? node.sections
+                    : [],
+            });
+        }
+    }
+    return result;
+}
+
+export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds }: TodoistPanelProps) {
     const {
         tasks,
         projects,
@@ -124,9 +146,14 @@ export function TodoistPanel({ mode = 'full', onSetup, linking }: TodoistPanelPr
     const [newProjectParentId, setNewProjectParentId] = useState<string>('');
     const [showNewProject, setShowNewProject] = useState(false);
 
-    const tree = useMemo(
+    const fullTree = useMemo(
         () => buildProjectTree(projects, tasks, sections),
         [projects, tasks, sections],
+    );
+
+    const tree = useMemo(
+        () => filterToTaskIds ? pruneTree(fullTree, filterToTaskIds) : fullTree,
+        [fullTree, filterToTaskIds],
     );
 
     // Build sub-task lookup: parent_id → child tasks

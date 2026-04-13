@@ -21,7 +21,7 @@ v4 resolves this by making **Todoist tasks the first-class citizens** of categor
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Task tracking during mapping | Explicit checkbox selection in Todoist panel | More reliable than snapshot-diffing; handles create/delete cycles cleanly |
+| Task tracking during mapping | "Link"/"Unlink" text buttons in Todoist panel | More reliable than snapshot-diffing; less intrusive than checkboxes; completion button stays visible |
 | Scheduling granularity | Tasks grouped under parent intentions | Preserves context about why each task exists |
 | Categorization level | Task-level only (remove intention-level type) | An intention can have both main and background tasks |
 | Task data storage | Store only Todoist task IDs; fetch titles from API at runtime | Always current; single source of truth in Todoist |
@@ -171,14 +171,20 @@ Handle the v3 → v4 migration path:
 **Phase 1 (entering intentions):** No change.
 
 **Phase 2 (sequential mapping):** When the current intention is being mapped:
-- The **TodoistPanel** on the right enters **linking mode** (new `linkingIntentionId` prop)
-- Each task row gains a **checkbox** on the left side
-- **Checked** = linked to the current intention → dispatches `LINK_TASK`
-- **Unchecked** = unlinked → dispatches `UNLINK_TASK`
-- Tasks already linked to this intention are **pre-checked** (read from `plan.linkedTasks`)
-- Tasks linked to **other** intentions show a label `"(linked to: {intention title})"` and are still checkable (re-linking moves them)
+- The **TodoistPanel** on the right enters **linking mode** (new `linking` prop bundle)
+- Each task row shows a **"Link"/"Unlink" text button** on the right (hover-revealed for unlinked, always visible for linked)
+- **Link** = linked to the current intention → dispatches `LINK_TASK`
+- **Unlink** = removed → dispatches `UNLINK_TASK`
+- Tasks already linked to this intention are **highlighted** with accent border (read from `plan.linkedTasks`)
+- Tasks linked to **other** intentions show an amber label `"linked to: {intention title}"` and are still linkable (re-linking moves them)
 - "Done — next" still marks `MARK_BROKEN_DOWN` and advances to the next intention
 - CRUD operations (create/delete tasks) remain available alongside linking
+- **Completion button** remains always visible (not hidden during linking mode)
+
+**Navigation & remap controls (implemented post-plan):**
+- **"← Want to change intentions?"** — subtle text link above the mapping progress bar, returns to Phase 1 (intention editing)
+- **Individual remap** — each mapped intention is clickable to remap individually (sets its `brokenDown` flag back to false)
+- **"Want to start over? Restart mapping"** — standalone text link at the bottom of Phase 2, resets all intentions' `brokenDown` flags
 
 ### 3.2 — Step 2: Categorize
 
@@ -261,26 +267,48 @@ Handle the v3 → v4 migration path:
 
 ### 5.1 — Linking Mode
 
-New props for linking mode:
+Linking props are bundled into a single optional `linking` prop:
 
 ```ts
+interface LinkingProps {
+    linkingIntentionId: string;
+    linkedTaskIds: string[];                  // IDs linked to the current intention (highlighted)
+    allLinkedTasks: LinkedTask[];             // all linked tasks across intentions (for "linked to: X" labels)
+    intentionTitles: Record<string, string>;  // intentionId → title lookup
+    onLinkTask: (todoistId: string) => void;
+    onUnlinkTask: (todoistId: string) => void;
+}
+
 interface TodoistPanelProps {
-    mode: 'full' | 'compact';
-    // NEW — linking mode props
-    linkingIntentionId?: string;          // when set, enables checkbox selection mode
-    linkedTaskIds?: string[];             // IDs currently linked to this intention (pre-checked)
-    allLinkedTasks?: LinkedTask[];         // for showing "(linked to: X)" labels
-    onLinkTask?: (todoistId: string) => void;
-    onUnlinkTask?: (todoistId: string) => void;
+    mode?: 'compact' | 'full';
+    onSetup?: () => void;
+    linking?: LinkingProps;
 }
 ```
 
 **Behavior in linking mode:**
-- Task rows show checkboxes (left side)
-- Linked tasks have a subtle highlight/border
+- Task rows show **"Link"/"Unlink" text buttons** on the right (not checkboxes)
+- Linked tasks have a subtle accent highlight/border (`bg-accent/5 border-l-2 border-accent`)
 - CRUD operations remain available
-- Task completion toggle is hidden (linking is the primary interaction)
-- Tasks linked to other intentions show the owner intention's title
+- **Completion button stays visible** (always available, not hidden during linking)
+- Tasks linked to other intentions show the owner intention's title in amber
+
+### 5.3 — Persistent Linked Task Indicators (post-plan)
+
+Outside of linking mode, the TodoistPanel reads `plan.linkedTasks` and `plan.intentions` directly from `useDayPlan()` context to compute a persistent `todoistId → intention title` map. This is threaded through the component tree (`ProjectTreeNode` → `SectionGroup` → `TaskRow`) as a `persistentLinks` prop.
+
+**Result:** Linked tasks always show their amber "linked to: {intention title}" label and accent highlight — not just during Step 1 mapping, but throughout the day and across reloads.
+
+### 5.4 — Inline Task Editing (post-plan)
+
+Task titles in the TodoistPanel are click-to-edit. Clicking a task title opens an inline text input:
+- **Enter** or **blur** → commits the edit (calls `updateTask(taskId, { content })` via Todoist API)
+- **Escape** → cancels
+- `onEditContent` callback is threaded through the component tree
+
+### 5.5 — Confetti on Task Completion (post-plan)
+
+Completing a task fires a `canvas-confetti` burst originating from the complete button's position. Dependency: `canvas-confetti` package.
 
 ### 5.2 — Expose Task Lookup Map
 
@@ -334,8 +362,8 @@ v1 (tasks/taskSessions, 6-step wizard)
 | `src/components/wizard/Step3ScheduleMain.tsx` | Schedule tasks (grouped by intention) |
 | `src/components/wizard/Step4ScheduleBackground.tsx` | Schedule background tasks |
 | `src/components/wizard/Step5StartMusic.tsx` | Update completion counter |
-| `src/components/todoist/TodoistPanel.tsx` | Add linking mode (checkboxes, highlighting) |
-| `src/hooks/useTodoist.ts` | Expose `taskMap` |
+| `src/components/todoist/TodoistPanel.tsx` | Linking mode (Link/Unlink buttons, highlighting), persistent link indicators, inline editing, confetti |
+| `src/hooks/useTodoist.ts` | Expose `taskMap`, `updateTask` accepts `content` field |
 | `src/components/dashboard/SessionTimeline.tsx` | `TaskRow` refactor, intention-grouped layout |
 | `src/components/dashboard/Dashboard.tsx` | Update completion counter |
 | `src/components/dashboard/SavedSessions.tsx` | v4 format validation |
@@ -379,10 +407,30 @@ Recommended sequence to minimize broken intermediate states:
 
 ---
 
+## Post-Implementation UX Iterations
+
+The following changes were made after the core v4 implementation, refining the UX based on hands-on usage:
+
+| # | Change | Location | Details |
+|---|--------|----------|---------|
+| 1 | **Link/Unlink text buttons** | TodoistPanel `TaskRow` | Replaced planned checkboxes with "Link"/"Unlink" text buttons. Less intrusive, hover-revealed for unlinked tasks. Completion button stays always visible. |
+| 2 | **Inline task editing** | TodoistPanel `TaskRow` | Click task title to edit in-place. Commits on Enter/blur, cancels on Escape. `useTodoist.updateTask` now accepts `content` field. |
+| 3 | **Restart mapping** | Step1Intentions Phase 2 | "Want to start over? Restart mapping" — standalone text link at bottom of Phase 2. Resets all intentions' `brokenDown` flags to `false`. |
+| 4 | **Individual remap** | Step1Intentions Phase 2 | Each mapped intention is clickable to individually remap (sets its own `brokenDown` back to `false`). |
+| 5 | **Edit intentions navigation** | Step1Intentions Phase 2 | "← Want to change intentions?" subtle text link above mapping progress, returns to Phase 1 for intention editing. |
+| 6 | **Confetti on completion** | TodoistPanel `TaskRow` | `canvas-confetti` burst on the complete button click, originating from button position. New dependency: `canvas-confetti`. |
+| 7 | **Persistent linked task indicators** | TodoistPanel | Reads `plan.linkedTasks` + `plan.intentions` from `useDayPlan()` context. Computes `persistentLinks` map (todoistId → intention title) via `useMemo`. Threaded through component tree. Amber "linked to: {title}" label and accent highlight show at all times — not just during linking mode. Survives reloads via localStorage persistence. |
+
+### Dependencies Added
+
+- `canvas-confetti` — lightweight confetti animation library (used for task completion celebration)
+
+---
+
 ## Open Considerations
 
 1. **Offline fallback:** When Todoist API is unreachable, linked tasks show only IDs (no titles). Consider adding a `titleSnapshot` field to `LinkedTask` — refreshed on every successful fetch, used as fallback display. Small addition but significantly improves resilience. *Decision deferred to implementation.*
 
 2. **Re-linking in edit mode:** Returning to Step 1 from the dashboard should reflect current link state and allow modifications without losing scheduling data for unchanged links. Needs careful state management.
 
-3. **Performance:** Memoize `taskMap` computation (`useMemo` on `tasks` array). Checkbox rendering in TodoistPanel should remain efficient for large task lists — avoid re-renders on unrelated state changes.
+3. **Performance:** Memoize `taskMap` computation (`useMemo` on `tasks` array). Link/Unlink button rendering in TodoistPanel should remain efficient for large task lists — avoid re-renders on unrelated state changes.

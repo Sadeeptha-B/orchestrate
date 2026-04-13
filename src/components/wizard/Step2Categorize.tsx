@@ -27,7 +27,18 @@ export function Step2Categorize() {
                     <h2 className="text-2xl font-semibold mb-2">Categorize your tasks</h2>
                     <p className="text-text-light text-sm">
                         Main tasks are the primary work threads for the day (e.g., implementing a feature).
-                        Background tasks are recurring habits or smaller nudge tasks (e.g., reading, exercises).
+                        Background tasks are recurring habits or smaller nudge tasks (e.g., reading, exercises)</p>
+                </div>
+
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
+                    <p className="text-sm text-blue-900 dark:text-blue-200">
+                        <strong>💡 Tip:</strong> Anything that takes longer than 30 minutes is a main task
+                    </p>
+                </div>
+
+                <div>
+                    <h2 className="text-2xl font-semibold mb-2">Categorize your tasks</h2>
+                    <p className="text-text-light text-sm">
                     </p>
                 </div>
 
