@@ -890,3 +890,68 @@ Completed linked tasks (strikethrough + 🎉) display correctly in the dashboard
 4. Navigate to Step 3 → verify completed tasks appear in the "Completed" summary section with green styling
 5. Verify completed tasks do not appear in session assignment panel (cannot be assigned)
 6. Complete all linked tasks → verify Step 3 allows direct advancement to Step 4
+
+---
+
+## v4.4 — Step 1 Collapsible Mapped Intentions
+
+### Problem
+
+In Step 1 Phase 2, already-mapped intentions displayed as flat strikethrough rows with no visibility into which tasks were linked underneath. Users couldn't review mapped intentions without remapping them.
+
+### Changes
+
+**Step 1: `Step1Intentions.tsx`**
+- **Collapsible panels for mapped intentions:** Each mapped intention renders as a collapsible panel with a chevron toggle and ✓ icon. Expanding shows nested task titles (resolved from `useTodoistData().taskMap` with `titleSnapshot` fallback) and a "Remap" button.
+- **Collapsible task list on current mapping card:** The current intention being mapped now shows its linked tasks in a collapsible list (task count header + chevron), rather than just a plain counter.
+- **State:** `collapsedIntentions: Set<string>` tracks which mapped intentions are collapsed; `currentTasksCollapsed: boolean` controls the current mapping card's task list.
+- **Helper:** `getTaskTitle(todoistId)` resolves display names via `taskMap.get(id)?.content ?? titleSnapshot ?? id`.
+
+### Verification
+1. Map an intention with 3 tasks → verify collapse/expand shows task titles
+2. Verify chevron rotates on toggle
+3. Verify "Remap" button resets `brokenDown` for that intention
+4. Verify current mapping card shows collapsible task list with count
+
+---
+
+## v4.5 — Step 2 Collapsible Task Manager & Layout Improvements
+
+### Problem
+
+The Step 2 Refine view always rendered the TodoistPanel (task manager) in a two-column layout, consuming 60% of the screen even when users only need it to break down tasks exceeding 1 hour. The always-visible panel added visual noise to what is primarily a categorization and estimation workflow. Additionally, when the task manager was collapsed, horizontal space was underutilized — task cards stretched to full width with excessive whitespace.
+
+### Changes
+
+**Step 2: `Step2Refine.tsx`**
+
+**Collapsible Task Manager:**
+- **Default state:** Task manager panel is collapsed (`taskPanelOpen: false`). The left panel takes full width (`max-w-3xl` cap) with a subtle "📋 Open Task Manager" dashed-border button at the top-right.
+- **Auto-expand:** A `useEffect` monitors `currentLinkedTasks` — when any non-background task has `estimatedMinutes > 60`, the panel opens automatically.
+- **Manual toggle:** Users can open/close the panel at will. When open, the familiar two-column layout activates (40% left / flex-1 right). A ✕ button in the panel header collapses it.
+- **Contextual prompts:** The "No tasks linked" empty state and the >1hr nudge banner both include clickable links/buttons that open the task manager.
+
+**Horizontal Task Cards:**
+- `TaskCard` accepts a `horizontal?: boolean` prop. When `true` (task manager closed), the card renders as a single row: `Title | [Main] [Background] | ⏱ [15m] [30m] [45m] [1hr] [min]`, with thin vertical dividers separating sections. Content wraps naturally on narrower viewports.
+- When the task manager is open (`horizontal={!taskPanelOpen}` resolves to `false`), cards revert to the stacked vertical layout that fits the narrower 40% column.
+- The ⏱ label is rendered inline (just the icon) in horizontal mode, and as a block header in vertical mode.
+
+**Intention Callout:**
+- Changed from full-width to `w-fit` with tighter padding (`py-2.5`), so the intention title card hugs its content.
+
+**Background Estimate Fix:**
+- `handleCustomEstimate` now sets `customInput` to the clamped value (not the raw input) when background tasks exceed the 30-min cap. This keeps the displayed input and the model value in sync — previously the input would show "45" while the model stored 30.
+
+**>1hr Nudge:**
+- The passive text "using the task panel →" is now a clickable button (`onOpenTaskPanel`) that opens the task manager: "Open task manager →".
+
+### Verification
+1. Enter Step 2 → verify task manager is collapsed, left panel is full width with `max-w-3xl`
+2. Click "📋 Open Task Manager" → verify two-column layout appears
+3. Click ✕ on task manager header → verify it collapses back
+4. Set a main task estimate to 90 min → verify task manager auto-opens
+5. Verify task cards are horizontal (single row) when panel is collapsed
+6. Verify task cards switch to vertical (stacked) when panel is open
+7. Verify intention callout card fits its content width
+8. Set a background task to type "Background", type "45" in custom input → verify input resets to "30"
+9. Click "Open task manager →" in the >1hr nudge → verify panel opens

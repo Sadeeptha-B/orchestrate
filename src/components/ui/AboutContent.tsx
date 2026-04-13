@@ -3,8 +3,7 @@ export function AboutContent() {
         <div className="space-y-3 text-sm text-text-light">
             <p>
                 Orchestrate is a <strong className="text-text">daily companion app</strong> — not a replacement
-                for your task manager or calendar. It sits alongside tools like Todoist and Google Calendar to
-                help you start each day with clarity.
+                for your task manager or calendar. These tools operate at different levels of abstraction and it is Orchestrate's job to help you contextualize your day, tasks and calendar to  help you start each day with clarity. 
             </p>
             <p>
                 Task managers are great at holding lists, but they don't solve the friction of

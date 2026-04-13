@@ -36,8 +36,8 @@ async function fetchAllPages<T>(token: string, path: string): Promise<T[]> {
     let cursor: string | null = null;
     do {
         const separator = path.includes('?') ? '&' : '?';
-        const fullPath = cursor ? `${path}${separator}cursor=${cursor}` : path;
-        const data = await apiFetch<PaginatedResponse<T>>(token, fullPath);
+        const fullPath: string = cursor ? `${path}${separator}cursor=${cursor}` : path;
+        const data: PaginatedResponse<T> = await apiFetch<PaginatedResponse<T>>(token, fullPath);
         all = [...all, ...data.results];
         cursor = data.next_cursor;
     } while (cursor);

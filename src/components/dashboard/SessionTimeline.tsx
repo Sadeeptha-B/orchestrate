@@ -316,9 +316,3 @@ export function SessionTimeline() {
         />
     );
 }
-
-function isSessionPast(endTime: string): boolean {
-    const now = new Date();
-    const [h, m] = endTime.split(':').map(Number);
-    return now.getHours() * 60 + now.getMinutes() >= h * 60 + m;
-}
