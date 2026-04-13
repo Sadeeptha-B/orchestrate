@@ -24,9 +24,10 @@ const WORK_TYPES: { value: WorkType; label: string }[] = [
 interface CheckInModalProps {
     open: boolean;
     onClose: () => void;
+    onRecontextualize?: () => void;
 }
 
-export function CheckInModal({ open, onClose }: CheckInModalProps) {
+export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalProps) {
     const { plan, settings, dispatch } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
@@ -42,10 +43,9 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
             .filter((i) => i && i.type === 'background' && !i.completed)
         : [];
 
-    const handleSubmit = () => {
-        if (!feeling || !workType) return;
-
-        const checkIn: CheckIn = {
+    const buildCheckIn = (): CheckIn | null => {
+        if (!feeling || !workType) return null;
+        return {
             id: crypto.randomUUID(),
             timestamp: new Date().toISOString(),
             feeling,
@@ -53,12 +53,30 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
             playlistSuggested: suggestedPlaylist?.id ?? playlists[0].id,
             notes,
         };
+    };
 
-        dispatch({ type: 'ADD_CHECKIN', checkIn });
+    const resetForm = () => {
         setFeeling(null);
         setWorkType(null);
         setNotes('');
+    };
+
+    const handleSubmit = () => {
+        const checkIn = buildCheckIn();
+        if (!checkIn) return;
+        dispatch({ type: 'ADD_CHECKIN', checkIn });
+        resetForm();
         onClose();
+    };
+
+    const handleRecontextualize = () => {
+        const checkIn = buildCheckIn();
+        if (checkIn) {
+            dispatch({ type: 'ADD_CHECKIN', checkIn });
+        }
+        resetForm();
+        onClose();
+        onRecontextualize?.();
     };
 
     return (
@@ -142,6 +160,19 @@ export function CheckInModal({ open, onClose }: CheckInModalProps) {
                         className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none transition-colors"
                     />
                 </div>
+
+                {/* Recontextualize nudge */}
+                {onRecontextualize && (
+                    <div className="px-3 py-2.5 rounded-lg bg-accent-subtle border border-accent/20 text-xs text-text-light">
+                        <p className="font-medium text-text mb-1.5">Need to reschedule?</p>
+                        <p className="mb-2">
+                            If things have shifted, you can recontextualize your remaining sessions.
+                        </p>
+                        <Button variant="secondary" size="sm" onClick={handleRecontextualize}>
+                            Reschedule Sessions
+                        </Button>
+                    </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex justify-end gap-2">

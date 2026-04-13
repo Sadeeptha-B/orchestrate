@@ -3,12 +3,33 @@ import { useDayPlan } from '../../context/DayPlanContext';
 import { encryptToken } from '../../lib/crypto';
 import { validateTodoistToken } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
+import type { GoogleCalendarEntry } from '../../types';
+
+// Google Calendar embed accepted color palette
+const GCAL_COLORS: { hex: string; label: string }[] = [
+    { hex: '#039BE5', label: 'Blue' },
+    { hex: '#7986CB', label: 'Lavender' },
+    { hex: '#33B679', label: 'Sage' },
+    { hex: '#8E24AA', label: 'Grape' },
+    { hex: '#E67C73', label: 'Flamingo' },
+    { hex: '#F6BF26', label: 'Banana' },
+    { hex: '#F4511E', label: 'Tangerine' },
+    { hex: '#009688', label: 'Teal' },
+    { hex: '#0B8043', label: 'Basil' },
+    { hex: '#3F51B5', label: 'Blueberry' },
+    { hex: '#D50000', label: 'Tomato' },
+    { hex: '#E4C441', label: 'Citron' },
+    { hex: '#795548', label: 'Cocoa' },
+    { hex: '#616161', label: 'Graphite' },
+    { hex: '#A79B8E', label: 'Birch' },
+];
 
 export function TodoistSetup() {
     const { settings, dispatch } = useDayPlan();
     const [token, setToken] = useState('');
-    const [calendarIds, setCalendarIds] = useState<string[]>(settings.googleCalendarIds ?? []);
+    const [calendarEntries, setCalendarEntries] = useState<GoogleCalendarEntry[]>(settings.googleCalendarIds ?? []);
     const [newCalendarId, setNewCalendarId] = useState('');
+    const [newCalendarName, setNewCalendarName] = useState('');
     const [testing, setTesting] = useState(false);
     const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -54,10 +75,21 @@ export function TodoistSetup() {
 
     const handleAddCalendar = () => {
         const id = newCalendarId.trim();
-        if (!id || calendarIds.includes(id)) return;
-        const updated = [...calendarIds, id];
-        setCalendarIds(updated);
+        if (!id || calendarEntries.some((e) => e.id === id)) return;
+        const name = newCalendarName.trim() || undefined;
+        const updated = [...calendarEntries, { id, name }];
+        setCalendarEntries(updated);
         setNewCalendarId('');
+        setNewCalendarName('');
+        dispatch({
+            type: 'UPDATE_SETTINGS',
+            settings: { googleCalendarIds: updated },
+        });
+    };
+
+    const handleRenameCalendar = (id: string, name: string | undefined) => {
+        const updated = calendarEntries.map((e) => (e.id === id ? { ...e, name } : e));
+        setCalendarEntries(updated);
         dispatch({
             type: 'UPDATE_SETTINGS',
             settings: { googleCalendarIds: updated },
@@ -65,11 +97,20 @@ export function TodoistSetup() {
     };
 
     const handleRemoveCalendar = (id: string) => {
-        const updated = calendarIds.filter((c) => c !== id);
-        setCalendarIds(updated);
+        const updated = calendarEntries.filter((e) => e.id !== id);
+        setCalendarEntries(updated);
         dispatch({
             type: 'UPDATE_SETTINGS',
             settings: { googleCalendarIds: updated.length > 0 ? updated : undefined },
+        });
+    };
+
+    const handleSetCalendarColor = (id: string, color: string | undefined) => {
+        const updated = calendarEntries.map((e) => (e.id === id ? { ...e, color } : e));
+        setCalendarEntries(updated);
+        dispatch({
+            type: 'UPDATE_SETTINGS',
+            settings: { googleCalendarIds: updated },
         });
     };
 
@@ -131,13 +172,37 @@ export function TodoistSetup() {
                     <code className="text-xs bg-surface-dark px-1 py-0.5 rounded">primary</code>,
                     your email, or a calendar ID from Google Calendar settings.
                 </p>
-                {calendarIds.length > 0 && (
-                    <ul className="space-y-1 mb-2">
-                        {calendarIds.map((id) => (
-                            <li key={id} className="flex items-center gap-2 text-sm">
-                                <span className="flex-1 truncate text-text-light">{id}</span>
+                {calendarEntries.length > 0 && (
+                    <ul className="space-y-1.5 mb-2">
+                        {calendarEntries.map((entry) => (
+                            <li key={entry.id} className="flex items-center gap-2 text-sm">
+                                <span
+                                    className="w-3 h-3 rounded-sm flex-shrink-0 border border-border"
+                                    style={{ backgroundColor: entry.color ?? 'transparent' }}
+                                />
+                                <input
+                                    type="text"
+                                    value={entry.name ?? ''}
+                                    onChange={(e) => handleRenameCalendar(entry.id, e.target.value || undefined)}
+                                    placeholder={entry.id}
+                                    className="flex-1 min-w-0 text-sm bg-transparent text-text border-0 border-b border-transparent hover:border-border focus:border-accent focus:outline-none transition-colors truncate"
+                                    title={entry.id}
+                                />
+                                <select
+                                    value={entry.color ?? ''}
+                                    onChange={(e) => handleSetCalendarColor(entry.id, e.target.value || undefined)}
+                                    className="text-xs px-1.5 py-0.5 rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 cursor-pointer"
+                                    style={entry.color ? { color: entry.color } : undefined}
+                                >
+                                    <option value="" style={{ color: 'inherit' }}>Default</option>
+                                    {GCAL_COLORS.map((c) => (
+                                        <option key={c.hex} value={c.hex} style={{ color: c.hex }}>
+                                            ● {c.label}
+                                        </option>
+                                    ))}
+                                </select>
                                 <button
-                                    onClick={() => handleRemoveCalendar(id)}
+                                    onClick={() => handleRemoveCalendar(entry.id)}
                                     className="text-xs text-red-500 hover:text-red-400 cursor-pointer"
                                     title="Remove"
                                 >
@@ -147,18 +212,28 @@ export function TodoistSetup() {
                         ))}
                     </ul>
                 )}
-                <div className="flex gap-2">
-                    <input
-                        type="text"
-                        value={newCalendarId}
-                        onChange={(e) => setNewCalendarId(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddCalendar()}
-                        placeholder="primary"
-                        className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
-                    />
-                    <Button variant="secondary" size="sm" onClick={handleAddCalendar} disabled={!newCalendarId.trim()}>
-                        Add
-                    </Button>
+                <div className="space-y-1.5">
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={newCalendarId}
+                            onChange={(e) => setNewCalendarId(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddCalendar()}
+                            placeholder="Calendar ID"
+                            className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                        />
+                        <input
+                            type="text"
+                            value={newCalendarName}
+                            onChange={(e) => setNewCalendarName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddCalendar()}
+                            placeholder="Name (optional)"
+                            className="w-32 px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                        />
+                        <Button variant="secondary" size="sm" onClick={handleAddCalendar} disabled={!newCalendarId.trim()}>
+                            Add
+                        </Button>
+                    </div>
                 </div>
             </div>
         </div>

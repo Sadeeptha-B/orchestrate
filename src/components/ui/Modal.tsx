@@ -29,7 +29,14 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
                 aria-label="Close modal"
             />
             <div className="relative bg-card rounded-xl border border-border shadow-lg max-w-md w-full p-6 animate-in fade-in">
-                {title && <h3 className="text-lg font-semibold mb-4">{title}</h3>}
+                <button
+                    onClick={onClose}
+                    className="absolute top-3 right-3 text-text-light hover:text-text transition-colors cursor-pointer text-lg leading-none"
+                    aria-label="Close"
+                >
+                    ✕
+                </button>
+                {title && <h3 className="text-lg font-semibold mb-4 pr-6">{title}</h3>}
                 {children}
             </div>
         </div>

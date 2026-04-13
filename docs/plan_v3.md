@@ -41,7 +41,10 @@ Trevor AI sets `X-Frame-Options: DENY` and modern browsers block cross-origin co
 - **Method**: Official embeddable iframe URL: `https://calendar.google.com/calendar/embed?src={id1}&src={id2}&mode=week`
 - **Multiple calendars**: Repeating `src` params overlays calendars in different colors within a single embed.
 - **Auth**: None needed — works if user is logged into Google in the same browser. Read-only.
-- **Configurable**: User adds one or more calendar IDs in settings. Stored as `googleCalendarIds: string[]` (migrated from legacy single-string `googleCalendarId`).
+- **Configurable**: User adds one or more calendar entries in settings. Stored as `googleCalendarIds: GoogleCalendarEntry[]` (migrated from legacy single-string `googleCalendarId` and plain `string[]`). Each entry has `id`, optional `name`, and optional `color`.
+- **Per-calendar colors**: Embed URL includes `&color={hex}` per calendar using Google's accepted 15-color palette.
+- **View mode**: Configurable via `calendarViewMode` setting (`week` | `month` | `agenda`). Displayed as a tab bar directly above the embed. The embed only supports `WEEK`, `MONTH`, and `AGENDA` mode parameters — `DAY` and custom day-count views are not supported by the embed API. Scroll-to-time is also not controllable. Defaults to `week`.
+- **Privacy note**: Private/imported calendars require authentication cookies, which may be blocked in iframes by browser third-party cookie policies. A fallback "Open in Google Calendar" link is provided.
 - **Why this works**: Google Calendar explicitly supports embedding (`X-Frame-Options: ALLOWALL` on embed endpoint).
 
 #### Data Flow
@@ -93,7 +96,8 @@ export interface AppSettings {
     todoistToken?: string;       // encrypted token blob (base64)
     todoistTokenIV?: string;     // AES-GCM IV (base64)
     todoistTokenKey?: string;    // AES key (exported, base64)
-    googleCalendarIds?: string[];  // array of calendar IDs to overlay
+    googleCalendarIds?: GoogleCalendarEntry[];  // calendar entries with id, name?, color?
+    calendarViewMode?: CalendarViewMode;  // 'week' | 'month' | 'agenda'
 }
 ```
 
@@ -150,13 +154,15 @@ All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`
 
 #### `src/components/todoist/TodoistSetup.tsx` — Settings section
 - Token input (masked), "Test & Save" button, "Disconnect" button
-- Google Calendar: add/remove multiple calendar IDs with inline list
+- Google Calendar: add/remove/rename entries, per-calendar color dropdown (15-color Google palette with `●` preview), inline name editing
 - Links to Todoist developer settings page
 
 #### `src/components/todoist/GoogleCalendarEmbed.tsx` — Calendar embed
-- Reads `googleCalendarIds` array from settings
-- Builds iframe URL with multiple `src=` params to overlay all calendars
-- Google Calendar embed iframe, `mode=week`, current date
+- Reads `googleCalendarIds` array of `GoogleCalendarEntry` objects from settings
+- Builds iframe URL with multiple `src=` and `color=` params to overlay all calendars with chosen colors
+- **View mode tab bar** above the iframe: Week / Month / Agenda — persists selection in `calendarViewMode` setting
+- Google Calendar embed iframe, configurable mode, current date
+- "Open in Google Calendar ↗" link for fallback access
 - Fallback message if no calendar IDs configured
 
 ---
@@ -180,13 +186,19 @@ The wizard was originally 6 steps; Step 1 (Set Intentions) and Step 2 (Map to To
 #### Step 2: Categorize (was Step 3)
 
 #### Step 3: Schedule Main Intentions (was Step 4)
-**Layout**: Split view — left (session scheduling) + right (calendar + tasks)
+**Layout**: Two-row layout — top row is split view, bottom row is full-width calendar
 
-- Left panel (~50%): session-slot assignment UI
-- Right panel (~50%): `TodoistPanel` compact + `GoogleCalendarEmbed` stacked
+- Top-left (~50%): session-slot assignment UI (unassigned intentions + session cards)
+- Top-right (~50%): `TodoistPanel` compact mode, fixed 500px height with internal scroll
+- Bottom: `GoogleCalendarEmbed` full-width, 450px height with view mode tabs (Week/Month/Agenda)
 - Note encouraging user to schedule broken-down tasks via the panel
 
 #### Step 4: Schedule Background / Nudges (was Step 5)
+**Layout**: Same two-row layout as Step 3 — session scheduling left, Todoist right, calendar below
+
+- Top-left (~50%): session-slot cards with main intentions (read-only context) + background intention assignment
+- Top-right (~50%): `TodoistPanel` compact mode, fixed 500px height
+- Bottom: `GoogleCalendarEmbed` full-width, 450px height with view mode tabs
 
 #### Step 5: Start Music (was Step 6)
 
@@ -199,6 +211,15 @@ Replace the Trevor AI collapsible section with:
 2. **Calendar** (collapsed): `GoogleCalendarEmbed`
 
 Both below music panel, above session timeline.
+
+#### Hourly Check-In Recontextualization
+
+During hourly check-ins, the `CheckInModal` offers a **"Reschedule Sessions"** option that allows the user to recontextualize mid-day:
+
+- A nudge section appears in the modal: "Need to reschedule? If things have shifted, you can recontextualize your remaining sessions."
+- Clicking "Reschedule Sessions" logs the current check-in (if feeling + work type are filled), then navigates to Step 3 (Schedule Main Intentions) in **edit mode** — `editingStep` and `wizardStep` both set to 3.
+- The user can rearrange session assignments using the full scheduling UI, then click "Done" to return to the dashboard.
+- `CheckInModal` accepts an optional `onRecontextualize` callback prop; the Dashboard passes a handler that dispatches `SET_EDITING_STEP` + `SET_WIZARD_STEP` and navigates to `/setup`.
 
 ---
 
@@ -419,3 +440,66 @@ When `setupComplete` is `false`, the `/` route now renders a **Welcome screen** 
 | File | Purpose |
 |------|---------|
 | `src/components/Welcome.tsx` | Welcome screen component with greeting, step timeline, About modal, first-time nudge |
+
+---
+
+### Iteration 3.4 — Todoist Scheduling, Calendar Enhancements & Modal UX (implemented ✅)
+
+#### Todoist Task Scheduling (time-range within the day)
+
+Since Orchestrate manages tasks *within* a single day, tasks need to be schedulable to specific time windows — not just marked with a due date.
+
+**API integration** (`src/hooks/useTodoist.ts`):
+- Added `duration` field (`{ amount: number; unit: string } | null`) to `TodoistTask` interface
+- Added `updateTask(taskId, updates)` function — calls `POST /api/v1/tasks/{id}` with `due_datetime`, `duration`, `duration_unit` fields
+- Optimistically updates local task state after successful API call
+- `updateTask` exposed in the hook's return value
+
+**UI** (`src/components/todoist/TodoistPanel.tsx`):
+
+| Feature | Details |
+|---------|---------|
+| Time range picker | Two `<input type="time">` fields (start/end) in `TaskRow`, shown on ⏱ icon click |
+| Duration computation | `handleSchedule()` calculates duration in minutes from start → end, sends to Todoist API |
+| Schedule display | Formatted as "9:00 AM – 1:00 PM" in both compact and full task row modes |
+| Clear schedule | "Clear" button resets to date-only due (`due_date` without `due_datetime`) |
+| Visual indicator | ⏱ icon stays accent-colored when task has a scheduled time |
+| Dark mode | `dark:[color-scheme:dark]` on time inputs for native dark mode clock icon support |
+| Indentation | Picker container uses `paddingLeft: ${52 + depth * 16}px` to align with task text |
+| Prop threading | `onSchedule` / `onClearSchedule` threaded through `ProjectTreeNode` → `SectionGroup` → `TaskRow` |
+
+#### Google Calendar Embed Improvements
+
+| Change | Rationale |
+|--------|-----------|
+| Removed `sandbox` attribute from iframe | Was blocking authentication cookies needed for private/imported calendars |
+| Per-calendar `&color={hex}` in embed URL | Google embed ignores account calendar colors; explicit `color` param applies chosen color |
+| "Open in Google Calendar ↗" link | Fallback for users with third-party cookie restrictions |
+| Cookie/privacy warning note | Explains why private calendars may not appear in the embed |
+
+#### Per-Calendar Color & Name Support
+
+**New type** (`src/types/index.ts`):
+```ts
+export interface GoogleCalendarEntry {
+    id: string;
+    name?: string;   // user-friendly display name
+    color?: string;  // hex color from Google's accepted palette
+}
+```
+
+**Settings UI** (`src/components/todoist/TodoistSetup.tsx`):
+- Calendar list shows: colored `●` preview dot, inline editable name, color dropdown, remove button
+- Color dropdown uses Google's 15-color palette with `● ColorName` format (colored dot via inline style)
+- Add flow includes "Calendar ID" + "Name (optional)" inputs
+- Palette: Blue, Lavender, Sage, Grape, Flamingo, Banana, Tangerine, Teal, Basil, Blueberry, Tomato, Citron, Cocoa, Graphite, Birch
+
+**Migration** (`src/context/DayPlanContext.tsx`):
+- Legacy `googleCalendarId: string` → `[{ id }]`
+- Legacy `googleCalendarIds: string[]` → `GoogleCalendarEntry[]` (detects `typeof [0] === 'string'`)
+
+#### Modal Close Button (`src/components/ui/Modal.tsx`)
+
+- Added `✕` close button at `absolute top-3 right-3`
+- Title gets `pr-6` to avoid overlap with the close button
+- Uses the existing `onClose` callback

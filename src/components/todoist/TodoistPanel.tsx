@@ -83,6 +83,7 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
         error,
         isConfigured,
         createTask,
+        updateTask,
         completeTask,
         deleteTask,
         createProject,
@@ -159,6 +160,24 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
         await deleteProject(projectId);
     };
 
+    const handleSchedule = async (taskId: string, startTime: string, endTime: string) => {
+        const today = new Date().toISOString().slice(0, 10);
+        const [sh, sm] = startTime.split(':').map(Number);
+        const [eh, em] = endTime.split(':').map(Number);
+        const durationMinutes = (eh * 60 + em) - (sh * 60 + sm);
+        if (durationMinutes <= 0) return;
+        await updateTask(taskId, {
+            due_datetime: `${today}T${startTime}:00`,
+            duration: durationMinutes,
+            duration_unit: 'minute',
+        });
+    };
+
+    const handleClearSchedule = async (taskId: string) => {
+        const today = new Date().toISOString().slice(0, 10);
+        await updateTask(taskId, { due_date: today });
+    };
+
     // Flatten projects for the "add task" project picker
     const flatProjects = useMemo(() => {
         const result: { id: string; name: string; depth: number }[] = [];
@@ -223,6 +242,8 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
                         onCreateTask={createTask}
                         onDeleteTask={deleteTask}
                         onDeleteProject={handleDeleteProject}
+                        onSchedule={handleSchedule}
+                        onClearSchedule={handleClearSchedule}
                         subTaskMap={subTaskMap}
                         compact={mode === 'compact'}
                     />
@@ -297,6 +318,8 @@ function ProjectTreeNode({
     onCreateTask,
     onDeleteTask,
     onDeleteProject,
+    onSchedule,
+    onClearSchedule,
     subTaskMap,
     compact,
 }: {
@@ -306,6 +329,8 @@ function ProjectTreeNode({
     onCreateTask: (content: string, opts?: { project_id?: string }) => Promise<void>;
     onDeleteTask: (id: string) => void;
     onDeleteProject: (id: string) => void;
+    onSchedule: (taskId: string, startTime: string, endTime: string) => void;
+    onClearSchedule: (taskId: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
 }) {
@@ -458,6 +483,8 @@ function ProjectTreeNode({
                             depth={depth + 1}
                             onComplete={onComplete}
                             onDelete={onDeleteTask}
+                            onSchedule={onSchedule}
+                            onClearSchedule={onClearSchedule}
                             subTaskMap={subTaskMap}
                             compact={compact}
                         />
@@ -475,6 +502,8 @@ function ProjectTreeNode({
                                 depth={depth + 1}
                                 onComplete={onComplete}
                                 onDelete={onDeleteTask}
+                                onSchedule={onSchedule}
+                                onClearSchedule={onClearSchedule}
                                 subTaskMap={subTaskMap}
                                 compact={compact}
                             />
@@ -491,6 +520,8 @@ function ProjectTreeNode({
                             onCreateTask={onCreateTask}
                             onDeleteTask={onDeleteTask}
                             onDeleteProject={onDeleteProject}
+                            onSchedule={onSchedule}
+                            onClearSchedule={onClearSchedule}
                             subTaskMap={subTaskMap}
                             compact={compact}
                         />
@@ -509,6 +540,8 @@ function SectionGroup({
     depth,
     onComplete,
     onDelete,
+    onSchedule,
+    onClearSchedule,
     subTaskMap,
     compact,
 }: {
@@ -517,6 +550,8 @@ function SectionGroup({
     depth: number;
     onComplete: (id: string) => void;
     onDelete: (id: string) => void;
+    onSchedule: (taskId: string, startTime: string, endTime: string) => void;
+    onClearSchedule: (taskId: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
 }) {
@@ -550,6 +585,8 @@ function SectionGroup({
                         depth={depth + 1}
                         onComplete={onComplete}
                         onDelete={onDelete}
+                        onSchedule={onSchedule}
+                        onClearSchedule={onClearSchedule}
                         subTaskMap={subTaskMap}
                         compact={compact}
                     />
@@ -565,6 +602,8 @@ function TaskRow({
     depth,
     onComplete,
     onDelete,
+    onSchedule,
+    onClearSchedule,
     subTaskMap,
     compact,
 }: {
@@ -572,11 +611,55 @@ function TaskRow({
     depth: number;
     onComplete: (id: string) => void;
     onDelete: (id: string) => void;
+    onSchedule: (taskId: string, startTime: string, endTime: string) => void;
+    onClearSchedule: (taskId: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
 }) {
     const children = subTaskMap.get(task.id);
     const [childrenCollapsed, setChildrenCollapsed] = useState(false);
+    const [showTimePicker, setShowTimePicker] = useState(false);
+    const [pickerStart, setPickerStart] = useState('');
+    const [pickerEnd, setPickerEnd] = useState('');
+
+    // Parse existing schedule for today
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const hasDueTime = task.due?.date?.includes('T') ?? false;
+    const isDueToday = task.due?.date?.startsWith(todayStr) ?? false;
+    const scheduledStart = hasDueTime && isDueToday
+        ? task.due!.date.slice(11, 16)
+        : null;
+    const durationMinutes = task.duration?.unit === 'minute' ? task.duration.amount : null;
+    const scheduledEnd = scheduledStart && durationMinutes
+        ? (() => {
+            const [h, m] = scheduledStart.split(':').map(Number);
+            const total = h * 60 + m + durationMinutes;
+            return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        })()
+        : null;
+    const isScheduled = scheduledStart !== null;
+
+    const formatTime = (hhmm: string) => {
+        const [h, m] = hhmm.split(':').map(Number);
+        const d = new Date();
+        d.setHours(h, m);
+        return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    };
+
+    const handleOpenPicker = () => {
+        setPickerStart(scheduledStart ?? '');
+        setPickerEnd(scheduledEnd ?? '');
+        setShowTimePicker(true);
+    };
+
+    const handleSubmitSchedule = () => {
+        if (!pickerStart || !pickerEnd) return;
+        const [sh, sm] = pickerStart.split(':').map(Number);
+        const [eh, em] = pickerEnd.split(':').map(Number);
+        if (eh * 60 + em <= sh * 60 + sm) return;
+        onSchedule(task.id, pickerStart, pickerEnd);
+        setShowTimePicker(false);
+    };
 
     return (
         <div>
@@ -605,17 +688,37 @@ function TaskRow({
                     <p className="text-sm leading-snug">{task.content}</p>
                     {!compact && task.due && (
                         <p className="text-xs text-text-light mt-0.5">
-                            {task.due.date.includes('T')
-                                ? new Date(task.due.date).toLocaleString([], {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    hour: 'numeric',
-                                    minute: '2-digit',
-                                })
-                                : task.due.date}
+                            {isScheduled
+                                ? `${formatTime(scheduledStart!)}${scheduledEnd ? ` – ${formatTime(scheduledEnd)}` : ''}`
+                                : task.due.date.startsWith(todayStr)
+                                    ? 'Today'
+                                    : task.due.date.includes('T')
+                                        ? new Date(task.due.date).toLocaleString([], {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            hour: 'numeric',
+                                            minute: '2-digit',
+                                        })
+                                        : task.due.date}
                         </p>
                     )}
+                    {compact && isScheduled && (
+                        <span className="text-[10px] text-accent">
+                            {formatTime(scheduledStart!)}{scheduledEnd ? ` – ${formatTime(scheduledEnd)}` : ''}
+                        </span>
+                    )}
                 </div>
+                {/* Schedule button (hover) */}
+                <button
+                    onClick={handleOpenPicker}
+                    className={`text-xs flex-shrink-0 mt-0.5 cursor-pointer transition-opacity ${isScheduled
+                        ? 'text-accent opacity-100'
+                        : 'text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent'
+                        }`}
+                    title={isScheduled ? `${scheduledStart}${scheduledEnd ? ` – ${scheduledEnd}` : ''}` : 'Schedule for today'}
+                >
+                    ⏱
+                </button>
                 {/* Delete task button (hover) */}
                 <button
                     onClick={() => onDelete(task.id)}
@@ -625,6 +728,53 @@ function TaskRow({
                     ✕
                 </button>
             </div>
+            {/* Inline time range picker */}
+            {showTimePicker && (
+                <div
+                    className="flex items-center gap-1.5 px-2 py-1"
+                    style={{ paddingLeft: `${52 + depth * 16}px` }}
+                >
+                    <input
+                        type="time"
+                        value={pickerStart}
+                        onChange={(e) => setPickerStart(e.target.value)}
+                        className="px-1.5 py-0.5 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 dark:[color-scheme:dark]"
+                        autoFocus
+                    />
+                    <span className="text-xs text-text-light">–</span>
+                    <input
+                        type="time"
+                        value={pickerEnd}
+                        onChange={(e) => setPickerEnd(e.target.value)}
+                        className="px-1.5 py-0.5 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 dark:[color-scheme:dark]"
+                    />
+                    <button
+                        onClick={handleSubmitSchedule}
+                        disabled={!pickerStart || !pickerEnd}
+                        className="px-2 py-0.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-40 transition-colors cursor-pointer"
+                    >
+                        Set
+                    </button>
+                    {isScheduled && (
+                        <button
+                            onClick={() => {
+                                onClearSchedule(task.id);
+                                setShowTimePicker(false);
+                            }}
+                            className="text-xs text-text-light hover:text-red-500 cursor-pointer"
+                            title="Remove schedule"
+                        >
+                            Clear
+                        </button>
+                    )}
+                    <button
+                        onClick={() => setShowTimePicker(false)}
+                        className="text-xs text-text-light hover:text-text cursor-pointer"
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
             {/* Sub-tasks */}
             {children && !childrenCollapsed &&
                 children.map((child) => (
@@ -634,6 +784,8 @@ function TaskRow({
                         depth={depth + 1}
                         onComplete={onComplete}
                         onDelete={onDelete}
+                        onSchedule={onSchedule}
+                        onClearSchedule={onClearSchedule}
                         subTaskMap={subTaskMap}
                         compact={compact}
                     />

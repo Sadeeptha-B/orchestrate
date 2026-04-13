@@ -20,6 +20,10 @@ export interface TodoistTask {
         string: string;
         lang: string;
     } | null;
+    duration: {
+        amount: number;
+        unit: string;
+    } | null;
     priority: number;
     project_id: string;
     section_id: string | null;
@@ -259,6 +263,24 @@ export function useTodoist() {
         [resolveToken, refreshTasks],
     );
 
+    const updateTask = useCallback(
+        async (taskId: string, updates: { due_datetime?: string; due_date?: string; duration?: number; duration_unit?: string }) => {
+            const token = await resolveToken();
+            if (!token) return;
+            setError(null);
+            try {
+                const updated = await apiFetch<TodoistTask>(token, `/tasks/${taskId}`, {
+                    method: 'POST',
+                    body: JSON.stringify(updates),
+                });
+                setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+            } catch (e) {
+                setError(e instanceof Error ? e.message : 'Failed to update task');
+            }
+        },
+        [resolveToken],
+    );
+
     const deleteTask = useCallback(
         async (taskId: string) => {
             const token = await resolveToken();
@@ -315,6 +337,7 @@ export function useTodoist() {
         error,
         isConfigured,
         createTask,
+        updateTask,
         completeTask,
         reopenTask,
         deleteTask,

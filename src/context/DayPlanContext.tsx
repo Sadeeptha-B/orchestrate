@@ -88,11 +88,16 @@ function loadSettings(): AppSettings {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY);
         if (!raw) return { notificationPreference: 'both', sessionSlots: defaultSessionSlots };
-        const parsed = JSON.parse(raw) as AppSettings & { googleCalendarId?: string };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed = JSON.parse(raw) as AppSettings & { googleCalendarId?: string } & { googleCalendarIds?: any };
         // Migrate legacy single-string googleCalendarId → googleCalendarIds array
         if (!parsed.googleCalendarIds && parsed.googleCalendarId) {
-            parsed.googleCalendarIds = [parsed.googleCalendarId];
+            parsed.googleCalendarIds = [{ id: parsed.googleCalendarId }];
             delete parsed.googleCalendarId;
+        }
+        // Migrate legacy string[] googleCalendarIds → GoogleCalendarEntry[]
+        if (Array.isArray(parsed.googleCalendarIds) && parsed.googleCalendarIds.length > 0 && typeof parsed.googleCalendarIds[0] === 'string') {
+            parsed.googleCalendarIds = (parsed.googleCalendarIds as unknown as string[]).map((id) => ({ id }));
         }
         return parsed;
     } catch {

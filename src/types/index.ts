@@ -56,10 +56,18 @@ export interface DayPlan {
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';
 
+export type CalendarViewMode = 'week' | 'month' | 'agenda';
+
 export interface SavedDayPlan {
     plan: DayPlan;
     savedAt: string; // ISO timestamp
     label: string;   // e.g. "Thursday, Apr 10"
+}
+
+export interface GoogleCalendarEntry {
+    id: string;
+    name?: string;  // user-friendly label, e.g. "Work", "Todoist"
+    color?: string; // hex color for the embed, e.g. "#009688"
 }
 
 export interface AppSettings {
@@ -68,5 +76,6 @@ export interface AppSettings {
     todoistToken?: string;
     todoistTokenIV?: string;
     todoistTokenKey?: string;
-    googleCalendarIds?: string[];
+    googleCalendarIds?: GoogleCalendarEntry[];
+    calendarViewMode?: CalendarViewMode;
 }

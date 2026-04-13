@@ -96,6 +96,12 @@ export function Dashboard() {
         navigate('/setup');
     };
 
+    const handleRecontextualize = () => {
+        dispatch({ type: 'SET_EDITING_STEP', step: 3 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 3 });
+        navigate('/setup');
+    };
+
     const openSaveModal = () => {
         setSaveName(format(parseISO(plan.date), 'EEEE, MMM d'));
         setShowSaveModal(true);
@@ -276,7 +282,7 @@ export function Dashboard() {
                 </main>
             </div>
 
-            <CheckInModal open={showCheckin} onClose={dismiss} />
+            <CheckInModal open={showCheckin} onClose={dismiss} onRecontextualize={handleRecontextualize} />
 
             <Modal
                 open={showNewDayModal}
