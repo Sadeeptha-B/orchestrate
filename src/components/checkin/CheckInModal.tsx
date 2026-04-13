@@ -3,7 +3,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoist } from '../../hooks/useTodoist';
+import { useTodoistData } from '../../hooks/useTodoist';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import type { WorkType, CheckIn } from '../../types';
 
@@ -31,7 +31,7 @@ interface CheckInModalProps {
 export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalProps) {
     const { plan, settings, dispatch } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
-    const { taskMap } = useTodoist();
+    const { taskMap } = useTodoistData();
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
     const [workType, setWorkType] = useState<WorkType | null>(null);
     const [notes, setNotes] = useState('');
@@ -108,7 +108,7 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                 {bgNudges.length > 0 && (
                     <div className="px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
                         <span className="font-medium">Background intentions for this session:</span>{' '}
-                        {bgNudges.map((lt) => taskMap.get(lt!.todoistId)?.content ?? 'Unknown task').join(', ')}
+                        {bgNudges.map((lt) => taskMap.get(lt!.todoistId)?.content ?? lt!.titleSnapshot ?? lt!.todoistId).join(', ')}
                     </div>
                 )}
 

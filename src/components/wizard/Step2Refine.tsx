@@ -1,7 +1,7 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
-import { useTodoist } from '../../hooks/useTodoist';
+import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { Modal } from '../ui/Modal';
@@ -17,23 +17,10 @@ const BACKGROUND_MAX_MINUTES = 30;
 
 export function Step2Refine() {
     const { plan, dispatch } = useDayPlan();
-    const { taskMap } = useTodoist();
+    const { taskMap } = useTodoistData();
     const [currentIntentionIndex, setCurrentIntentionIndex] = useState(0);
     const [showSetup, setShowSetup] = useState(false);
-    const [taskPanelFiltered, setTaskPanelFiltered] = useState(false);
-    const [filteredPanelHeight, setFilteredPanelHeight] = useState<number | null>(null);
-    const panelRef = useRef<HTMLDivElement>(null);
-
-    // Measure the panel's natural height when in filtered mode
-    useEffect(() => {
-        if (!taskPanelFiltered || !panelRef.current) return;
-        const el = panelRef.current;
-        const measure = () => setFilteredPanelHeight(el.scrollHeight);
-        measure();
-        const observer = new ResizeObserver(measure);
-        observer.observe(el);
-        return () => observer.disconnect();
-    }, [taskPanelFiltered, currentIntentionIndex, plan.linkedTasks.length]);
+    const [taskPanelOpen, setTaskPanelOpen] = useState(false);
 
     const intentions = plan.intentions;
     const currentIntention = intentions[currentIntentionIndex];
@@ -44,21 +31,26 @@ export function Step2Refine() {
     );
 
     const canAdvanceStep = plan.linkedTasks.length > 0 &&
-        plan.linkedTasks.every((lt) => lt.type !== 'unclassified' && lt.estimatedMinutes !== null);
+        plan.linkedTasks.every((lt) => lt.completed || (lt.type !== 'unclassified' && lt.estimatedMinutes !== null));
 
     const currentLinkedTasks = currentIntention
         ? plan.linkedTasks.filter((lt) => lt.intentionId === currentIntention.id)
         : [];
 
     const canAdvanceIntention = currentLinkedTasks.length > 0 &&
-        currentLinkedTasks.every((lt) => lt.type !== 'unclassified' && lt.estimatedMinutes !== null);
+        currentLinkedTasks.every((lt) => lt.completed || (lt.type !== 'unclassified' && lt.estimatedMinutes !== null));
 
     const isLastIntention = currentIntentionIndex >= intentions.length - 1;
 
-    const linkedTaskIds = useMemo(
-        () => new Set(plan.linkedTasks.map((lt) => lt.todoistId)),
-        [plan.linkedTasks],
+    // Auto-open task panel when any non-background task in current intention exceeds 1hr
+    const hasLongTask = currentLinkedTasks.some(
+        (lt) => !lt.completed && lt.type !== 'background' && lt.estimatedMinutes !== null && lt.estimatedMinutes > 60,
     );
+    useEffect(() => {
+        if (hasLongTask) setTaskPanelOpen(true);
+    }, [hasLongTask]);
+
+    const openTaskPanel = useCallback(() => setTaskPanelOpen(true), []);
 
     const handleNextIntention = () => {
         if (isLastIntention) {
@@ -89,7 +81,7 @@ export function Step2Refine() {
         <WizardLayout canAdvance={canAdvanceStep} onNext={handleNext} wide hideNext>
             <div className="flex flex-col lg:flex-row gap-6 mt-4" style={{ minHeight: '60vh' }}>
                 {/* Left panel: categorization + estimation */}
-                <div className="lg:w-[40%] flex-shrink-0 space-y-5 overflow-y-auto">
+                <div className={`flex-shrink-0 space-y-5 overflow-y-auto transition-all ${taskPanelOpen ? 'lg:w-[40%]' : 'w-full max-w-3xl'}`}>
                     {/* Header */}
                     <div>
                         <h2 className="text-2xl font-semibold mb-1">Categorize &amp; estimate</h2>
@@ -117,7 +109,7 @@ export function Step2Refine() {
                     </div>
 
                     {/* Intention title */}
-                    <div className="rounded-lg border border-accent/30 bg-accent/[0.03] px-4 py-3">
+                    <div className="rounded-lg border border-accent/30 bg-accent/[0.03] px-4 py-2.5 w-fit">
                         <h3 className="font-medium text-sm">{currentIntention.title}</h3>
                         <span className="text-xs text-text-light">
                             {currentLinkedTasks.length} task{currentLinkedTasks.length !== 1 ? 's' : ''} linked
@@ -136,7 +128,11 @@ export function Step2Refine() {
                     <div className="space-y-3">
                         {currentLinkedTasks.length === 0 && (
                             <p className="text-xs text-text-light py-4 text-center">
-                                No tasks linked to this intention. Use the task panel on the right to create and link tasks.
+                                No tasks linked to this intention.{' '}
+                                <button onClick={openTaskPanel} className="text-accent hover:underline cursor-pointer">
+                                    Open the task manager
+                                </button>{' '}
+                                to create and link tasks.
                             </p>
                         )}
                         {currentLinkedTasks.map((lt) => (
@@ -144,6 +140,7 @@ export function Step2Refine() {
                                 key={lt.todoistId}
                                 linkedTask={lt}
                                 taskMap={taskMap}
+                                horizontal={!taskPanelOpen}
                                 onCategorize={(taskType) =>
                                     dispatch({ type: 'CATEGORIZE_TASK', todoistId: lt.todoistId, taskType })
                                 }
@@ -156,6 +153,7 @@ export function Step2Refine() {
                                 onUnlink={() =>
                                     dispatch({ type: 'UNLINK_TASK', todoistId: lt.todoistId })
                                 }
+                                onOpenTaskPanel={openTaskPanel}
                             />
                         ))}
                     </div>
@@ -191,59 +189,48 @@ export function Step2Refine() {
                     )}
                 </div>
 
-                {/* Right panel: Todoist task panel */}
-                <div className="flex-1 min-w-0 flex flex-col">
-                    <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
+                {/* Right panel: Todoist task panel (collapsible) */}
+                {taskPanelOpen ? (
+                    <div className="flex-1 min-w-0 flex flex-col">
+                        <div className="flex items-center justify-between mb-2">
                             <h3 className="text-sm font-medium text-text-light">Task Manager</h3>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs text-accent">
+                                    Link tasks to: {currentIntention.title}
+                                </span>
                                 <button
-                                    onClick={() => setTaskPanelFiltered(false)}
-                                    className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${!taskPanelFiltered
-                                        ? 'bg-accent text-white border-accent'
-                                        : 'border-border text-text-light hover:border-accent hover:text-accent'
-                                        }`}
+                                    onClick={() => setTaskPanelOpen(false)}
+                                    className="text-xs text-text-light hover:text-text cursor-pointer"
+                                    title="Collapse task manager"
                                 >
-                                    All Tasks
-                                </button>
-                                <button
-                                    onClick={() => setTaskPanelFiltered(true)}
-                                    className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${taskPanelFiltered
-                                        ? 'bg-accent text-white border-accent'
-                                        : 'border-border text-text-light hover:border-accent hover:text-accent'
-                                        }`}
-                                >
-                                    Linked Tasks
+                                    ✕
                                 </button>
                             </div>
                         </div>
-                        <span className="text-xs text-accent">
-                            Link tasks to: {currentIntention.title}
-                        </span>
+                        <div className="flex-1 rounded-lg border border-border bg-card min-h-[400px]">
+                            <TodoistPanel
+                                mode="full"
+                                onSetup={() => setShowSetup(true)}
+                                showFilterToggle
+                                linking={{
+                                    linkingIntentionId: currentIntention.id,
+                                    linkedTaskIds: currentIntention.linkedTaskIds,
+                                    allLinkedTasks: plan.linkedTasks,
+                                    intentionTitles: intentionTitleMap,
+                                    onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentIntention.id, todoistId }),
+                                    onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
+                                }}
+                            />
+                        </div>
                     </div>
-                    <div
-                        ref={panelRef}
-                        className="flex-1 rounded-lg border border-border bg-card min-h-[400px]"
-                        style={!taskPanelFiltered && filteredPanelHeight
-                            ? { maxHeight: filteredPanelHeight, overflowY: 'auto' }
-                            : undefined
-                        }
+                ) : (
+                    <button
+                        onClick={openTaskPanel}
+                        className="hidden lg:flex items-center gap-2 self-start px-4 py-2.5 text-xs rounded-lg border border-dashed border-border text-text-light hover:border-accent hover:text-accent transition-colors cursor-pointer whitespace-nowrap"
                     >
-                        <TodoistPanel
-                            mode="full"
-                            onSetup={() => setShowSetup(true)}
-                            linking={{
-                                linkingIntentionId: currentIntention.id,
-                                linkedTaskIds: currentIntention.linkedTaskIds,
-                                allLinkedTasks: plan.linkedTasks,
-                                intentionTitles: intentionTitleMap,
-                                onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentIntention.id, todoistId }),
-                                onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
-                            }}
-                            filterToTaskIds={taskPanelFiltered ? linkedTaskIds : undefined}
-                        />
-                    </div>
-                </div>
+                        <span>📋</span> Open Task Manager
+                    </button>
+                )}
             </div>
 
             {/* Integrations setup modal */}
@@ -259,30 +246,53 @@ export function Step2Refine() {
 function TaskCard({
     linkedTask: lt,
     taskMap,
+    horizontal,
     onCategorize,
     onToggleHabit,
     onSetEstimate,
     onUnlink,
+    onOpenTaskPanel,
 }: {
     linkedTask: LinkedTask;
     taskMap: Map<string, { id: string; content: string }>;
+    horizontal?: boolean;
     onCategorize: (taskType: LinkedTask['type']) => void;
     onToggleHabit: () => void;
     onSetEstimate: (minutes: number) => void;
     onUnlink: () => void;
+    onOpenTaskPanel: () => void;
 }) {
     const [customInput, setCustomInput] = useState('');
     const todoistTask = taskMap.get(lt.todoistId);
-    const isStale = !todoistTask;
-    const title = todoistTask?.content ?? lt.todoistId;
+    const isStale = !todoistTask && !lt.completed;
+    const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
     const isBackground = lt.type === 'background';
 
+    // Completed tasks: compact read-only display
+    if (lt.completed) {
+        return (
+            <div className="rounded-lg border border-success/30 bg-success/5 overflow-hidden">
+                <div className="px-4 py-3 flex items-center gap-2">
+                    <span className="text-sm">🎉</span>
+                    <span className="text-sm line-through text-text-light flex-1 min-w-0 truncate">
+                        {title}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-success/10 text-success flex-shrink-0">
+                        Completed
+                    </span>
+                </div>
+            </div>
+        );
+    }
+
     const handleCustomEstimate = (value: string) => {
-        setCustomInput(value);
         const num = parseInt(value, 10);
         if (!isNaN(num) && num > 0) {
             const clamped = isBackground ? Math.min(num, BACKGROUND_MAX_MINUTES) : num;
+            setCustomInput(String(clamped));
             onSetEstimate(clamped);
+        } else {
+            setCustomInput(value);
         }
     };
 
@@ -296,6 +306,134 @@ function TaskCard({
         lt.estimatedMinutes === minutes && customInput === '';
 
     const isCustom = lt.estimatedMinutes !== null && !ESTIMATE_PRESETS.includes(lt.estimatedMinutes);
+
+    const categoryPills = (
+        <div className="flex items-center gap-1.5 flex-wrap">
+            {TYPE_OPTIONS.map((opt) => (
+                <button
+                    key={opt.value}
+                    onClick={() => onCategorize(opt.value)}
+                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors cursor-pointer ${lt.type === opt.value
+                        ? 'bg-accent text-white border-accent'
+                        : 'border-border text-text-light hover:border-accent hover:text-accent'
+                        }`}
+                    title={opt.description}
+                >
+                    {opt.label}
+                </button>
+            ))}
+            {isBackground && (
+                <button
+                    onClick={onToggleHabit}
+                    className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${lt.isHabit
+                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700'
+                        : 'border-border text-text-light hover:border-amber-400 hover:text-amber-600'
+                        }`}
+                    title={lt.isHabit ? 'Marked as habit — click to unmark' : 'Mark as recurring habit'}
+                >
+                    🔄 Habit
+                </button>
+            )}
+        </div>
+    );
+
+    const estimateSection = lt.type !== 'unclassified' && (
+        <div className="space-y-1.5">
+            {!horizontal && (
+                <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
+                    ⏱ Time estimate
+                </span>
+            )}
+            <div className="flex items-center gap-1.5 flex-wrap">
+                {horizontal && (
+                    <span className="text-[10px] font-medium text-text-light uppercase tracking-wider mr-1">
+                        ⏱
+                    </span>
+                )}
+                {ESTIMATE_PRESETS.map((minutes) => {
+                    const disabled = isBackground && minutes > BACKGROUND_MAX_MINUTES;
+                    return (
+                        <button
+                            key={minutes}
+                            onClick={() => handlePreset(minutes)}
+                            disabled={disabled}
+                            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${disabled
+                                ? 'border-border text-text-light/40 cursor-not-allowed'
+                                : isPresetSelected(minutes)
+                                    ? 'bg-accent text-white border-accent'
+                                    : 'border-border text-text-light hover:border-accent hover:text-accent cursor-pointer'
+                                }`}
+                        >
+                            {minutes >= 60 ? `${minutes / 60}hr` : `${minutes}m`}
+                        </button>
+                    );
+                })}
+                <input
+                    type="number"
+                    min={1}
+                    max={isBackground ? BACKGROUND_MAX_MINUTES : undefined}
+                    placeholder="min"
+                    value={isCustom && customInput === '' ? lt.estimatedMinutes ?? '' : customInput}
+                    onChange={(e) => handleCustomEstimate(e.target.value)}
+                    className={`w-16 px-2 py-1 text-xs rounded-lg border text-center transition-colors ${isCustom
+                        ? 'border-accent bg-accent/5'
+                        : 'border-border'
+                        }`}
+                />
+            </div>
+
+            {/* Background cap message */}
+            {isBackground && (
+                <p className="text-[10px] text-text-light">
+                    Capped at 30 min per scheduling (can be scheduled multiple times/day)
+                </p>
+            )}
+
+            {/* Over 1hr nudge */}
+            {lt.estimatedMinutes !== null && lt.estimatedMinutes > 60 && !isBackground && (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 mt-1">
+                    <p className="text-xs text-amber-800 dark:text-amber-300">
+                        This task is over an hour. Create a new task for the overflow.{' '}
+                        <button
+                            onClick={onOpenTaskPanel}
+                            className="font-medium underline hover:no-underline cursor-pointer"
+                        >
+                            Open task manager →
+                        </button>
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+
+    if (horizontal) {
+        return (
+            <div className={`rounded-lg border bg-card overflow-hidden ${isStale ? 'opacity-50 border-border' : 'border-border'}`}>
+                <div className="px-4 py-3 flex items-center gap-4 flex-wrap">
+                    {/* Title */}
+                    <span className={`text-sm font-medium min-w-0 truncate ${isStale ? 'italic' : ''}`}>
+                        {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
+                        {title}
+                    </span>
+                    {isStale && (
+                        <button onClick={onUnlink} className="text-xs text-red-500 hover:underline cursor-pointer flex-shrink-0">Remove</button>
+                    )}
+                    {!isStale && (
+                        <>
+                            <div className="h-4 w-px bg-border flex-shrink-0" />
+                            {categoryPills}
+                            {lt.type !== 'unclassified' && (
+                                <>
+                                    <div className="h-4 w-px bg-border flex-shrink-0" />
+                                    {estimateSection}
+                                </>
+                            )}
+                        </>
+                    )}
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className={`rounded-lg border bg-card overflow-hidden ${isStale ? 'opacity-50 border-border' : 'border-border'}`}>
@@ -318,91 +456,8 @@ function TaskCard({
 
                 {!isStale && (
                     <>
-                        {/* Categorization pills + habit toggle */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                            {TYPE_OPTIONS.map((opt) => (
-                                <button
-                                    key={opt.value}
-                                    onClick={() => onCategorize(opt.value)}
-                                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors cursor-pointer ${lt.type === opt.value
-                                        ? 'bg-accent text-white border-accent'
-                                        : 'border-border text-text-light hover:border-accent hover:text-accent'
-                                        }`}
-                                    title={opt.description}
-                                >
-                                    {opt.label}
-                                </button>
-                            ))}
-                            {isBackground && (
-                                <button
-                                    onClick={onToggleHabit}
-                                    className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${lt.isHabit
-                                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700'
-                                        : 'border-border text-text-light hover:border-amber-400 hover:text-amber-600'
-                                        }`}
-                                    title={lt.isHabit ? 'Marked as habit — click to unmark' : 'Mark as recurring habit'}
-                                >
-                                    🔄 Habit
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Time estimate */}
-                        {lt.type !== 'unclassified' && (
-                            <div className="space-y-1.5">
-                                <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
-                                    ⏱ Time estimate
-                                </span>
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                    {ESTIMATE_PRESETS.map((minutes) => {
-                                        const disabled = isBackground && minutes > BACKGROUND_MAX_MINUTES;
-                                        return (
-                                            <button
-                                                key={minutes}
-                                                onClick={() => handlePreset(minutes)}
-                                                disabled={disabled}
-                                                className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${disabled
-                                                    ? 'border-border text-text-light/40 cursor-not-allowed'
-                                                    : isPresetSelected(minutes)
-                                                        ? 'bg-accent text-white border-accent'
-                                                        : 'border-border text-text-light hover:border-accent hover:text-accent cursor-pointer'
-                                                    }`}
-                                            >
-                                                {minutes >= 60 ? `${minutes / 60}hr` : `${minutes}m`}
-                                            </button>
-                                        );
-                                    })}
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={isBackground ? BACKGROUND_MAX_MINUTES : undefined}
-                                        placeholder="min"
-                                        value={isCustom && customInput === '' ? lt.estimatedMinutes ?? '' : customInput}
-                                        onChange={(e) => handleCustomEstimate(e.target.value)}
-                                        className={`w-16 px-2 py-1 text-xs rounded-lg border text-center transition-colors ${isCustom
-                                            ? 'border-accent bg-accent/5'
-                                            : 'border-border'
-                                            }`}
-                                    />
-                                </div>
-
-                                {/* Background cap message */}
-                                {isBackground && (
-                                    <p className="text-[10px] text-text-light">
-                                        Capped at 30 min per scheduling (can be scheduled multiple times/day)
-                                    </p>
-                                )}
-
-                                {/* Over 1hr nudge */}
-                                {lt.estimatedMinutes !== null && lt.estimatedMinutes > 60 && !isBackground && (
-                                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 mt-1">
-                                        <p className="text-xs text-amber-800 dark:text-amber-300">
-                                            This task is over an hour. Consider breaking it into smaller parts using the task panel →
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                        {categoryPills}
+                        {estimateSection}
                     </>
                 )}
             </div>

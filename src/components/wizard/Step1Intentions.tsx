@@ -1,19 +1,40 @@
 import { useState, useRef, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
+import { useTodoistData } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
+import type { LinkedTask } from '../../types';
 
 export function Step1Intentions() {
     const { plan, settings, dispatch } = useDayPlan();
+    const { taskMap } = useTodoistData();
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
         () => plan.intentions.some((i) => i.brokenDown || i.linkedTaskIds.length > 0),
     );
+    const [collapsedIntentions, setCollapsedIntentions] = useState<Set<string>>(() => new Set());
+    const [currentTasksCollapsed, setCurrentTasksCollapsed] = useState(false);
+
+    const toggleCollapsed = useCallback((id: string) => {
+        setCollapsedIntentions((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const getTaskTitle = useCallback((todoistId: string, linkedTasks: LinkedTask[]) => {
+        const fromTodoist = taskMap.get(todoistId)?.content;
+        if (fromTodoist) return fromTodoist;
+        const lt = linkedTasks.find((t) => t.todoistId === todoistId);
+        return lt?.titleSnapshot ?? todoistId;
+    }, [taskMap]);
 
     // Inline editing for the current mapping intention
     const [editingTitle, setEditingTitle] = useState(false);
@@ -239,37 +260,104 @@ export function Step1Intentions() {
                                 </div>
                             </div>
 
-                            {/* Already mapped */}
+                            {/* Already mapped — collapsible panels */}
                             {brokenDownCount > 0 && (
-                                <div className="space-y-1">
+                                <div className="space-y-2">
                                     {plan.intentions
                                         .filter((i) => i.brokenDown)
-                                        .map((intention) => (
-                                            <button
-                                                key={intention.id}
-                                                onClick={() => dispatch({ type: 'MARK_BROKEN_DOWN', intentionId: intention.id, brokenDown: false })}
-                                                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-light w-full text-left rounded-lg hover:bg-surface-dark/50 transition-colors cursor-pointer group"
-                                                title="Click to remap this intention"
-                                            >
-                                                <svg
-                                                    className="w-4 h-4 text-success flex-shrink-0"
-                                                    fill="none"
-                                                    viewBox="0 0 24 24"
-                                                    stroke="currentColor"
-                                                    strokeWidth={2}
+                                        .map((intention) => {
+                                            const isCollapsed = collapsedIntentions.has(intention.id);
+                                            const linkedTasks = plan.linkedTasks.filter(
+                                                (lt) => lt.intentionId === intention.id,
+                                            );
+                                            const completedCount = linkedTasks.filter((lt) => lt.completed).length;
+
+                                            return (
+                                                <div
+                                                    key={intention.id}
+                                                    className="rounded-lg border border-success/30 bg-card overflow-hidden"
                                                 >
-                                                    <path
-                                                        strokeLinecap="round"
-                                                        strokeLinejoin="round"
-                                                        d="M5 13l4 4L19 7"
-                                                    />
-                                                </svg>
-                                                <span className="line-through flex-1">{intention.title}</span>
-                                                <span className="text-[11px] text-text-light/0 group-hover:text-text-light/60 transition-colors">
-                                                    remap
-                                                </span>
-                                            </button>
-                                        ))}
+                                                    {/* Header row */}
+                                                    <div className="flex items-center gap-2 px-3 py-2">
+                                                        <button
+                                                            onClick={() => toggleCollapsed(intention.id)}
+                                                            className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer group"
+                                                        >
+                                                            {/* Chevron + tick */}
+                                                            <span className="flex items-center gap-1 flex-shrink-0">
+                                                                <svg
+                                                                    className={`w-3 h-3 text-text-light transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                                                                    fill="none"
+                                                                    viewBox="0 0 24 24"
+                                                                    stroke="currentColor"
+                                                                    strokeWidth={2}
+                                                                >
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                                                </svg>
+                                                                <svg
+                                                                    className="w-4 h-4 text-success flex-shrink-0"
+                                                                    fill="none"
+                                                                    viewBox="0 0 24 24"
+                                                                    stroke="currentColor"
+                                                                    strokeWidth={2}
+                                                                >
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                            </span>
+                                                            <span className="text-sm font-medium text-text flex-1 min-w-0 truncate">
+                                                                {intention.title}
+                                                            </span>
+                                                        </button>
+                                                        <span className="text-[10px] text-text-light tabular-nums flex-shrink-0">
+                                                            {linkedTasks.length} task{linkedTasks.length !== 1 ? 's' : ''}
+                                                            {completedCount > 0 && (
+                                                                <span className="ml-1 text-success">
+                                                                    · 🎉 {completedCount}
+                                                                </span>
+                                                            )}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => dispatch({ type: 'MARK_BROKEN_DOWN', intentionId: intention.id, brokenDown: false })}
+                                                            className="text-[11px] text-text-light hover:text-accent transition-colors cursor-pointer flex-shrink-0 px-1.5 py-0.5 rounded hover:bg-surface-dark/50"
+                                                            title="Remap this intention"
+                                                        >
+                                                            remap
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Nested task list */}
+                                                    {!isCollapsed && linkedTasks.length > 0 && (
+                                                        <div className="border-t border-border/50 px-3 py-2 space-y-1">
+                                                            {linkedTasks.map((lt) => {
+                                                                const title = getTaskTitle(lt.todoistId, plan.linkedTasks);
+                                                                return (
+                                                                    <div
+                                                                        key={lt.todoistId}
+                                                                        className="flex items-center gap-2 py-0.5 text-xs"
+                                                                    >
+                                                                        <span className="w-1 h-1 rounded-full bg-border flex-shrink-0" />
+                                                                        {lt.completed ? (
+                                                                            <span className="line-through text-text-light flex-1 min-w-0 truncate">
+                                                                                🎉 {title}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="text-text flex-1 min-w-0 truncate">
+                                                                                {title}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                    {!isCollapsed && linkedTasks.length === 0 && (
+                                                        <div className="border-t border-border/50 px-3 py-2">
+                                                            <span className="text-xs text-text-light">No tasks linked</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                 </div>
                             )}
 
@@ -300,14 +388,69 @@ export function Step1Intentions() {
                                             </h3>
                                         )}
                                         <p className="text-sm text-text-light mt-1">
-                                            Break this down into actionable tasks and link them using the checkboxes →
+                                            Break this down into actionable tasks and link them to intentions in the todolist →
                                         </p>
-                                        {currentMappingIntention.linkedTaskIds.length > 0 && (
-                                            <p className="text-xs text-accent mt-1">
-                                                {currentMappingIntention.linkedTaskIds.length} task{currentMappingIntention.linkedTaskIds.length !== 1 ? 's' : ''} linked
-                                            </p>
-                                        )}
                                     </div>
+
+                                    {/* Linked tasks for current intention — collapsible */}
+                                    {currentMappingIntention.linkedTaskIds.length > 0 && (() => {
+                                        const currentLinked = plan.linkedTasks.filter(
+                                            (lt) => lt.intentionId === currentMappingIntention.id,
+                                        );
+                                        const completedCount = currentLinked.filter((lt) => lt.completed).length;
+
+                                        return (
+                                            <div className="rounded-lg border border-border overflow-hidden">
+                                                <button
+                                                    onClick={() => setCurrentTasksCollapsed(!currentTasksCollapsed)}
+                                                    className="flex items-center gap-2 w-full px-3 py-2 text-left cursor-pointer hover:bg-surface-dark/30 transition-colors"
+                                                >
+                                                    <svg
+                                                        className={`w-3 h-3 text-text-light transition-transform ${currentTasksCollapsed ? '' : 'rotate-90'}`}
+                                                        fill="none"
+                                                        viewBox="0 0 24 24"
+                                                        stroke="currentColor"
+                                                        strokeWidth={2}
+                                                    >
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                                    </svg>
+                                                    <span className="text-xs text-accent font-medium">
+                                                        {currentLinked.length} task{currentLinked.length !== 1 ? 's' : ''} linked
+                                                    </span>
+                                                    {completedCount > 0 && (
+                                                        <span className="text-xs text-success">
+                                                            (🎉 {completedCount} completed)
+                                                        </span>
+                                                    )}
+                                                </button>
+                                                {!currentTasksCollapsed && (
+                                                    <div className="border-t border-border/50 px-3 py-2 space-y-1">
+                                                        {currentLinked.map((lt) => {
+                                                            const title = getTaskTitle(lt.todoistId, plan.linkedTasks);
+                                                            return (
+                                                                <div
+                                                                    key={lt.todoistId}
+                                                                    className="flex items-center gap-2 py-0.5 text-xs"
+                                                                >
+                                                                    <span className="w-1 h-1 rounded-full bg-border flex-shrink-0" />
+                                                                    {lt.completed ? (
+                                                                        <span className="line-through text-text-light flex-1 min-w-0 truncate">
+                                                                            🎉 {title}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-text flex-1 min-w-0 truncate">
+                                                                            {title}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+
                                     <Button onClick={markCurrentBrokenDown} size="sm">
                                         Done — {upcomingCount > 0 ? 'next' : 'finish'}
                                     </Button>
@@ -358,6 +501,7 @@ export function Step1Intentions() {
                         <TodoistPanel
                             mode="full"
                             onSetup={() => setShowSetup(true)}
+                            showFilterToggle
                             linking={mappingStarted && currentMappingIntention ? {
                                 linkingIntentionId: currentMappingIntention.id,
                                 linkedTaskIds: currentMappingIntention.linkedTaskIds,

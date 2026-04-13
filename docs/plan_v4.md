@@ -4,7 +4,7 @@
 
 Shift Orchestrate's unit of scheduling and categorization from **intentions** to **Todoist tasks**. Intentions remain as high-level grouping headers, but individual tasks linked during Step 1 mapping become the primary items that are categorized (main/background) in Step 2 and scheduled into sessions in Step 3.
 
-The wizard now has **4 steps** (Intentions → Categorize → Schedule → Music). The original Step 3 (Main Schedule) and Step 4 (Background Schedule) were merged into a single unified Schedule step with a two-phase layout. Step 5 (Start Music) became Step 4.
+The wizard now has **4 steps** (Intentions → Refine → Schedule → Music). The original Step 3 (Main Schedule) and Step 4 (Background Schedule) were merged into a single unified Schedule step with a two-phase layout. Step 5 (Start Music) became Step 4.
 
 This requires changes to the data model, reducer, all 4 wizard steps, the TodoistPanel, and the dashboard.
 
@@ -27,7 +27,7 @@ v4 resolves this by making **Todoist tasks the first-class citizens** of categor
 | Scheduling granularity | Tasks grouped under parent intentions | Preserves context about why each task exists |
 | Categorization level | Task-level only (remove intention-level type) | An intention can have both main and background tasks |
 | Task data storage | Store only Todoist task IDs; fetch titles from API at runtime | Always current; single source of truth in Todoist |
-| Stale task handling | Greyed out + ⚠ icon; user removes manually | User stays in control; no silent data loss |
+| Stale task handling | Completed tasks preserved with `titleSnapshot` + 🎉; deleted tasks auto-unlinked; greyed out + ⚠ icon for truly stale | Completed tasks remain visible in their scheduled sessions (strikethrough + party emoji). Only deleted/missing non-completed tasks are auto-cleaned. |
 | Step 2 layout | Intentions as collapsible headers, tasks underneath | Clear grouping for categorization |
 
 ---
@@ -65,6 +65,7 @@ export interface LinkedTask {
     assignedSessions: string[];                           // session slot IDs
     completed: boolean;
     isHabit: boolean;
+    titleSnapshot?: string;                               // cached title for completed tasks no longer in Todoist
 }
 ```
 
@@ -113,7 +114,8 @@ Components resolve `linkedTask.todoistId` → display title via this map. If an 
 | `TOGGLE_TASK_HABIT` | `{ todoistId }` | Toggles `LinkedTask.isHabit` |
 | `ASSIGN_TASK` | `{ todoistId, sessionId }` | Adds to `taskSessions[sessionId]`. **Main** tasks: exclusive (removed from other sessions first). **Background** tasks: multi-session allowed. Updates `LinkedTask.assignedSessions`. |
 | `UNASSIGN_TASK` | `{ todoistId, sessionId }` | Removes from `taskSessions[sessionId]` and `LinkedTask.assignedSessions` |
-| `TOGGLE_TASK_COMPLETE` | `{ todoistId }` | Toggles `LinkedTask.completed` |
+| `TOGGLE_TASK_COMPLETE` | `{ todoistId, titleSnapshot? }` | Toggles `LinkedTask.completed`; optionally saves `titleSnapshot` for display after Todoist removal |
+| `SYNC_TASK_SNAPSHOTS` | `{ snapshots: Record<string, string> }` | Bulk-updates `titleSnapshot` for matching linked tasks; keeps cached names fresh on every Todoist fetch |
 | `REORDER_SESSION_TASKS` | `{ sessionId, taskIds }` | Reorders tasks within a session |
 
 ### 2.2 — Removed / Replaced Actions
@@ -188,17 +190,11 @@ Handle the v3 → v4 migration path:
 - **Individual remap** — each mapped intention is clickable to remap individually (sets its `brokenDown` flag back to false)
 - **"Want to start over? Restart mapping"** — standalone text link at the bottom of Phase 2, resets all intentions' `brokenDown` flags
 
-### 3.2 — Step 2: Categorize
+### 3.2 — Step 2: Refine
 
-**File:** `src/components/wizard/Step2Categorize.tsx` — **Complete rewrite**
+**File:** `src/components/wizard/Step2Refine.tsx` (renamed from `Step2Categorize.tsx`)
 
-- Intentions render as **collapsible card sections** (heading = intention title)
-- Under each intention: list of linked tasks (titles resolved via Todoist task cache)
-  - Each task has **main / background** radio pills
-  - Background tasks show a **habit toggle** (🔄)
-- **Stale tasks** (Todoist ID not found in API response): greyed out, ⚠ icon, "Remove" button
-- Intentions with **0 linked tasks**: show "No tasks linked" message with a prompt to go back to Step 1
-- **`canAdvance`:** All linked tasks across all intentions must have `type !== 'unclassified'`
+Per-intention sequential flow combining categorization, time estimation, and TodoistPanel for sub-task creation. See **v4.1** section below for full specification.
 
 ### 3.3 — Step 3: Schedule (Merged Main + Background)
 
@@ -215,13 +211,18 @@ Main and background scheduling merged into a single step with a **two-phase layo
   - Assigned background tasks — click to unassign
   - Unassigned main tasks — click to assign (exclusive: removes from other sessions)
   - Unassigned background tasks — click to assign (multi-session allowed)
-- "Schedule times →" button transitions to Phase 2
+- "Schedule times →" button transitions to Phase 2 — **disabled until at least one task is assigned to a session**
+
+**Phase gating:**
+- **Phase 1 → Phase 2**: blocked until at least one task assignment exists (`hasAnyAssignment` check)
+- **Phase 2 → Step 4 (Music)**: the WizardLayout "Continue" button and the Music step pill are both hidden/disabled until phase 2 is reached (`canAdvance={phase === 'time'}`, `hideNext={phase === 'assign'}`)
 
 **Phase 2 — Time scheduling with Todoist + Calendar:**
 - "← Edit assignments" link returns to Phase 1
 - **Horizontal session summary** — compact cards showing session name, time, and assigned task chips
-- **Side-by-side layout:** TodoistPanel (2/5 width, filtered to linked tasks via `filterToTaskIds`) + GoogleCalendarEmbed (3/5 width)
+- **Side-by-side layout:** TodoistPanel (2/5 width, `showFilterToggle defaultFiltered`) + GoogleCalendarEmbed (3/5 width)
 - User schedules specific times for tasks in Todoist, reflected in the embedded calendar
+- **Estimate-based auto-fill**: when a user enters a start time in the TodoistPanel time picker, the end time is automatically computed from the task's `estimatedMinutes` (if set). The user can still manually adjust it.
 
 **Key behaviors:**
 - Main tasks are **exclusive** to one session (assigning removes from other sessions)
@@ -245,8 +246,9 @@ Main and background scheduling merged into a single step with a **two-phase layo
 The `SessionTimeline` export now uses the shared **`SessionTimelineBar`** component (same as the wizard’s Phase 1 timeline) instead of the previous card-based layout. It passes `currentSessionId` for the pulse indicator on the active session.
 
 **`CurrentSession`:** Remains as a detailed card view with `SessionCard`, showing the active session with drag-to-reorder, completion checkboxes, and nudge banners. Uses `TaskRow` component with:
-- Display title resolved from Todoist task cache
-- Stale indicator if task not found in cache
+- Display title resolved from Todoist task cache, falling back to `titleSnapshot`, then raw ID
+- Completed tasks: 🎉 emoji + strikethrough title (not treated as stale even when absent from Todoist)
+- Truly stale tasks (not in Todoist AND not completed): greyed out + ⚠ icon
 - Parent intention as a small label/badge
 - Checkbox toggles `TOGGLE_TASK_COMPLETE`
 - Drag handle for reorder within session
@@ -277,7 +279,7 @@ Extracted reusable timeline visualization used by both Step 3 (wizard) and Sessi
   4. **Current Session** — moved below timeline
   5. **Task Manager** (Todoist) — collapsible, with **Linked Tasks / All Tasks toggle**
   6. **Calendar** (Google) — collapsible
-- **Task Manager filter toggle:** Two pill buttons ("Linked Tasks" / "All Tasks") switch between filtered view (only tasks mapped to intentions via `filterToTaskIds`) and full Todoist tree. Defaults to "Linked Tasks".
+- **Task Manager filter toggle:** Uses TodoistPanel's built-in `showFilterToggle defaultFiltered` props. Toggle pills rendered inside the panel header. Defaults to "Linked Tasks".
 
 ### 4.3 — Saved Sessions
 
@@ -312,6 +314,10 @@ interface TodoistPanelProps {
     linking?: LinkingProps;
     /** When set, only show projects that contain tasks with these IDs (plus their ancestors). */
     filterToTaskIds?: Set<string>;
+    /** Show an "All Tasks / Linked Tasks" toggle in the header. Overrides filterToTaskIds. */
+    showFilterToggle?: boolean;
+    /** Default state for the filter toggle (default: false = show all). */
+    defaultFiltered?: boolean;
 }
 ```
 
@@ -322,13 +328,22 @@ interface TodoistPanelProps {
 - **Completion button stays visible** (always available, not hidden during linking)
 - Tasks linked to other intentions show the owner intention's title in amber
 
-### 5.2 — Task Tree Filtering
+### 5.2 — Task Tree Filtering & Internalized Filter Toggle
 
-New `filterToTaskIds?: Set<string>` prop on `TodoistPanel`. When set, the project tree is pruned via `pruneTree()` to only include nodes (projects, sections, tasks) that contain — directly or via descendants — at least one task in the provided set. Ancestor projects are preserved to maintain the tree structure.
+The `filterToTaskIds?: Set<string>` prop allows external filtering. Additionally, the panel supports a **built-in filter toggle** via `showFilterToggle` and `defaultFiltered` props:
+
+- When `showFilterToggle` is set, the panel renders "All Tasks" / "Linked Tasks" pills in its header bar (next to the Todoist label)
+- The panel computes `linkedTaskIds` internally from `plan.linkedTasks` — consumers no longer need to compute and pass this set
+- The toggle is only shown when linked tasks exist (`hasLinkedTasks` guard)
+- `defaultFiltered` controls the initial toggle state (default: `false` = show all tasks)
 
 **Used by:**
-- **Step 3 Phase 2** — filters to only show tasks mapped to intentions (`linkedTaskIds`)
-- **Dashboard Task Manager** — "Linked Tasks" toggle filters to `linkedTaskIds`, "All Tasks" shows full tree
+- **Step 1** — `showFilterToggle` (defaults to all tasks)
+- **Step 2 (Refine)** — `showFilterToggle` (defaults to all tasks)
+- **Step 3 Phase 2** — `showFilterToggle defaultFiltered` (starts filtered to linked tasks)
+- **Dashboard Task Manager** — `showFilterToggle defaultFiltered` (starts filtered to linked tasks)
+
+The `filterToTaskIds` prop remains available for cases that need custom external filtering.
 
 ### 5.3 — Persistent Linked Task Indicators (post-plan)
 
@@ -347,7 +362,30 @@ Task titles in the TodoistPanel are click-to-edit. Clicking a task title opens a
 
 Completing a task fires a `canvas-confetti` burst originating from the complete button's position. Dependency: `canvas-confetti` package.
 
-### 5.2 — Expose Task Lookup Map
+### 5.6 — Stale Task Handling (post-plan)
+
+The TodoistPanel handles completed and deleted linked tasks through three mechanisms:
+
+**Proactive title snapshot sync:**
+- A `useEffect` runs after every successful Todoist fetch. It iterates `plan.linkedTasks` and, for each task still present in the fetched results, updates `titleSnapshot` to the current `content` via a `SYNC_TASK_SNAPSHOTS` reducer action. This ensures a displayable name is always persisted, even if the task later disappears.
+
+**Completed tasks** are preserved in the plan:
+- **`handleCompleteTask`** (in-panel completion): dispatches `TOGGLE_TASK_COMPLETE` with a `titleSnapshot` (from the Todoist cache) before calling the Todoist complete API. The task stays in `plan.linkedTasks` and remains visible in its scheduled sessions with strikethrough + 🎉 emoji.
+- **Reactive cleanup** (externally-completed tasks): a one-time `useEffect` runs after the initial fetch and snapshot sync. Linked tasks that are **not in Todoist AND not already marked completed** are presumed externally completed — they are marked completed via `TOGGLE_TASK_COMPLETE` (using the already-persisted `titleSnapshot`) rather than being unlinked. This preserves session tracking.
+- **Dashboard checkbox**: the SessionTimeline's completion checkbox passes the already-resolved `title` prop as `titleSnapshot`, ensuring the name is captured regardless of completion path.
+
+**Deleted tasks** are unlinked from the plan:
+- **`handleDeleteTask`** wrapper traverses the sub-task tree to find all descendants, then dispatches `UNLINK_TASK` for every affected task (handles cascade deletes).
+
+**Title fallback chain** (used by all rendering paths):
+`taskMap.get(id)?.content` → `lt.titleSnapshot` → `lt.todoistId`
+This chain is applied in: SessionTimeline `TaskRow`, SessionTimeline nudge banner, `SessionTimelineBar`, Step2Refine `TaskCard`, Step3Schedule `getTaskTitle()`, and CheckInModal.
+
+### 5.7 — Estimate-Based Schedule Auto-Fill (post-plan)
+
+The TodoistPanel maintains an internal `estimateMap` (todoistId → estimatedMinutes) computed from `plan.linkedTasks`. When a user enters a start time in the inline time picker, the end time is automatically computed by adding the task's estimate. The auto-filled value can be manually overridden.
+
+### 5.8 — Expose Task Lookup Map
 
 **File:** `src/hooks/useTodoist.ts`
 
@@ -397,12 +435,12 @@ v1 (tasks/taskSessions, 6-step wizard)
 | `src/types/index.ts` | Add `LinkedTask`, modify `Intention`, modify `DayPlan` |
 | `src/context/DayPlanContext.tsx` | New actions, remove old actions, migration, persistence |
 | `src/components/wizard/Step1Intentions.tsx` | Linking mode integration with TodoistPanel |
-| `src/components/wizard/Step2Categorize.tsx` | **Complete rewrite** — task-level categorization |
-| `src/components/wizard/Step3Schedule.tsx` | **Merged** main + background scheduling with two-phase layout (was `Step3ScheduleMain.tsx`) |
+| `src/components/wizard/Step2Refine.tsx` | **Complete rewrite** — per-intention flow with categorization + estimation (renamed from `Step2Categorize.tsx`) |
+| `src/components/wizard/Step3Schedule.tsx` | **Merged** main + background scheduling with two-phase layout, phase gating (was `Step3ScheduleMain.tsx`) |
 | ~~`src/components/wizard/Step4ScheduleBackground.tsx`~~ | **Deleted** — merged into Step3Schedule |
 | `src/components/wizard/Step4StartMusic.tsx` | Update completion counter (was `Step5StartMusic.tsx`) |
 | `src/components/ui/SessionTimelineBar.tsx` | **NEW** — reusable proportional timeline visualization |
-| `src/components/todoist/TodoistPanel.tsx` | Linking mode (Link/Unlink buttons, highlighting), persistent link indicators, inline editing, confetti |
+| `src/components/todoist/TodoistPanel.tsx` | Linking mode, persistent link indicators, inline editing, confetti, internalized filter toggle, stale task auto-cleanup, estimate-based auto-fill |
 | `src/hooks/useTodoist.ts` | Expose `taskMap`, `updateTask` accepts `content` field |
 | `src/components/dashboard/SessionTimeline.tsx` | `SessionTimeline` uses `SessionTimelineBar`; `CurrentSession` keeps `SessionCard`/`TaskRow` |
 | `src/components/dashboard/Dashboard.tsx` | Completion counter, reordered layout, Task Manager filter toggle |
@@ -460,11 +498,17 @@ The following changes were made after the core v4 implementation, refining the U
 | 5 | **Edit intentions navigation** | Step1Intentions Phase 2 | "← Want to change intentions?" subtle text link above mapping progress, returns to Phase 1 for intention editing. |
 | 6 | **Confetti on completion** | TodoistPanel `TaskRow` | `canvas-confetti` burst on the complete button click, originating from button position. New dependency: `canvas-confetti`. |
 | 7 | **Persistent linked task indicators** | TodoistPanel | Reads `plan.linkedTasks` + `plan.intentions` from `useDayPlan()` context. Computes `persistentLinks` map (todoistId → intention title) via `useMemo`. Threaded through component tree. Amber "linked to: {title}" label and accent highlight show at all times — not just during linking mode. Survives reloads via localStorage persistence. |
-| 8 | **Merged Step 3 + Step 4** | Wizard | Combined main and background scheduling into a single Step 3 with a two-phase layout. Wizard reduced from 5 to 4 steps. File renames: `Step3ScheduleMain.tsx` → `Step3Schedule.tsx`, `Step5StartMusic.tsx` → `Step4StartMusic.tsx`. `Step4ScheduleBackground.tsx` deleted. `WizardLayout` updated: `TOTAL_STEPS=4`, labels `['Intentions','Categorize','Schedule','Music']`. |
+| 8 | **Merged Step 3 + Step 4** | Wizard | Combined main and background scheduling into a single Step 3 with a two-phase layout. Wizard reduced from 5 to 4 steps. File renames: `Step3ScheduleMain.tsx` → `Step3Schedule.tsx`, `Step5StartMusic.tsx` → `Step4StartMusic.tsx`. `Step4ScheduleBackground.tsx` deleted. `WizardLayout` updated: `TOTAL_STEPS=4`, labels `['Intentions','Refine','Schedule','Music']`. |
 | 9 | **SessionTimelineBar** | `ui/SessionTimelineBar.tsx` | Extracted reusable proportional timeline from Step3Schedule. Used by both the wizard (interactive mode with `onSelectSession`) and the dashboard (read-only with `currentSessionId` pulse). |
-| 10 | **TodoistPanel tree filtering** | TodoistPanel | New `filterToTaskIds` prop with `pruneTree()` utility. Prunes project tree to only show projects containing specified task IDs. Used by Step 3 Phase 2 and Dashboard Task Manager. |
+| 10 | **TodoistPanel tree filtering** | TodoistPanel | New `filterToTaskIds` prop with `pruneTree()` utility. Prunes project tree to only show projects containing specified task IDs. |
 | 11 | **Dashboard layout reorder** | Dashboard | Timeline moved after music rows, Current Session below timeline. Task Manager and Calendar remain collapsible at bottom. |
-| 12 | **Dashboard Task Manager filter toggle** | Dashboard | "Linked Tasks" / "All Tasks" pill toggle on the Task Manager. Defaults to filtered view showing only tasks mapped to intentions. Uses `filterToTaskIds` prop on `TodoistPanel`. |
+| 12 | **Internalized filter toggle** | TodoistPanel | "All Tasks" / "Linked Tasks" toggle pills moved into the TodoistPanel header via `showFilterToggle` and `defaultFiltered` props. Panel computes `linkedTaskIds` internally. Consumers (Step1, Step2, Step3, Dashboard) simplified — no longer manage filter state externally. |
+| 13 | **Step 2 rename** | Wizard | `Step2Categorize.tsx` → `Step2Refine.tsx`, WizardLayout label "Categorize" → "Refine". Reflects combined categorization + estimation purpose. |
+| 14 | **Step 3 phase gating** | Step3Schedule | "Schedule times →" button disabled until tasks are assigned. Music step pill and Continue button hidden until phase 2 is reached. |
+| 15 | **Estimate-based auto-fill** | TodoistPanel | When entering a start time in the schedule picker, end time is auto-computed from the task's `estimatedMinutes`. Internal `estimateMap` computed from `plan.linkedTasks`. |
+| 16 | **Stale task auto-cleanup** | TodoistPanel | Deleting a task in the panel dispatches `UNLINK_TASK`. Handles sub-task cascade for deletes. |
+| 17 | **Completed task preservation** | TodoistPanel, SessionTimeline, types, reducer | Completing a task (via panel, dashboard checkbox, or externally) marks it completed with `titleSnapshot`. Task remains in `plan.linkedTasks` and shows in its scheduled sessions with strikethrough + 🎉. |
+| 18 | **Proactive title snapshot sync** | TodoistPanel, DayPlanContext | New `SYNC_TASK_SNAPSHOTS` action bulk-updates `titleSnapshot` for all linked tasks on every Todoist fetch. Title fallback chain (`taskMap` → `titleSnapshot` → `todoistId`) applied across all rendering paths: SessionTimeline, SessionTimelineBar, Step2Refine, Step3Schedule, CheckInModal. Reactive cleanup marks missing non-completed tasks as completed (instead of unlinking) to handle external completions. |
 
 ### Dependencies Added
 
@@ -474,7 +518,7 @@ The following changes were made after the core v4 implementation, refining the U
 
 ## Open Considerations
 
-1. **Offline fallback:** When Todoist API is unreachable, linked tasks show only IDs (no titles). Consider adding a `titleSnapshot` field to `LinkedTask` — refreshed on every successful fetch, used as fallback display. Small addition but significantly improves resilience. *Decision deferred to implementation.*
+1. ~~**Offline fallback:**~~ **Implemented** — `titleSnapshot` field added to `LinkedTask`. Proactively synced on every Todoist fetch via `SYNC_TASK_SNAPSHOTS` action. Also captured on in-panel completion and from the dashboard checkbox. Used as display fallback across all rendering paths (SessionTimeline, SessionTimelineBar, Step2Refine, Step3Schedule, CheckInModal) when a task is no longer in the Todoist cache.
 
 2. **Re-linking in edit mode:** Returning to Step 1 from the dashboard should reflect current link state and allow modifications without losing scheduling data for unchanged links. Needs careful state management.
 
@@ -527,6 +571,7 @@ export interface LinkedTask {
     completed: boolean;
     isHabit: boolean;
     estimatedMinutes: number | null;              // NEW — null = not yet estimated
+    titleSnapshot?: string;                       // cached title for completed tasks no longer in Todoist
 }
 ```
 
@@ -556,7 +601,7 @@ Existing `LinkedTask` entries (from v4 plans saved before this change) that lack
 
 ## Phase 3: Step 2 Rewrite
 
-**File:** `src/components/wizard/Step2Categorize.tsx` — **Complete rewrite**
+**File:** `src/components/wizard/Step2Refine.tsx` (renamed from `Step2Categorize.tsx`)
 
 ### 3.1 — Layout
 
@@ -689,12 +734,13 @@ Background task chips show estimate with a `×N` multiplier if assigned to multi
 |------|-------------|
 | `src/types/index.ts` | Add `estimatedMinutes` to `LinkedTask` |
 | `src/context/DayPlanContext.tsx` | New `SET_TASK_ESTIMATE` action, update `LINK_TASK` initializer, migration for missing field |
-| `src/components/wizard/Step2Categorize.tsx` | **Complete rewrite** — per-intention flow with categorization + estimation + TodoistPanel |
-| `src/components/wizard/Step3Schedule.tsx` | Estimate badges on task chips, session capacity indicator |
+| `src/components/wizard/Step2Refine.tsx` | **Complete rewrite** — per-intention flow with categorization + estimation + TodoistPanel (renamed from `Step2Categorize.tsx`) |
+| `src/components/wizard/Step3Schedule.tsx` | Estimate badges on task chips, session capacity indicator, phase gating, estimate auto-fill via TodoistPanel |
 | `src/components/dashboard/SessionTimeline.tsx` | Estimate badge on TaskRow |
 | `src/components/dashboard/Dashboard.tsx` | Session total estimate display |
+| `src/components/todoist/TodoistPanel.tsx` | Internalized filter toggle (`showFilterToggle`/`defaultFiltered`), `estimateMap` for auto-fill, stale task auto-cleanup |
 
-**No changes needed:** `src/hooks/useTodoist.ts`, `src/components/todoist/TodoistPanel.tsx` (reuse existing linking mode)
+**No changes needed:** `src/hooks/useTodoist.ts` (reuse existing linking mode)
 
 ---
 
@@ -721,3 +767,126 @@ Background task chips show estimate with a `×N` multiplier if assigned to multi
 9. **Migration:** Load a v4 plan saved before this change (no `estimatedMinutes` on LinkedTasks) → no errors, estimates default to `null`
 10. **Persistence:** Set estimates, refresh page → verify they persist from localStorage
 11. **Session capacity:** Assign tasks totaling >session duration → verify soft over-capacity warning
+12. **Phase gating:** Cannot advance to phase 2 without task assignments; cannot advance to Music step without reaching phase 2
+13. **Schedule auto-fill:** Enter start time for a task with an estimate → verify end time auto-fills based on `estimatedMinutes`
+14. **Completed task preservation (in-panel):** Complete a linked task in the TodoistPanel → verify it stays in `plan.linkedTasks` with `completed: true` and `titleSnapshot` set. Verify it shows in its session with strikethrough + 🎉.
+15. **Completed task preservation (external):** Complete a linked task in the Todoist app → refresh Orchestrate → verify the task is auto-marked completed (not unlinked), retains `titleSnapshot` from the previous sync, and still shows in its session.
+16. **Filter toggle:** Verify "All Tasks" / "Linked Tasks" toggle appears in TodoistPanel header across Step 1, Step 2, Step 3, and Dashboard
+17. **Title snapshot sync:** Link tasks, verify `titleSnapshot` is populated after Todoist fetch. Rename a task in Todoist, refresh → verify `titleSnapshot` updates.
+
+## Plan: Orchestrate v4.2 — TodoistProvider Shared Data Layer
+
+Lift `useTodoist` from a standalone hook (N independent fetch cycles) into a single `TodoistProvider` React context with request deduplication, staleness windowing, localStorage cache for offline resilience, and smart focus refresh. Eliminates up to 12 duplicate API calls on Dashboard load.
+
+---
+
+**Steps**
+
+### Phase 1: TodoistContext + Provider (core)
+1. Create `src/context/TodoistContext.tsx` — **NEW** file. Split into `TodoistDataContext` (tasks, projects, sections, taskMap, loading, error, isConfigured) and `TodoistActionsContext` (CRUD + refresh functions). Provider holds single `useState` for all data, single fetch lifecycle, single `window.focus` listener.
+2. Nest inside DayPlanProvider in App.tsx: `DayPlanProvider > TodoistProvider > AppRoutes`
+3. Refactor useTodoist.ts to thin context consumers: `useTodoistData()` for read-only, `useTodoistActions()` for mutations, `useTodoist()` as combined convenience hook. Keep types (`TodoistTask`, `TodoistProject`, `TodoistSection`) and `validateTodoistToken` here.
+
+### Phase 2: Request deduplication + staleness (*built into Phase 1*)
+4. `inflightRef` pattern — concurrent calls to the same refresh function return the existing promise instead of firing a duplicate. *Parallel with step 5*
+5. `lastFetchedAt` timestamps per resource — skip refresh if last success was <30s ago. `{ force: true }` parameter overrides for manual refresh button.
+
+### Phase 3: localStorage cache (*depends on Phase 1*)
+6. Persist `{ tasks, projects, sections, fetchedAt }` to `orchestrate-todoist-cache` after each successful fetch
+7. Hydrate from cache on provider mount (instant render). If cache <5min old, skip initial fetch. Otherwise, background fetch **without loading spinner** (stale-while-revalidate).
+
+### Phase 4: Move data reconciliation to provider (*depends on Phase 1*)
+8. Move `SYNC_TASK_SNAPSHOTS` effect from TodoistPanel.tsx into `TodoistProvider` — provider has access to both Todoist data and DayPlan `dispatch`
+9. Move stale task cleanup (one-time missing-task-as-completed marking) from TodoistPanel into `TodoistProvider`
+10. Remove both effects (`hasSyncedSnapshots`, `hasCleanedUp`) from TodoistPanel
+
+### Phase 5: Update consumers (*depends on Phases 1–4*)
+11. TodoistPanel.tsx — replace `useTodoist()` with `useTodoistData()` + `useTodoistActions()`. Manual refresh passes `{ force: true }`.
+12. Step2Refine.tsx, Step3Schedule.tsx — replace `useTodoist()` with `useTodoistData()` (only needs `taskMap`). *Parallel with steps 13–14*
+13. SessionTimeline.tsx (both `SessionTimeline` + `CurrentSession`) — replace with `useTodoistData()`
+14. CheckInModal.tsx — replace with `useTodoistData()`
+
+### Phase 6: Smart focus refresh (*built into Phase 1*)
+15. Single `window.focus` listener in the provider. Only refreshes **tasks** on focus (projects/sections rarely change mid-session). Respects 30s staleness window. Silent background fetch — no loading spinner if cached data exists.
+
+---
+
+**Relevant files**
+
+- `src/context/TodoistContext.tsx` — **NEW** — provider with shared state, split contexts, cache, dedup, reconciliation effects
+- useTodoist.ts — gut implementation → thin re-exports from context; keep types and `validateTodoistToken`
+- App.tsx — add `<TodoistProvider>` nesting
+- TodoistPanel.tsx — remove reconciliation effects, switch to context consumers
+- Step2Refine.tsx — `useTodoist()` → `useTodoistData()`
+- Step3Schedule.tsx — `useTodoist()` → `useTodoistData()`
+- SessionTimeline.tsx — 2× `useTodoist()` → `useTodoistData()`
+- CheckInModal.tsx — `useTodoist()` → `useTodoistData()`
+- DayPlanContext.tsx — reference for provider pattern only; **no changes**
+
+**No changes needed:** index.ts, `src/data/*`, wizard logic, DayPlanContext reducer
+
+---
+
+**Verification**
+
+1. `tsc --noEmit` — zero errors
+2. Dashboard with Task Manager open → Network tab shows exactly **3 API calls** (not 12)
+3. Navigate Step 1 → Step 2 → Step 3 → no additional fetches (shared context)
+4. Tab away and back within 30s → no fetch. >30s → single background tasks fetch
+5. Manual refresh button → force-fetches all 3 resources regardless of staleness
+6. Kill network → reload → cached data renders immediately, no spinner; error banner on failed refresh
+7. Complete task in TodoistPanel → SessionTimeline + CurrentSession reflect change immediately
+8. Create task in Step 1 → Step 2 shows it without refetch
+9. `SYNC_TASK_SNAPSHOTS` fires after fetches (from provider, not panel)
+10. Stale task cleanup still marks missing tasks as completed on first load
+11. Stale-while-revalidate: with cached data, reload → instant render, silent background refresh
+12. Rapid focus events → Network shows only 1 request per resource (dedup)
+
+---
+
+**Decisions**
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Split vs single context | Two contexts (data + actions) | Prevents action ref changes from re-rendering read-only consumers |
+| Provider nesting | `TodoistProvider` inside `DayPlanProvider` | Needs `settings` for API token and `dispatch` for snapshot sync |
+| Cache TTL | 5min (hydration-skip), 30s (focus-skip) | Reasonably fresh without obsessive fetching |
+| Focus refresh scope | Tasks only (not projects/sections) | Projects/sections rarely change mid-session |
+| Reconciliation scope | Global (provider-level) | Snapshots should always be fresh, even without TodoistPanel mounted |
+| useTodoist.ts | Kept as thin re-export | Backward compat; can inline later |
+| Loading spinner | Only when no cached data AND fetch in progress | Stale-while-revalidate avoids loading flash |
+
+---
+
+## v4.3 — Completed Task Visibility in Wizard Steps
+
+### Problem
+
+Completed linked tasks (strikethrough + 🎉) display correctly in the dashboard's `SessionTimeline` and `CurrentSession` components, but the wizard steps have no awareness of completion state:
+
+- **Step 1 (Intentions):** The "X tasks linked" counter doesn't distinguish completed tasks.
+- **Step 2 (Refine):** The `TaskCard` renders full categorization/estimation controls for completed tasks. The `canAdvanceStep` and `canAdvanceIntention` checks require _all_ tasks to be categorized and estimated — blocking progress if any completed task hasn't been categorized.
+- **Step 3 (Schedule):** Completed tasks appear in the unassigned/assigned chip lists as normal tasks, remaining interactive (assignable/unassignable) even though scheduling a completed task is meaningless.
+
+### Changes
+
+**Step 1: `Step1Intentions.tsx`**
+- The "X tasks linked" line in the current mapping intention card now shows a completed count when > 0: `"3 tasks linked (🎉 1 completed)"`.
+
+**Step 2: `Step2Refine.tsx`**
+- **Advancement checks:** Both `canAdvanceStep` and `canAdvanceIntention` now exempt completed tasks from the `type !== 'unclassified' && estimatedMinutes !== null` requirement. A completed task always passes the gate.
+- **TaskCard:** When `linkedTask.completed` is true, the card renders a compact read-only row (🎉 + strikethrough title + "Completed" badge) instead of the full categorization/estimation form. No main/background pills, no time estimate controls.
+
+**Step 3: `Step3Schedule.tsx`**
+- **Task filtering:** `mainTasks` and `backgroundTasks` now exclude completed tasks (`!lt.completed`). A new `completedTasks` list is derived separately.
+- **Completed summary:** A "Completed" section renders above the unassigned tasks area, showing completed tasks as strikethrough chips with 🎉 emoji and a green-tinted style.
+- **Scheduling exclusion:** Completed tasks do not appear in the session detail panel (assigned/unassigned lists), so they cannot be assigned or unassigned.
+- **All-completed edge case:** If every linked task is completed, the wizard allows skipping directly to Step 4 (Music) — the "Continue" button becomes visible and `canAdvance` is true even in Phase 1.
+
+### Verification
+1. Complete a linked task in the TodoistPanel during Step 1 → verify "🎉 1 completed" appears in the intention card
+2. Navigate to Step 2 → verify completed task shows compact row (strikethrough, no controls)
+3. Verify Step 2 advancement is not blocked by completed tasks that lack categorization/estimate
+4. Navigate to Step 3 → verify completed tasks appear in the "Completed" summary section with green styling
+5. Verify completed tasks do not appear in session assignment panel (cannot be assigned)
+6. Complete all linked tasks → verify Step 3 allows direct advancement to Step 4

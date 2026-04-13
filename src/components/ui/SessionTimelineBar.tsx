@@ -70,8 +70,12 @@ export function SessionTimelineBar({
         };
     };
 
-    const getTaskTitle = (todoistId: string) =>
-        taskMap.get(todoistId)?.content ?? todoistId;
+    const getTaskTitle = (todoistId: string) => {
+        const fromTodoist = taskMap.get(todoistId)?.content;
+        if (fromTodoist) return fromTodoist;
+        const lt = linkedTasks.find((t) => t.todoistId === todoistId);
+        return lt?.titleSnapshot ?? todoistId;
+    };
 
     const isInteractive = onSelectSession !== undefined;
 

@@ -3,7 +3,7 @@ import { Card } from '../ui/Card';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoist } from '../../hooks/useTodoist';
+import { useTodoistData } from '../../hooks/useTodoist';
 import type { LinkedTask, SessionSlot } from '../../types';
 
 // ---- shared task row hooks (used by both CurrentSession and SessionTimeline) ----
@@ -104,7 +104,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) 
             </span>
 
             <button
-                onClick={() => dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId })}
+                onClick={() => dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title })}
                 className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${linkedTask.completed
                     ? 'bg-success border-success text-white'
                     : 'border-border hover:border-accent'
@@ -119,8 +119,9 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) 
             </button>
 
             <span className={`flex-1 text-sm ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
+                {linkedTask.completed && <span className="mr-1">🎉</span>}
                 {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
-                {linkedTask.isHabit && <span className="mr-1">🔄</span>}
+                {linkedTask.isHabit && !linkedTask.completed && <span className="mr-1">🔄</span>}
                 {title}
             </span>
 
@@ -222,7 +223,7 @@ function SessionCard({
             {/* Background nudge banner */}
             {bgNudges.length > 0 && (
                 <div className="mb-3 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
-                    Don't forget: {bgNudges.map((lt) => taskMap.get(lt.todoistId)?.content ?? lt.todoistId).join(', ')}
+                    Don't forget: {bgNudges.map((lt) => taskMap.get(lt.todoistId)?.content ?? lt.titleSnapshot ?? lt.todoistId).join(', ')}
                 </div>
             )}
 
@@ -236,12 +237,15 @@ function SessionCard({
                             <ul className="space-y-1.5 mt-1">
                                 {tasks.map((lt) => {
                                     const todoistTask = taskMap.get(lt.todoistId);
+                                    const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
+                                    // Only truly stale if not in Todoist AND not completed (completed tasks are expected to be absent)
+                                    const isStale = !todoistTask && !lt.completed;
                                     return (
                                         <TaskRow
                                             key={lt.todoistId}
                                             linkedTask={lt}
-                                            title={todoistTask?.content ?? lt.todoistId}
-                                            isStale={!todoistTask}
+                                            title={title}
+                                            isStale={isStale}
                                             sessionId={session.id}
                                             drag={drag}
                                         />
@@ -263,7 +267,7 @@ function SessionCard({
 export function CurrentSession() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
-    const { taskMap } = useTodoist();
+    const { taskMap } = useTodoistData();
     const drag = useTaskDrag();
 
     const intentionMap = useMemo(
@@ -300,7 +304,7 @@ export function CurrentSession() {
 export function SessionTimeline() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
-    const { taskMap } = useTodoist();
+    const { taskMap } = useTodoistData();
 
     return (
         <SessionTimelineBar

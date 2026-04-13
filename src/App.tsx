@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { DayPlanProvider, useDayPlan } from './context/DayPlanContext';
+import { TodoistProvider } from './context/TodoistContext';
 import { Wizard } from './components/wizard/Wizard';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { Welcome } from './components/Welcome';
@@ -33,7 +34,9 @@ export default function App() {
     return (
         <ErrorBoundary>
             <DayPlanProvider>
-                <AppRoutes />
+                <TodoistProvider>
+                    <AppRoutes />
+                </TodoistProvider>
             </DayPlanProvider>
         </ErrorBoundary>
     );

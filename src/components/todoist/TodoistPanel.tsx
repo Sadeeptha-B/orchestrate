@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { format } from 'date-fns';
-import { useTodoist, type TodoistTask, type TodoistProject, type TodoistSection } from '../../hooks/useTodoist';
+import { useTodoistData, useTodoistActions } from '../../hooks/useTodoist';
+import type { TodoistTask, TodoistProject, TodoistSection } from '../../hooks/useTodoist';
 import { useDayPlan } from '../../context/DayPlanContext';
 import type { LinkedTask } from '../../types';
 
@@ -88,6 +89,10 @@ interface TodoistPanelProps {
     linking?: LinkingProps;
     /** When set, only show projects that contain tasks with these IDs (plus their ancestors). */
     filterToTaskIds?: Set<string>;
+    /** Show an "All Tasks / Linked Tasks" toggle in the header. Overrides filterToTaskIds. */
+    showFilterToggle?: boolean;
+    /** Default state for the filter toggle (default: false = show all). */
+    defaultFiltered?: boolean;
 }
 
 /** Prune a project tree to only include nodes that contain (directly or via descendants) at least one task in `taskIds`. */
@@ -110,7 +115,7 @@ function pruneTree(nodes: ProjectNode[], taskIds: Set<string>): ProjectNode[] {
     return result;
 }
 
-export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds }: TodoistPanelProps) {
+export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds, showFilterToggle, defaultFiltered = false }: TodoistPanelProps) {
     const {
         tasks,
         projects,
@@ -118,6 +123,8 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         loading,
         error,
         isConfigured,
+    } = useTodoistData();
+    const {
         createTask,
         updateTask,
         completeTask,
@@ -127,22 +134,9 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         refreshTasks,
         refreshProjects,
         refreshSections,
-    } = useTodoist();
+    } = useTodoistActions();
 
     const { plan, dispatch } = useDayPlan();
-
-    // After initial Todoist fetch, clean up any linked tasks that no longer exist in Todoist
-    const hasCleanedUp = useRef(false);
-    useEffect(() => {
-        if (hasCleanedUp.current || loading || tasks.length === 0) return;
-        hasCleanedUp.current = true;
-        const fetchedIds = new Set(tasks.map((t) => t.id));
-        for (const lt of plan.linkedTasks) {
-            if (!fetchedIds.has(lt.todoistId)) {
-                dispatch({ type: 'UNLINK_TASK', todoistId: lt.todoistId });
-            }
-        }
-    }, [loading, tasks, plan.linkedTasks, dispatch]);
 
     // Persistent map: todoistId → intention title (always available, not just in linking mode)
     const persistentLinks = useMemo(() => {
@@ -166,6 +160,17 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         return map;
     }, [plan.linkedTasks]);
 
+    // Internal filter toggle state
+    const [filterToggleActive, setFilterToggleActive] = useState(defaultFiltered);
+    const internalLinkedTaskIds = useMemo(
+        () => new Set(plan.linkedTasks.map((lt) => lt.todoistId)),
+        [plan.linkedTasks],
+    );
+    const hasLinkedTasks = internalLinkedTaskIds.size > 0;
+    const effectiveFilterIds = showFilterToggle
+        ? (filterToggleActive ? internalLinkedTaskIds : undefined)
+        : filterToTaskIds;
+
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectParentId, setNewProjectParentId] = useState<string>('');
     const [showNewProject, setShowNewProject] = useState(false);
@@ -176,8 +181,8 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
     );
 
     const tree = useMemo(
-        () => filterToTaskIds ? pruneTree(fullTree, filterToTaskIds) : fullTree,
-        [fullTree, filterToTaskIds],
+        () => effectiveFilterIds ? pruneTree(fullTree, effectiveFilterIds) : fullTree,
+        [fullTree, effectiveFilterIds],
     );
 
     // Build sub-task lookup: parent_id → child tasks
@@ -233,9 +238,9 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
     }
 
     const handleRefresh = () => {
-        refreshTasks();
-        refreshProjects();
-        refreshSections();
+        refreshTasks({ force: true });
+        refreshProjects({ force: true });
+        refreshSections({ force: true });
     };
 
     const handleCreateProject = async () => {
@@ -251,15 +256,18 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
         await deleteProject(projectId);
     };
 
-    // Wrap complete/delete to also unlink from the day plan
+    // Wrap complete/delete to also update the day plan
     const handleCompleteTask = useCallback(
         (taskId: string) => {
-            completeTask(taskId);
-            if (plan.linkedTasks.some((lt) => lt.todoistId === taskId)) {
-                dispatch({ type: 'UNLINK_TASK', todoistId: taskId });
+            const linked = plan.linkedTasks.find((lt) => lt.todoistId === taskId);
+            if (linked && !linked.completed) {
+                // Snapshot the title before Todoist removes it from active tasks
+                const title = tasks.find((t) => t.id === taskId)?.content;
+                dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: taskId, titleSnapshot: title });
             }
+            completeTask(taskId);
         },
-        [completeTask, plan.linkedTasks, dispatch],
+        [completeTask, plan.linkedTasks, tasks, dispatch],
     );
 
     const handleDeleteTask = useCallback(
@@ -314,6 +322,28 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds 
                     </span>
                     {loading && (
                         <span className="text-xs text-text-light animate-pulse">syncing…</span>
+                    )}
+                    {showFilterToggle && hasLinkedTasks && (
+                        <div className="flex items-center gap-1 ml-1">
+                            <button
+                                onClick={() => setFilterToggleActive(false)}
+                                className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${!filterToggleActive
+                                    ? 'bg-accent text-white border-accent'
+                                    : 'border-border text-text-light hover:border-accent hover:text-accent'
+                                    }`}
+                            >
+                                All Tasks
+                            </button>
+                            <button
+                                onClick={() => setFilterToggleActive(true)}
+                                className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${filterToggleActive
+                                    ? 'bg-accent text-white border-accent'
+                                    : 'border-border text-text-light hover:border-accent hover:text-accent'
+                                    }`}
+                            >
+                                Linked Tasks
+                            </button>
+                        </div>
                     )}
                 </div>
                 <div className="flex items-center gap-2">

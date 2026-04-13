@@ -171,7 +171,8 @@ type Action =
     | { type: 'TOGGLE_TASK_HABIT'; todoistId: string }
     | { type: 'ASSIGN_TASK'; todoistId: string; sessionId: string }
     | { type: 'UNASSIGN_TASK'; todoistId: string; sessionId: string }
-    | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string }
+    | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string; titleSnapshot?: string }
+    | { type: 'SYNC_TASK_SNAPSHOTS'; snapshots: Record<string, string> }
     | { type: 'REORDER_SESSION_TASKS'; sessionId: string; taskIds: string[] }
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
@@ -378,7 +379,23 @@ function reducer(state: State, action: Action): State {
 
         case 'TOGGLE_TASK_COMPLETE': {
             const linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === action.todoistId ? { ...lt, completed: !lt.completed } : lt,
+                lt.todoistId === action.todoistId
+                    ? {
+                        ...lt,
+                        completed: !lt.completed,
+                        ...(action.titleSnapshot ? { titleSnapshot: action.titleSnapshot } : {}),
+                    }
+                    : lt,
+            );
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'SYNC_TASK_SNAPSHOTS': {
+            const { snapshots } = action;
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                snapshots[lt.todoistId] && snapshots[lt.todoistId] !== lt.titleSnapshot
+                    ? { ...lt, titleSnapshot: snapshots[lt.todoistId] }
+                    : lt,
             );
             return { ...state, plan: { ...plan, linkedTasks } };
         }

@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoist } from '../../hooks/useTodoist';
+import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import type { LinkedTask } from '../../types';
@@ -12,20 +12,15 @@ import type { LinkedTask } from '../../types';
 export function Step3Schedule() {
     const { plan, settings, dispatch } = useDayPlan();
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
-    const { taskMap } = useTodoist();
+    const { taskMap } = useTodoistData();
     const [phase, setPhase] = useState<'assign' | 'time'>('assign');
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
         () => remainingSessions[0]?.id ?? null,
     );
 
-    const mainTasks = plan.linkedTasks.filter((lt) => lt.type === 'main');
-    const backgroundTasks = plan.linkedTasks.filter((lt) => lt.type === 'background');
-
-    // Project IDs that contain linked tasks — used to filter the Todoist panel in phase 2
-    const linkedTaskIds = useMemo(
-        () => new Set(plan.linkedTasks.map((lt) => lt.todoistId)),
-        [plan.linkedTasks],
-    );
+    const mainTasks = plan.linkedTasks.filter((lt) => lt.type === 'main' && !lt.completed);
+    const backgroundTasks = plan.linkedTasks.filter((lt) => lt.type === 'background' && !lt.completed);
+    const completedTasks = plan.linkedTasks.filter((lt) => lt.completed);
 
     const intentionMap = useMemo(
         () => new Map(plan.intentions.map((i) => [i.id, i])),
@@ -42,8 +37,12 @@ export function Step3Schedule() {
         return groups;
     }, [mainTasks]);
 
-    const getTaskTitle = (todoistId: string) =>
-        taskMap.get(todoistId)?.content ?? todoistId;
+    const getTaskTitle = (todoistId: string) => {
+        const fromTodoist = taskMap.get(todoistId)?.content;
+        if (fromTodoist) return fromTodoist;
+        const lt = plan.linkedTasks.find((t) => t.todoistId === todoistId);
+        return lt?.titleSnapshot ?? todoistId;
+    };
 
     const getTaskLabel = (lt: LinkedTask) => {
         const title = getTaskTitle(lt.todoistId);
@@ -76,6 +75,7 @@ export function Step3Schedule() {
     };
 
     const hasAnyAssignment = Object.values(plan.taskSessions).some((ids) => ids.length > 0);
+    const allTasksCompleted = plan.linkedTasks.length > 0 && plan.linkedTasks.every((lt) => lt.completed);
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
@@ -84,7 +84,7 @@ export function Step3Schedule() {
     const selectedSession = remainingSessions.find((s) => s.id === selectedSessionId);
 
     return (
-        <WizardLayout onNext={handleNext} wide hideNext={phase === 'assign'} canAdvance={phase === 'time'}>
+        <WizardLayout onNext={handleNext} wide hideNext={phase === 'assign' && !allTasksCompleted} canAdvance={phase === 'time' || allTasksCompleted}>
             {phase === 'assign' ? (
                 /* ── Phase 1: High-level session assignment ── */
                 <div className="flex flex-col gap-5 mt-4" style={{ minHeight: '60vh' }}>
@@ -95,6 +95,24 @@ export function Step3Schedule() {
                             Nudges &amp; habits can appear in multiple sessions.
                         </p>
                     </div>
+
+                    {/* Completed tasks summary */}
+                    {completedTasks.length > 0 && (
+                        <div>
+                            <h3 className="text-sm font-medium text-text-light mb-2">Completed</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {completedTasks.map((lt) => (
+                                    <span
+                                        key={lt.todoistId}
+                                        className="px-3 py-1.5 text-xs rounded-full bg-success/10 text-text-light border border-success/20 line-through"
+                                        title={intentionMap.get(lt.intentionId)?.title}
+                                    >
+                                        🎉 {getTaskTitle(lt.todoistId)}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Unassigned main tasks */}
                     {mainTasks.filter((lt) => lt.assignedSessions.length === 0).length > 0 && (
@@ -392,7 +410,7 @@ export function Step3Schedule() {
                         <div className="lg:w-2/5 flex-shrink-0 flex flex-col">
                             <h3 className="text-sm font-medium text-text-light mb-2">Tasks</h3>
                             <div className="rounded-lg border border-border overflow-hidden bg-card flex-1" style={{ minHeight: 500 }}>
-                                <TodoistPanel mode="compact" filterToTaskIds={linkedTaskIds} />
+                                <TodoistPanel mode="compact" showFilterToggle defaultFiltered />
                             </div>
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col">

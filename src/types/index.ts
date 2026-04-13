@@ -16,6 +16,7 @@ export interface LinkedTask {
     completed: boolean;
     isHabit: boolean;
     estimatedMinutes: number | null;                      // null = not yet estimated
+    titleSnapshot?: string;                               // cached title for completed tasks no longer in Todoist
 }
 
 export interface SessionSlot {
