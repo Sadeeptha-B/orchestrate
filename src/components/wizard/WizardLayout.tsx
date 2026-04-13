@@ -190,7 +190,9 @@ export function WizardLayout({
                             const stepNum = i + 1;
                             const isCurrent = step === stepNum;
                             const isReachable = plan.setupComplete || stepNum <= step;
-                            const canClick = plan.setupComplete && !isCurrent;
+                            const canClick = plan.setupComplete
+                                ? !isCurrent
+                                : (stepNum < step) || (stepNum === step + 1 && canAdvance);
 
                             return (
                                 <button

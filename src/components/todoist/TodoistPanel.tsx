@@ -84,13 +84,17 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
         isConfigured,
         createTask,
         completeTask,
+        deleteTask,
+        createProject,
+        deleteProject,
         refreshTasks,
         refreshProjects,
         refreshSections,
     } = useTodoist();
 
-    const [newTask, setNewTask] = useState('');
-    const [createProjectId, setCreateProjectId] = useState<string>('');
+    const [newProjectName, setNewProjectName] = useState('');
+    const [newProjectParentId, setNewProjectParentId] = useState<string>('');
+    const [showNewProject, setShowNewProject] = useState(false);
 
     const tree = useMemo(
         () => buildProjectTree(projects, tasks, sections),
@@ -142,11 +146,17 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
         refreshSections();
     };
 
-    const handleCreate = async () => {
-        if (!newTask.trim()) return;
-        const opts = createProjectId ? { project_id: createProjectId } : undefined;
-        await createTask(newTask.trim(), opts);
-        setNewTask('');
+    const handleCreateProject = async () => {
+        if (!newProjectName.trim()) return;
+        const opts = newProjectParentId ? { parent_id: newProjectParentId } : undefined;
+        await createProject(newProjectName.trim(), opts);
+        setNewProjectName('');
+        setNewProjectParentId('');
+        setShowNewProject(false);
+    };
+
+    const handleDeleteProject = async (projectId: string) => {
+        await deleteProject(projectId);
     };
 
     // Flatten projects for the "add task" project picker
@@ -174,13 +184,22 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
                         <span className="text-xs text-text-light animate-pulse">syncing…</span>
                     )}
                 </div>
-                <button
-                    onClick={handleRefresh}
-                    className="text-xs text-accent hover:underline cursor-pointer"
-                    title="Refresh"
-                >
-                    ↻
-                </button>
+                <div className="flex items-center gap-2">
+                    <a
+                        href="todoist://"
+                        className="text-xs text-accent hover:underline cursor-pointer"
+                        title="Open in Todoist desktop app"
+                    >
+                        Open in Todoist ↗
+                    </a>
+                    <button
+                        onClick={handleRefresh}
+                        className="text-xs text-accent hover:underline cursor-pointer"
+                        title="Refresh"
+                    >
+                        ↻
+                    </button>
+                </div>
             </div>
 
             {/* Error */}
@@ -201,44 +220,68 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
                         node={node}
                         depth={0}
                         onComplete={completeTask}
+                        onCreateTask={createTask}
+                        onDeleteTask={deleteTask}
+                        onDeleteProject={handleDeleteProject}
                         subTaskMap={subTaskMap}
                         compact={mode === 'compact'}
                     />
                 ))}
             </div>
 
-            {/* Create task input */}
+            {/* Create project input */}
             {mode === 'full' && (
                 <div className="px-3 py-2 border-t border-border space-y-1.5">
-                    <select
-                        value={createProjectId}
-                        onChange={(e) => setCreateProjectId(e.target.value)}
-                        className="w-full text-xs px-2 py-1 rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30"
-                    >
-                        <option value="">Inbox</option>
-                        {flatProjects.map((p) => (
-                            <option key={p.id} value={p.id}>
-                                {'  '.repeat(p.depth)}{p.name}
-                            </option>
-                        ))}
-                    </select>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={newTask}
-                            onChange={(e) => setNewTask(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                            placeholder="Add task…"
-                            className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 transition-colors"
-                        />
+                    {showNewProject ? (
+                        <div className="space-y-1.5">
+                            <select
+                                value={newProjectParentId}
+                                onChange={(e) => setNewProjectParentId(e.target.value)}
+                                className="w-full text-xs px-2 py-1 rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30"
+                            >
+                                <option value="">Root project</option>
+                                {flatProjects.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {'  '.repeat(p.depth)}↳ {p.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={newProjectName}
+                                    onChange={(e) => setNewProjectName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleCreateProject();
+                                        if (e.key === 'Escape') { setShowNewProject(false); setNewProjectName(''); setNewProjectParentId(''); }
+                                    }}
+                                    placeholder="Project name…"
+                                    className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 transition-colors"
+                                    autoFocus
+                                />
+                                <button
+                                    onClick={handleCreateProject}
+                                    disabled={!newProjectName.trim()}
+                                    className="px-2.5 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-40 transition-colors cursor-pointer"
+                                >
+                                    +
+                                </button>
+                                <button
+                                    onClick={() => { setShowNewProject(false); setNewProjectName(''); setNewProjectParentId(''); }}
+                                    className="px-2 py-1.5 text-xs text-text-light hover:text-text cursor-pointer"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
                         <button
-                            onClick={handleCreate}
-                            disabled={!newTask.trim()}
-                            className="px-2.5 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-40 transition-colors cursor-pointer"
+                            onClick={() => setShowNewProject(true)}
+                            className="w-full text-xs text-text-light hover:text-accent py-1 cursor-pointer text-left"
                         >
-                            +
+                            + New project
                         </button>
-                    </div>
+                    )}
                 </div>
             )}
         </div>
@@ -251,16 +294,25 @@ function ProjectTreeNode({
     node,
     depth,
     onComplete,
+    onCreateTask,
+    onDeleteTask,
+    onDeleteProject,
     subTaskMap,
     compact,
 }: {
     node: ProjectNode;
     depth: number;
     onComplete: (id: string) => void;
+    onCreateTask: (content: string, opts?: { project_id?: string }) => Promise<void>;
+    onDeleteTask: (id: string) => void;
+    onDeleteProject: (id: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
 }) {
     const [collapsed, setCollapsed] = useState(depth > 0);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [showAddTask, setShowAddTask] = useState(false);
+    const [newTaskContent, setNewTaskContent] = useState('');
     const taskCount = countTasksInNode(node);
     const hasContent = taskCount > 0 || node.children.length > 0;
     const colorHex = TODOIST_COLORS[node.project.color] ?? TODOIST_COLORS.charcoal;
@@ -306,7 +358,94 @@ function ProjectTreeNode({
                         {taskCount}
                     </span>
                 )}
+                {/* Add task button (hover) */}
+                <span
+                    className="text-xs text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent transition-opacity ml-1 flex-shrink-0"
+                    role="button"
+                    tabIndex={0}
+                    title="Add task"
+                    onClick={(e) => { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); } }}
+                >
+                    +
+                </span>
+                {/* Delete project button (hover) */}
+                <span
+                    className="text-xs text-text-light opacity-0 group-hover:opacity-100 hover:!text-red-500 transition-opacity ml-1 flex-shrink-0"
+                    role="button"
+                    tabIndex={0}
+                    title="Delete project"
+                    onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setConfirmDelete(true); } }}
+                >
+                    ✕
+                </span>
             </button>
+
+            {/* Delete confirmation */}
+            {confirmDelete && (
+                <div
+                    className="flex items-center gap-2 px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-xs"
+                    style={{ paddingLeft: `${24 + depth * 16}px` }}
+                >
+                    <span className="text-red-600 dark:text-red-400">Delete &ldquo;{node.project.name}&rdquo;?</span>
+                    <button
+                        onClick={() => { onDeleteProject(node.project.id); setConfirmDelete(false); }}
+                        className="text-red-600 dark:text-red-400 font-medium hover:underline cursor-pointer"
+                    >
+                        Yes
+                    </button>
+                    <button
+                        onClick={() => setConfirmDelete(false)}
+                        className="text-text-light hover:underline cursor-pointer"
+                    >
+                        No
+                    </button>
+                </div>
+            )}
+
+            {/* Inline add-task input */}
+            {showAddTask && (
+                <div
+                    className="flex items-center gap-2 px-2 py-1.5"
+                    style={{ paddingLeft: `${24 + depth * 16}px` }}
+                >
+                    <input
+                        type="text"
+                        value={newTaskContent}
+                        onChange={(e) => setNewTaskContent(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && newTaskContent.trim()) {
+                                onCreateTask(newTaskContent.trim(), { project_id: node.project.id });
+                                setNewTaskContent('');
+                                setShowAddTask(false);
+                            }
+                            if (e.key === 'Escape') { setShowAddTask(false); setNewTaskContent(''); }
+                        }}
+                        placeholder="Add task…"
+                        className="flex-1 px-2 py-1 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 transition-colors"
+                        autoFocus
+                    />
+                    <button
+                        onClick={() => {
+                            if (!newTaskContent.trim()) return;
+                            onCreateTask(newTaskContent.trim(), { project_id: node.project.id });
+                            setNewTaskContent('');
+                            setShowAddTask(false);
+                        }}
+                        disabled={!newTaskContent.trim()}
+                        className="px-2 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-40 transition-colors cursor-pointer"
+                    >
+                        +
+                    </button>
+                    <button
+                        onClick={() => { setShowAddTask(false); setNewTaskContent(''); }}
+                        className="text-xs text-text-light hover:text-text cursor-pointer"
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
 
             {/* Expanded content */}
             {!collapsed && hasContent && (
@@ -318,6 +457,7 @@ function ProjectTreeNode({
                             task={task}
                             depth={depth + 1}
                             onComplete={onComplete}
+                            onDelete={onDeleteTask}
                             subTaskMap={subTaskMap}
                             compact={compact}
                         />
@@ -334,6 +474,7 @@ function ProjectTreeNode({
                                 tasks={sectionTasks}
                                 depth={depth + 1}
                                 onComplete={onComplete}
+                                onDelete={onDeleteTask}
                                 subTaskMap={subTaskMap}
                                 compact={compact}
                             />
@@ -347,6 +488,9 @@ function ProjectTreeNode({
                             node={child}
                             depth={depth + 1}
                             onComplete={onComplete}
+                            onCreateTask={onCreateTask}
+                            onDeleteTask={onDeleteTask}
+                            onDeleteProject={onDeleteProject}
                             subTaskMap={subTaskMap}
                             compact={compact}
                         />
@@ -364,6 +508,7 @@ function SectionGroup({
     tasks,
     depth,
     onComplete,
+    onDelete,
     subTaskMap,
     compact,
 }: {
@@ -371,6 +516,7 @@ function SectionGroup({
     tasks: TodoistTask[];
     depth: number;
     onComplete: (id: string) => void;
+    onDelete: (id: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
 }) {
@@ -403,6 +549,7 @@ function SectionGroup({
                         task={task}
                         depth={depth + 1}
                         onComplete={onComplete}
+                        onDelete={onDelete}
                         subTaskMap={subTaskMap}
                         compact={compact}
                     />
@@ -417,12 +564,14 @@ function TaskRow({
     task,
     depth,
     onComplete,
+    onDelete,
     subTaskMap,
     compact,
 }: {
     task: TodoistTask;
     depth: number;
     onComplete: (id: string) => void;
+    onDelete: (id: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
 }) {
@@ -467,6 +616,14 @@ function TaskRow({
                         </p>
                     )}
                 </div>
+                {/* Delete task button (hover) */}
+                <button
+                    onClick={() => onDelete(task.id)}
+                    className="text-xs text-text-light opacity-0 group-hover:opacity-100 hover:!text-red-500 transition-opacity flex-shrink-0 mt-0.5 cursor-pointer"
+                    title="Delete task"
+                >
+                    ✕
+                </button>
             </div>
             {/* Sub-tasks */}
             {children && !childrenCollapsed &&
@@ -476,6 +633,7 @@ function TaskRow({
                         task={child}
                         depth={depth + 1}
                         onComplete={onComplete}
+                        onDelete={onDelete}
                         subTaskMap={subTaskMap}
                         compact={compact}
                     />

@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { Button } from '../ui/Button';
@@ -12,7 +12,41 @@ export function Step1Intentions() {
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
-        () => plan.intentions.some((i) => i.brokenDown),
+        () => plan.intentions.some((i) => i.brokenDown || i.type !== 'unclassified'),
+    );
+
+    // Inline editing for the current mapping intention
+    const [editingTitle, setEditingTitle] = useState(false);
+    const [editValue, setEditValue] = useState('');
+    const editRef = useRef<HTMLInputElement>(null);
+
+    const startEditingTitle = useCallback((title: string) => {
+        setEditingTitle(true);
+        setEditValue(title);
+        requestAnimationFrame(() => editRef.current?.focus());
+    }, []);
+
+    const commitTitleEdit = useCallback(() => {
+        const trimmed = editValue.trim();
+        const current = plan.intentions.find((i) => !i.brokenDown);
+        if (trimmed && current && current.title !== trimmed) {
+            dispatch({ type: 'UPDATE_INTENTION', intention: { ...current, title: trimmed } });
+        }
+        setEditingTitle(false);
+        setEditValue('');
+    }, [editValue, plan.intentions, dispatch]);
+
+    const handleEditKeyDown = useCallback(
+        (e: KeyboardEvent) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                commitTitleEdit();
+            } else if (e.key === 'Escape') {
+                setEditingTitle(false);
+                setEditValue('');
+            }
+        },
+        [commitTitleEdit],
     );
 
     const todoistConfigured = Boolean(
@@ -214,9 +248,25 @@ export function Step1Intentions() {
                                         <span className="text-xs font-medium text-accent uppercase tracking-wider">
                                             Current
                                         </span>
-                                        <h3 className="text-lg font-semibold mt-1">
-                                            {currentMappingIntention.title}
-                                        </h3>
+                                        {editingTitle ? (
+                                            <input
+                                                ref={editRef}
+                                                type="text"
+                                                value={editValue}
+                                                onChange={(e) => setEditValue(e.target.value)}
+                                                onKeyDown={handleEditKeyDown}
+                                                onBlur={commitTitleEdit}
+                                                className="block w-full text-lg font-semibold mt-1 px-2 py-0.5 rounded border border-accent/30 bg-accent-subtle/30 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                                            />
+                                        ) : (
+                                            <h3
+                                                className="text-lg font-semibold mt-1 cursor-text rounded px-1 -mx-1 hover:bg-surface-dark/50 transition-colors"
+                                                onClick={() => startEditingTitle(currentMappingIntention.title)}
+                                                title="Click to edit"
+                                            >
+                                                {currentMappingIntention.title}
+                                            </h3>
+                                        )}
                                         <p className="text-sm text-text-light mt-1">
                                             Break this down into actionable tasks in your todolist →
                                         </p>
@@ -254,7 +304,7 @@ export function Step1Intentions() {
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="text-sm font-medium text-text-light">Task Manager</h3>
                     </div>
-                    <div className="flex-1 rounded-lg border border-border overflow-hidden bg-card" style={{ minHeight: 500 }}>
+                    <div className="flex-1 rounded-lg border border-border overflow-hidden bg-card min-h-[400px] max-h-[70vh]">
                         <TodoistPanel mode="full" onSetup={() => setShowSetup(true)} />
                     </div>
                 </div>

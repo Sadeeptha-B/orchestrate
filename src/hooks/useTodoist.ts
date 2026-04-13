@@ -59,6 +59,13 @@ interface CreateTaskOpts {
     labels?: string[];
 }
 
+interface CreateProjectOpts {
+    parent_id?: string;
+    color?: string;
+    is_favorite?: boolean;
+    view_style?: string;
+}
+
 async function getToken(settings: {
     todoistToken?: string;
     todoistTokenIV?: string;
@@ -252,6 +259,54 @@ export function useTodoist() {
         [resolveToken, refreshTasks],
     );
 
+    const deleteTask = useCallback(
+        async (taskId: string) => {
+            const token = await resolveToken();
+            if (!token) return;
+            try {
+                await apiFetch(token, `/tasks/${taskId}`, { method: 'DELETE' });
+                setTasks((prev) => prev.filter((t) => t.id !== taskId && t.parent_id !== taskId));
+            } catch (e) {
+                setError(e instanceof Error ? e.message : 'Failed to delete task');
+            }
+        },
+        [resolveToken],
+    );
+
+    const createProject = useCallback(
+        async (name: string, opts?: CreateProjectOpts) => {
+            const token = await resolveToken();
+            if (!token) return;
+            setError(null);
+            try {
+                const project = await apiFetch<TodoistProject>(token, '/projects', {
+                    method: 'POST',
+                    body: JSON.stringify({ name, ...opts }),
+                });
+                setProjects((prev) => [...prev, project]);
+            } catch (e) {
+                setError(e instanceof Error ? e.message : 'Failed to create project');
+            }
+        },
+        [resolveToken],
+    );
+
+    const deleteProject = useCallback(
+        async (projectId: string) => {
+            const token = await resolveToken();
+            if (!token) return;
+            try {
+                await apiFetch(token, `/projects/${projectId}`, { method: 'DELETE' });
+                setProjects((prev) => prev.filter((p) => p.id !== projectId && p.parent_id !== projectId));
+                setTasks((prev) => prev.filter((t) => t.project_id !== projectId));
+                setSections((prev) => prev.filter((s) => s.project_id !== projectId));
+            } catch (e) {
+                setError(e instanceof Error ? e.message : 'Failed to delete project');
+            }
+        },
+        [resolveToken],
+    );
+
     return {
         tasks,
         projects,
@@ -262,6 +317,9 @@ export function useTodoist() {
         createTask,
         completeTask,
         reopenTask,
+        deleteTask,
+        createProject,
+        deleteProject,
         refreshTasks,
         refreshProjects,
         refreshSections,

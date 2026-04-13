@@ -32,7 +32,8 @@ Trevor AI sets `X-Frame-Options: DENY` and modern browsers block cross-origin co
 - **Capabilities used**: List tasks, create tasks, complete tasks, filter by project/label, set due dates/times.
 - **API base**: `https://api.todoist.com/api/v1/` (unified API — REST v2 was sunset and returns `410 Gone`)
 - **Responses**: Paginated — `GET` endpoints return `{ results: [...], next_cursor: string | null }`
-- **Mutations**: Task create via `POST /api/v1/tasks`. Complete/reopen via Sync endpoint (`POST /api/v1/sync` with `item_complete`/`item_uncomplete` commands).
+- **Mutations**: Task create via `POST /api/v1/tasks`. Complete/reopen via Sync endpoint (`POST /api/v1/sync` with `item_complete`/`item_uncomplete` commands). Delete via `DELETE /api/v1/tasks/{id}`.
+- **Projects**: List via paginated `GET /api/v1/projects`. Create via `POST /api/v1/projects` (supports `parent_id` for nested projects). Delete via `DELETE /api/v1/projects/{id}`.
 - **CORS**: Supported (`Access-Control-Allow-Origin: *` for authenticated requests). Vite dev proxy (`/api/todoist → api.todoist.com`) used during development for reliability.
 - **Rate limits**: 450 requests/min — more than sufficient.
 
@@ -117,13 +118,16 @@ All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`
 
 #### `src/hooks/useTodoist.ts` — Todoist API hook
 - Decrypts token from settings on mount
-- Exposes: `{ tasks, projects, sections, loading, error, isConfigured, createTask, completeTask, reopenTask, refreshTasks, refreshProjects, refreshSections }`
+- Exposes: `{ tasks, projects, sections, loading, error, isConfigured, createTask, completeTask, reopenTask, deleteTask, createProject, deleteProject, refreshTasks, refreshProjects, refreshSections }`
 - `tasks` fetched via `GET /api/v1/tasks` (paginated, extracts `.results`) — includes `section_id`, `parent_id` for hierarchy
 - `projects` fetched via `GET /api/v1/projects` (paginated, extracts `.results`) — includes `parent_id` for nesting
 - `sections` fetched via `GET /api/v1/sections` (paginated, extracts `.results`) — groups tasks within projects
 - `createTask(content, opts?)` → `POST /api/v1/tasks`
 - `completeTask(taskId)` → `POST /api/v1/sync` with `item_complete` command
 - `reopenTask(taskId)` → `POST /api/v1/sync` with `item_uncomplete` command
+- `deleteTask(taskId)` → `DELETE /api/v1/tasks/{taskId}` — removes task and children from local state
+- `createProject(name, opts?)` → `POST /api/v1/projects` — supports `parent_id` for nested project creation
+- `deleteProject(projectId)` → `DELETE /api/v1/projects/{projectId}` — removes project, its tasks, and sections from local state
 - Uses `import.meta.env.DEV` to route through Vite proxy in dev (`/api/todoist/api/v1`) or direct in prod
 - Caches tasks in React state; `refreshTasks()` to re-fetch; auto-refresh on window focus
 - Returns `isConfigured: false` if no token in settings
@@ -133,10 +137,14 @@ All actions renamed, multi-session assignment for background, `MARK_BROKEN_DOWN`
   - **Projects** nested via `parent_id` (areas → epics), with Todoist color dots and task count badges
   - **Sections** within projects group related tasks, with collapsible headers
   - **Sub-tasks** rendered recursively under parent tasks via `parent_id`
-- Two modes: `compact` (tree only, no create input, hides due dates) and `full` (tree + project picker + create task input)
+- Two modes: `compact` (tree only, no create inputs, hides due dates) and `full` (tree + inline task creation + project creation footer)
 - Tree sorted by `child_order` / `section_order` at each level
 - Top-level projects expanded by default; sub-projects start collapsed
-- Create-task input includes a hierarchical project picker dropdown
+- **Inline task creation**: Hover-visible `+` icon on each project header. Clicking opens an inline input directly under that project. Tasks are automatically created in the correct project.
+- **Task deletion**: Hover-visible `✕` icon on each task row. Deletes task via API.
+- **Project creation**: Footer input with parent project selector dropdown (supports nested creation). "+ New project" button expands the form.
+- **Project deletion**: Hover-visible `✕` icon on each project header. Shows inline Yes/No confirmation before deleting.
+- **Desktop deep link**: Header "Open in Todoist ↗" link uses `todoist://` URL scheme to launch the desktop app (supported since Todoist desktop v9.2.0).
 - Unconfigured state: shows setup prompt linking to Settings
 - Styled to match Orchestrate's existing card/border design
 
@@ -163,7 +171,8 @@ The wizard was originally 6 steps; Step 1 (Set Intentions) and Step 2 (Map to To
 - Left panel (~40%):
   - **Phase 1 — Set intentions**: Input + editable list (add, edit, drag-reorder, delete). "Start mapping →" button to proceed.
   - **Phase 2 — Sequential mapping**: Intentions presented one at a time. Current intention highlighted with "Done — next/finish". Progress bar tracks completion. New intentions can still be added (queued for later mapping). Reordering disabled during mapping.
-- Right panel (~60%): `TodoistPanel` full mode — create/complete/filter tasks inline
+- Right panel (~60%): `TodoistPanel` full mode — create/complete/delete tasks inline, create/delete projects
+- TodoistPanel container constrained to `min-h-[400px] max-h-[70vh]` to prevent the panel from pushing navigation buttons off-screen on smaller viewports; the internal project tree area scrolls independently.
 - If Todoist not configured: panel shows setup prompt
 - Advance condition: at least one intention added and mapping started
 - Pill label: **"Intentions"**
@@ -223,11 +232,16 @@ Add **Integrations** section (new settings modal or expand existing):
 ### Verification
 
 1. Configure Todoist token in settings → tasks load
-2. Walk all 6 wizard steps with Todoist panel in Steps 2 and 4
-3. Create task in panel → appears in Todoist
+2. Walk all 5 wizard steps with Todoist panel in Steps 1 and 3
+3. Create task via inline `+` on project header → appears in Todoist
 4. Complete task → syncs
-5. Google Calendar embed shows current week
-6. Settings: disconnect → panel shows setup prompt
+5. Delete task via hover `✕` → removed from Todoist
+6. Create nested project via parent selector → appears nested in tree
+7. Delete project with inline confirmation → removed with its tasks/sections
+8. "Open in Todoist ↗" launches desktop app via `todoist://`
+9. Google Calendar embed shows current week
+10. Settings: disconnect → panel shows setup prompt
+11. Large task lists scroll within the panel without pushing wizard nav buttons off-screen
 7. Settings: invalid token → error message
 8. Token stored encrypted (DevTools: not plaintext)
 9. `vite build` → full flow works
@@ -317,9 +331,91 @@ Replaced the flat all-at-once layout with a guided two-phase approach:
 - Progress bar shows `brokenDown / total`
 - Completed intentions collapse into a compact checkmark list
 - **Current intention** is highlighted in a prominent bordered card with "Done — next/finish"
+- Current intention title is **click-to-edit** inline (commit on Enter/blur, cancel on Escape) — allows fixing typos without leaving mapping phase
 - Upcoming count shown: "N more intentions after this"
 - Reordering is disabled during mapping (simplifies the sequential flow)
 - When all mapped: success message nudging toward the next step
-- Auto-enters phase 2 if returning with any already-broken-down intentions
+- Auto-enters phase 2 if returning with any already-broken-down or categorized intentions
 
 **Rationale:** The previous design showed all intentions and the breakdown checklist simultaneously, which was overwhelming. The sequential approach mirrors the actual workflow — one intention at a time — and reduces cognitive load.
+
+---
+
+### Iteration 3.3 — Wizard Navigation Improvements (implemented ✅)
+
+#### Setup-mode step pill navigation
+
+Previously, step pills were only clickable after setup was complete ("Edit day" mode). During initial setup, navigation was limited to the Back/Continue footer buttons.
+
+**Changes:**
+- **Backward navigation via pills**: During setup, pills for all previously visited steps are clickable, allowing the user to jump back freely (e.g., return to Step 1 from Step 3 to add another intention).
+- **Forward navigation to next step via pill**: The next immediate step pill is clickable when `canAdvance` is true — same condition that gates the Continue button. Users cannot skip ahead to steps beyond the next one.
+- **Post-setup (Edit day)**: Unchanged — all pills are freely clickable.
+
+**Implementation** (`WizardLayout.tsx`):
+```ts
+const canClick = plan.setupComplete
+    ? !isCurrent
+    : (stepNum < step) || (stepNum === step + 1 && canAdvance);
+```
+
+**Step 1 return handling**: `mappingStarted` state now also checks `i.type !== 'unclassified'` so that returning to Step 1 after categorization correctly enters Phase 2 instead of resetting to Phase 1.
+
+---
+
+### Iteration 3.2 — Welcome Screen & Restore Fix (implemented ✅)
+
+#### Bug Fix: `RESTORE_DAY` date stamping
+
+| # | Issue | Severity | Fix |
+|---|-------|----------|-----|
+| 11 | `RESTORE_DAY` preserved the saved plan's original date — restoring an old session worked in memory but was discarded on page reload (date mismatch in `loadPlan()`) | **Critical** | Restore now stamps the active plan with `date: todayISO()`. The saved history entry retains the original date. |
+
+#### Welcome Screen — `src/components/Welcome.tsx` (new)
+
+When `setupComplete` is `false`, the `/` route now renders a **Welcome screen** instead of immediately redirecting to the wizard. This provides a calm, intentional entry point that greets the user before they begin planning.
+
+**Structure:**
+- App logo + "Orchestrate" heading
+- Time-aware greeting ("Good morning/afternoon/evening") + formatted date
+- Main card with contextual heading and CTA button
+- Horizontal **step timeline** (circles + connecting lines) showing planning progress
+- First-time vs returning user distinction
+
+**Two modes:**
+- **Fresh day** (no intentions, step 1): "Start your day with clarity" heading, "Plan Your Day" button. Timeline shows all steps in muted/inactive state with step 1 highlighted.
+- **Resuming** (partially completed setup): "Pick up where you left off" heading, intention count, "Resume Planning" button. Timeline shows completed steps (filled accent circles with checkmarks), current step (accent-outlined), and future steps (muted).
+
+**Step timeline design:**
+- Round numbered circles for each stage, connected by horizontal lines
+- Completed steps: filled accent background, white checkmark, accent connecting line
+- Current step: accent border with accent tint background, accent text
+- Future steps: muted border, muted text
+- Labels below each circle
+
+**First-time user nudge:**
+- Detected when: no intentions, wizard at step 1, and no saved session history
+- Tagline replaced with: "New here? [Learn what Orchestrate does]" — inline link opens About modal
+- Returning users see the standard tagline: "Counter task blindness. Stay connected to what matters."
+
+**About modal:**
+- Accessible via `?` button in top-right (next to theme toggle), matching the wizard's existing style
+- Same content as the wizard's About modal (app philosophy, contextualizing vs epics, task/time blindness)
+- First-time nudge also opens this modal
+
+#### Routing Changes — `App.tsx`
+
+| Route | Before | After |
+|-------|--------|-------|
+| `/` (setup incomplete) | `<Navigate to="/setup" replace />` | `<Welcome />` |
+| `/setup` (setup incomplete, direct access/reload) | `<Wizard />` always | `<Navigate to="/" replace />` — redirects to Welcome |
+| `/setup` (via Welcome button) | N/A | `<Wizard />` — allowed via `fromWelcome` location state |
+| `/setup` (setup complete) | `<Wizard />` | `<Wizard />` (unchanged) |
+
+**`fromWelcome` state pattern:** The Welcome screen navigates to `/setup` with `{ state: { fromWelcome: true } }`. The route checks `location.state.fromWelcome` — if `true`, renders the Wizard; otherwise redirects to `/`. This state is ephemeral (lost on reload), so reloading `/setup` mid-wizard always returns to the Welcome screen, re-grounding the user after a context switch.
+
+#### New file
+
+| File | Purpose |
+|------|---------|
+| `src/components/Welcome.tsx` | Welcome screen component with greeting, step timeline, About modal, first-time nudge |
