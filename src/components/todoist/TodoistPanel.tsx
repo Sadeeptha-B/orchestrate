@@ -1,6 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
+import confetti from 'canvas-confetti';
 import { format } from 'date-fns';
 import { useTodoist, type TodoistTask, type TodoistProject, type TodoistSection } from '../../hooks/useTodoist';
+import { useDayPlan } from '../../context/DayPlanContext';
 import type { LinkedTask } from '../../types';
 
 // --- Todoist color map (color name → hex) ---
@@ -104,6 +106,19 @@ export function TodoistPanel({ mode = 'full', onSetup, linking }: TodoistPanelPr
         refreshProjects,
         refreshSections,
     } = useTodoist();
+
+    const { plan } = useDayPlan();
+
+    // Persistent map: todoistId → intention title (always available, not just in linking mode)
+    const persistentLinks = useMemo(() => {
+        const map = new Map<string, string>();
+        const intentionMap = new Map(plan.intentions.map((i) => [i.id, i.title]));
+        for (const lt of plan.linkedTasks) {
+            const title = intentionMap.get(lt.intentionId);
+            if (title) map.set(lt.todoistId, title);
+        }
+        return map;
+    }, [plan.linkedTasks, plan.intentions]);
 
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectParentId, setNewProjectParentId] = useState<string>('');
@@ -256,9 +271,11 @@ export function TodoistPanel({ mode = 'full', onSetup, linking }: TodoistPanelPr
                         onDeleteProject={handleDeleteProject}
                         onSchedule={handleSchedule}
                         onClearSchedule={handleClearSchedule}
+                        onEditContent={(taskId, content) => updateTask(taskId, { content })}
                         subTaskMap={subTaskMap}
                         compact={mode === 'compact'}
                         linking={linking}
+                        persistentLinks={persistentLinks}
                     />
                 ))}
             </div>
@@ -333,9 +350,11 @@ function ProjectTreeNode({
     onDeleteProject,
     onSchedule,
     onClearSchedule,
+    onEditContent,
     subTaskMap,
     compact,
     linking,
+    persistentLinks,
 }: {
     node: ProjectNode;
     depth: number;
@@ -345,9 +364,11 @@ function ProjectTreeNode({
     onDeleteProject: (id: string) => void;
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
+    onEditContent: (taskId: string, content: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
     linking?: LinkingProps;
+    persistentLinks: Map<string, string>;
 }) {
     const [collapsed, setCollapsed] = useState(depth > 0);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -500,9 +521,11 @@ function ProjectTreeNode({
                             onDelete={onDeleteTask}
                             onSchedule={onSchedule}
                             onClearSchedule={onClearSchedule}
+                            onEditContent={onEditContent}
                             subTaskMap={subTaskMap}
                             compact={compact}
                             linking={linking}
+                            persistentLinks={persistentLinks}
                         />
                     ))}
 
@@ -521,8 +544,10 @@ function ProjectTreeNode({
                                 onDelete={onDeleteTask}
                                 onSchedule={onSchedule}
                                 onClearSchedule={onClearSchedule}
+                                onEditContent={onEditContent}
                                 subTaskMap={subTaskMap}
                                 compact={compact}
+                                persistentLinks={persistentLinks}
                             />
                         );
                     })}
@@ -539,9 +564,11 @@ function ProjectTreeNode({
                             onDeleteProject={onDeleteProject}
                             onSchedule={onSchedule}
                             onClearSchedule={onClearSchedule}
+                            onEditContent={onEditContent}
                             subTaskMap={subTaskMap}
                             compact={compact}
                             linking={linking}
+                            persistentLinks={persistentLinks}
                         />
                     ))}
                 </div>
@@ -560,9 +587,11 @@ function SectionGroup({
     onDelete,
     onSchedule,
     onClearSchedule,
+    onEditContent,
     subTaskMap,
     compact,
     linking,
+    persistentLinks,
 }: {
     section: TodoistSection;
     tasks: TodoistTask[];
@@ -571,9 +600,11 @@ function SectionGroup({
     onDelete: (id: string) => void;
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
+    onEditContent: (taskId: string, content: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
     linking?: LinkingProps;
+    persistentLinks: Map<string, string>;
 }) {
     const [collapsed, setCollapsed] = useState(false);
 
@@ -607,9 +638,11 @@ function SectionGroup({
                         onDelete={onDelete}
                         onSchedule={onSchedule}
                         onClearSchedule={onClearSchedule}
+                        onEditContent={onEditContent}
                         subTaskMap={subTaskMap}
                         compact={compact}
                         linking={linking}
+                        persistentLinks={persistentLinks}
                     />
                 ))}
         </div>
@@ -625,9 +658,11 @@ function TaskRow({
     onDelete,
     onSchedule,
     onClearSchedule,
+    onEditContent,
     subTaskMap,
     compact,
     linking,
+    persistentLinks,
 }: {
     task: TodoistTask;
     depth: number;
@@ -635,15 +670,40 @@ function TaskRow({
     onDelete: (id: string) => void;
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
+    onEditContent: (taskId: string, content: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
     linking?: LinkingProps;
+    persistentLinks: Map<string, string>;
 }) {
     const children = subTaskMap.get(task.id);
     const [childrenCollapsed, setChildrenCollapsed] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [pickerStart, setPickerStart] = useState('');
     const [pickerEnd, setPickerEnd] = useState('');
+    const [isEditing, setIsEditing] = useState(false);
+    const [editValue, setEditValue] = useState('');
+    const editInputRef = useRef<HTMLInputElement>(null);
+
+    const startEditing = useCallback(() => {
+        setIsEditing(true);
+        setEditValue(task.content);
+        requestAnimationFrame(() => editInputRef.current?.focus());
+    }, [task.content]);
+
+    const commitEdit = useCallback(() => {
+        const trimmed = editValue.trim();
+        if (trimmed && trimmed !== task.content) {
+            onEditContent(task.id, trimmed);
+        }
+        setIsEditing(false);
+        setEditValue('');
+    }, [editValue, task.content, task.id, onEditContent]);
+
+    const cancelEdit = useCallback(() => {
+        setIsEditing(false);
+        setEditValue('');
+    }, []);
 
     // Parse existing schedule for today
     const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -695,10 +755,13 @@ function TaskRow({
         ? linking!.intentionTitles[linkedToOther.intentionId]
         : null;
 
+    // Persistent link label (when not in linking mode, or linked to current intention in linking mode)
+    const persistentLinkTitle = !linking ? persistentLinks.get(task.id) : null;
+
     return (
         <div>
             <div
-                className={`flex items-start gap-2 py-1 px-2 group ${isLinkedToCurrentIntention ? 'bg-accent/5 border-l-2 border-accent' : ''}`}
+                className={`flex items-start gap-2 py-1 px-2 group ${isLinkedToCurrentIntention ? 'bg-accent/5 border-l-2 border-accent' : persistentLinkTitle ? 'bg-accent/5 border-l-2 border-accent' : ''}`}
                 style={{ paddingLeft: `${8 + depth * 16}px` }}
             >
                 {/* Sub-task toggle */}
@@ -713,35 +776,53 @@ function TaskRow({
                 ) : (
                     <span className="w-3 flex-shrink-0" />
                 )}
-                {/* Linking checkbox (when in linking mode) */}
-                {linking && (
-                    <input
-                        type="checkbox"
-                        checked={isLinkedToCurrentIntention}
-                        onChange={() => {
-                            if (isLinkedToCurrentIntention) {
-                                linking.onUnlinkTask(task.id);
-                            } else {
-                                linking.onLinkTask(task.id);
-                            }
-                        }}
-                        className="w-4 h-4 mt-0.5 flex-shrink-0 accent-accent cursor-pointer"
-                        title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
-                    />
-                )}
-                {/* Completion button (hidden in linking mode) */}
-                {!linking && (
-                    <button
-                        onClick={() => onComplete(task.id)}
-                        className="w-4 h-4 mt-0.5 flex-shrink-0 rounded-full border border-border hover:border-accent hover:bg-accent/10 transition-colors cursor-pointer"
-                        title="Complete"
-                    />
-                )}
+                {/* Completion button (always visible) */}
+                <button
+                    onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        confetti({
+                            particleCount: 40,
+                            spread: 60,
+                            startVelocity: 20,
+                            gravity: 1.2,
+                            scalar: 0.7,
+                            ticks: 80,
+                            origin: {
+                                x: rect.left / window.innerWidth,
+                                y: rect.top / window.innerHeight,
+                            },
+                        });
+                        onComplete(task.id);
+                    }}
+                    className="w-4 h-4 mt-0.5 flex-shrink-0 rounded-full border border-border hover:border-accent hover:bg-accent/10 transition-colors cursor-pointer"
+                    title="Complete"
+                />
                 <div className="min-w-0 flex-1">
-                    <p className="text-sm leading-snug">{task.content}</p>
-                    {linkedToOtherTitle && (
+                    {isEditing ? (
+                        <input
+                            ref={editInputRef}
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                                if (e.key === 'Escape') cancelEdit();
+                            }}
+                            onBlur={commitEdit}
+                            className="w-full text-sm px-1 py-0.5 -ml-1 rounded border border-accent/30 bg-accent-subtle/30 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                        />
+                    ) : (
+                        <p
+                            className="text-sm leading-snug cursor-text rounded px-1 -ml-1 hover:bg-surface-dark/40 transition-colors"
+                            onClick={startEditing}
+                            title="Click to edit"
+                        >
+                            {task.content}
+                        </p>
+                    )}
+                    {(linkedToOtherTitle || persistentLinkTitle) && (
                         <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
-                            linked to: {linkedToOtherTitle}
+                            linked to: {linkedToOtherTitle || persistentLinkTitle}
                         </p>
                     )}
                     {!compact && task.due && (
@@ -766,6 +847,25 @@ function TaskRow({
                         </span>
                     )}
                 </div>
+                {/* Link/Unlink button (when in linking mode) */}
+                {linking && (
+                    <button
+                        onClick={() => {
+                            if (isLinkedToCurrentIntention) {
+                                linking.onUnlinkTask(task.id);
+                            } else {
+                                linking.onLinkTask(task.id);
+                            }
+                        }}
+                        className={`text-xs flex-shrink-0 mt-0.5 cursor-pointer transition-colors font-medium ${isLinkedToCurrentIntention
+                            ? 'text-accent hover:text-red-500'
+                            : 'text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent'
+                            }`}
+                        title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
+                    >
+                        {isLinkedToCurrentIntention ? 'Unlink' : 'Link'}
+                    </button>
+                )}
                 {/* Schedule button (hover) */}
                 <button
                     onClick={handleOpenPicker}
@@ -844,9 +944,11 @@ function TaskRow({
                         onDelete={onDelete}
                         onSchedule={onSchedule}
                         onClearSchedule={onClearSchedule}
+                        onEditContent={onEditContent}
                         subTaskMap={subTaskMap}
                         compact={compact}
                         linking={linking}
+                        persistentLinks={persistentLinks}
                     />
                 ))}
         </div>

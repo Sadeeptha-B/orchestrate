@@ -264,7 +264,7 @@ export function useTodoist() {
     );
 
     const updateTask = useCallback(
-        async (taskId: string, updates: { due_datetime?: string; due_date?: string; duration?: number; duration_unit?: string }) => {
+        async (taskId: string, updates: { content?: string; due_datetime?: string; due_date?: string; duration?: number; duration_unit?: string }) => {
             const token = await resolveToken();
             if (!token) return;
             setError(null);

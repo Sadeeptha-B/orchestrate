@@ -208,6 +208,19 @@ export function Step1Intentions() {
                                 </Button>
                             </div>
 
+                            {/* Edit intentions link */}
+                            <div className="flex justify-end">
+                                <button
+                                    onClick={() => {
+                                        restartMapping();
+                                        setMappingStarted(false);
+                                    }}
+                                    className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
+                                >
+                                    ← Want to change intentions?
+                                </button>
+                            </div>
+
                             {/* Progress */}
                             <div>
                                 <div className="flex justify-between text-xs text-text-light mb-1.5">
@@ -317,11 +330,16 @@ export function Step1Intentions() {
                                     <p className="text-xs text-text-light">
                                         Continue to categorize your intentions.
                                     </p>
-                                    <Button variant="ghost" size="sm" onClick={restartMapping}>
-                                        Want to change something? Revise all
-                                    </Button>
                                 </div>
                             )}
+
+                            {/* Restart mapping link — always visible during Phase 2 */}
+                            <button
+                                onClick={restartMapping}
+                                className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
+                            >
+                                Want to start over? Restart mapping
+                            </button>
                         </>
                     )}
                 </div>
