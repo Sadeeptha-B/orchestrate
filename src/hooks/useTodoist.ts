@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDayPlan } from '../context/DayPlanContext';
 import { decryptToken } from '../lib/crypto';
 
@@ -356,10 +356,17 @@ export function useTodoist() {
         [resolveToken],
     );
 
+    /** Memoized lookup map: todoistId → TodoistTask for O(1) resolution. */
+    const taskMap = useMemo(
+        () => new Map(tasks.map((t) => [t.id, t])),
+        [tasks],
+    );
+
     return {
         tasks,
         projects,
         sections,
+        taskMap,
         loading,
         error,
         isConfigured,

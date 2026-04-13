@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
+import { useState, useRef, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { Button } from '../ui/Button';
@@ -12,7 +12,7 @@ export function Step1Intentions() {
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
-        () => plan.intentions.some((i) => i.brokenDown || i.type !== 'unclassified'),
+        () => plan.intentions.some((i) => i.brokenDown || i.linkedTaskIds.length > 0),
     );
 
     // Inline editing for the current mapping intention
@@ -58,6 +58,12 @@ export function Step1Intentions() {
     const fullyConfigured = todoistConfigured && calendarConfigured;
     const [bannerDismissed, setBannerDismissed] = useState(false);
 
+    // Build intention title lookup for linking mode
+    const intentionTitleMap = useMemo(
+        () => Object.fromEntries(plan.intentions.map((i) => [i.id, i.title])),
+        [plan.intentions],
+    );
+
     const addIntention = () => {
         const title = input.trim();
         if (!title) return;
@@ -90,6 +96,14 @@ export function Step1Intentions() {
             intentionId: currentMappingIntention.id,
             brokenDown: true,
         });
+    };
+
+    const restartMapping = () => {
+        for (const intention of plan.intentions) {
+            if (intention.brokenDown) {
+                dispatch({ type: 'MARK_BROKEN_DOWN', intentionId: intention.id, brokenDown: false });
+            }
+        }
     };
 
     return (
@@ -218,9 +232,11 @@ export function Step1Intentions() {
                                     {plan.intentions
                                         .filter((i) => i.brokenDown)
                                         .map((intention) => (
-                                            <div
+                                            <button
                                                 key={intention.id}
-                                                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-light"
+                                                onClick={() => dispatch({ type: 'MARK_BROKEN_DOWN', intentionId: intention.id, brokenDown: false })}
+                                                className="flex items-center gap-2 px-3 py-1.5 text-sm text-text-light w-full text-left rounded-lg hover:bg-surface-dark/50 transition-colors cursor-pointer group"
+                                                title="Click to remap this intention"
                                             >
                                                 <svg
                                                     className="w-4 h-4 text-success flex-shrink-0"
@@ -235,8 +251,11 @@ export function Step1Intentions() {
                                                         d="M5 13l4 4L19 7"
                                                     />
                                                 </svg>
-                                                <span className="line-through">{intention.title}</span>
-                                            </div>
+                                                <span className="line-through flex-1">{intention.title}</span>
+                                                <span className="text-[11px] text-text-light/0 group-hover:text-text-light/60 transition-colors">
+                                                    remap
+                                                </span>
+                                            </button>
                                         ))}
                                 </div>
                             )}
@@ -268,8 +287,13 @@ export function Step1Intentions() {
                                             </h3>
                                         )}
                                         <p className="text-sm text-text-light mt-1">
-                                            Break this down into actionable tasks in your todolist →
+                                            Break this down into actionable tasks and link them using the checkboxes →
                                         </p>
+                                        {currentMappingIntention.linkedTaskIds.length > 0 && (
+                                            <p className="text-xs text-accent mt-1">
+                                                {currentMappingIntention.linkedTaskIds.length} task{currentMappingIntention.linkedTaskIds.length !== 1 ? 's' : ''} linked
+                                            </p>
+                                        )}
                                     </div>
                                     <Button onClick={markCurrentBrokenDown} size="sm">
                                         Done — {upcomingCount > 0 ? 'next' : 'finish'}
@@ -286,13 +310,16 @@ export function Step1Intentions() {
 
                             {/* All done */}
                             {allBrokenDown && (
-                                <div className="bg-accent-subtle/40 rounded-lg p-4 text-center">
+                                <div className="bg-accent-subtle/40 rounded-lg p-4 text-center space-y-2">
                                     <p className="text-sm font-medium text-accent">
                                         All intentions mapped — nice work!
                                     </p>
-                                    <p className="text-xs text-text-light mt-1">
+                                    <p className="text-xs text-text-light">
                                         Continue to categorize your intentions.
                                     </p>
+                                    <Button variant="ghost" size="sm" onClick={restartMapping}>
+                                        Want to change something? Revise all
+                                    </Button>
                                 </div>
                             )}
                         </>
@@ -303,9 +330,25 @@ export function Step1Intentions() {
                 <div className="flex-1 min-w-0 flex flex-col">
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="text-sm font-medium text-text-light">Task Manager</h3>
+                        {mappingStarted && currentMappingIntention && (
+                            <span className="text-xs text-accent">
+                                Link tasks to: {currentMappingIntention.title}
+                            </span>
+                        )}
                     </div>
                     <div className="flex-1 rounded-lg border border-border overflow-hidden bg-card min-h-[400px] max-h-[70vh]">
-                        <TodoistPanel mode="full" onSetup={() => setShowSetup(true)} />
+                        <TodoistPanel
+                            mode="full"
+                            onSetup={() => setShowSetup(true)}
+                            linking={mappingStarted && currentMappingIntention ? {
+                                linkingIntentionId: currentMappingIntention.id,
+                                linkedTaskIds: currentMappingIntention.linkedTaskIds,
+                                allLinkedTasks: plan.linkedTasks,
+                                intentionTitles: intentionTitleMap,
+                                onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentMappingIntention.id, todoistId }),
+                                onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
+                            } : undefined}
+                        />
                     </div>
                 </div>
             </div>

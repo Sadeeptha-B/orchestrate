@@ -6,7 +6,7 @@ import {
     type ReactNode,
 } from 'react';
 import { format } from 'date-fns';
-import type { DayPlan, Intention, CheckIn, AppSettings, SavedDayPlan } from '../types';
+import type { DayPlan, Intention, LinkedTask, CheckIn, AppSettings, SavedDayPlan } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 
 // --------------- helpers ---------------
@@ -23,14 +23,15 @@ function freshPlan(): DayPlan {
     return {
         date: todayISO(),
         intentions: [],
-        intentionSessions: {},
+        linkedTasks: [],
+        taskSessions: {},
         wizardStep: 1,
         setupComplete: false,
         checkIns: [],
     };
 }
 
-/** Migrate a v1 plan (tasks/taskSessions) to the v2 shape (intentions/intentionSessions). */
+/** Migrate a plan through the version chain: v1 (tasks) → v2 (intentions) → v4 (linkedTasks). */
 function migratePlan(raw: Record<string, unknown>): DayPlan {
     // Wizard was reduced from 6 steps to 5 (old Step 1 & 2 merged).
     // Old step 2+ maps to step N-1; step 1 stays 1.
@@ -39,27 +40,58 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
     const migrateStep = (s: number) =>
         needsStepMigration ? Math.min(Math.max(s > 1 ? s - 1 : 1, 1), 5) : Math.min(s, 5);
 
-    // Already v2 shape
+    // --- v1 → v2: convert tasks to intentions ---
+    let intentions: Intention[];
+    let intentionSessions: Record<string, string[]>;
+
     if (Array.isArray(raw.intentions)) {
-        const plan = raw as unknown as DayPlan;
-        return { ...plan, wizardStep: migrateStep(plan.wizardStep) };
+        // Already v2+ shape — extract intentions
+        intentions = (raw.intentions as Array<Record<string, unknown>>).map((i) => ({
+            id: i.id as string,
+            title: i.title as string,
+            linkedTaskIds: (i.linkedTaskIds as string[]) ?? [],
+            completed: (i.completed as boolean) ?? false,
+            brokenDown: (i.brokenDown as boolean) ?? false,
+            isHabit: (i.isHabit as boolean) ?? false,
+        }));
+        intentionSessions = (raw.intentionSessions ?? {}) as Record<string, string[]>;
+    } else {
+        // v1: tasks → intentions
+        const v1Tasks = (raw.tasks ?? []) as Array<Record<string, unknown>>;
+        intentions = v1Tasks.map((t) => ({
+            id: t.id as string,
+            title: t.title as string,
+            linkedTaskIds: [],
+            completed: (t.completed as boolean) ?? false,
+            brokenDown: false,
+            isHabit: false,
+        }));
+        intentionSessions = (raw.taskSessions ?? {}) as Record<string, string[]>;
     }
 
-    const v1Tasks = (raw.tasks ?? []) as Array<Record<string, unknown>>;
-    const intentions: Intention[] = v1Tasks.map((t) => ({
-        id: t.id as string,
-        title: t.title as string,
-        type: (t.type as Intention['type']) ?? 'unclassified',
-        assignedSessions: t.assignedSession ? [t.assignedSession as string] : [],
-        completed: (t.completed as boolean) ?? false,
-        brokenDown: false,
-        isHabit: false,
-    }));
+    // --- v2/v3 → v4: if plan has intentionSessions but no taskSessions/linkedTasks ---
+    if (Array.isArray(raw.linkedTasks) && raw.taskSessions !== undefined) {
+        // Already v4 shape
+        return {
+            date: raw.date as string,
+            intentions,
+            linkedTasks: raw.linkedTasks as LinkedTask[],
+            taskSessions: raw.taskSessions as Record<string, string[]>,
+            wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
+            setupComplete: (raw.setupComplete as boolean) ?? false,
+            checkIns: (raw.checkIns ?? []) as CheckIn[],
+        };
+    }
 
+    // v2/v3 → v4: no Todoist task IDs exist, so we can't auto-create LinkedTask entries.
+    // Preserve intentions, initialize empty task structures.
+    // Ignore intentionSessions (they referenced intentions, not tasks).
+    void intentionSessions; // intentionally unused in v4
     return {
         date: raw.date as string,
         intentions,
-        intentionSessions: (raw.taskSessions ?? {}) as Record<string, string[]>,
+        linkedTasks: [],
+        taskSessions: {},
         wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
         checkIns: (raw.checkIns ?? []) as CheckIn[],
@@ -115,14 +147,17 @@ type Action =
     | { type: 'ADD_INTENTION'; title: string }
     | { type: 'REMOVE_INTENTION'; intentionId: string }
     | { type: 'UPDATE_INTENTION'; intention: Intention }
-    | { type: 'CATEGORIZE_INTENTION'; intentionId: string; intentionType: Intention['type'] }
     | { type: 'REORDER_INTENTIONS'; intentionIds: string[] }
-    | { type: 'REORDER_SESSION_INTENTIONS'; sessionId: string; intentionIds: string[] }
-    | { type: 'ASSIGN_INTENTION'; intentionId: string; sessionId: string }
-    | { type: 'UNASSIGN_INTENTION'; intentionId: string; sessionId: string }
     | { type: 'TOGGLE_INTENTION_COMPLETE'; intentionId: string }
     | { type: 'MARK_BROKEN_DOWN'; intentionId: string; brokenDown: boolean }
-    | { type: 'TOGGLE_HABIT'; intentionId: string }
+    | { type: 'LINK_TASK'; intentionId: string; todoistId: string }
+    | { type: 'UNLINK_TASK'; todoistId: string }
+    | { type: 'CATEGORIZE_TASK'; todoistId: string; taskType: LinkedTask['type'] }
+    | { type: 'TOGGLE_TASK_HABIT'; todoistId: string }
+    | { type: 'ASSIGN_TASK'; todoistId: string; sessionId: string }
+    | { type: 'UNASSIGN_TASK'; todoistId: string; sessionId: string }
+    | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string }
+    | { type: 'REORDER_SESSION_TASKS'; sessionId: string; taskIds: string[] }
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
@@ -149,8 +184,7 @@ function reducer(state: State, action: Action): State {
             const intention: Intention = {
                 id: crypto.randomUUID(),
                 title: action.title,
-                type: 'unclassified',
-                assignedSessions: [],
+                linkedTaskIds: [],
                 completed: false,
                 brokenDown: false,
                 isHabit: false,
@@ -160,23 +194,23 @@ function reducer(state: State, action: Action): State {
 
         case 'REMOVE_INTENTION': {
             const intentions = plan.intentions.filter((i) => i.id !== action.intentionId);
-            const intentionSessions = { ...plan.intentionSessions };
-            for (const sid of Object.keys(intentionSessions)) {
-                intentionSessions[sid] = intentionSessions[sid].filter((id) => id !== action.intentionId);
+            // Remove all linked tasks belonging to this intention
+            const removedTaskIds = new Set(
+                plan.linkedTasks
+                    .filter((lt) => lt.intentionId === action.intentionId)
+                    .map((lt) => lt.todoistId),
+            );
+            const linkedTasks = plan.linkedTasks.filter((lt) => lt.intentionId !== action.intentionId);
+            const taskSessions = { ...plan.taskSessions };
+            for (const sid of Object.keys(taskSessions)) {
+                taskSessions[sid] = taskSessions[sid].filter((id) => !removedTaskIds.has(id));
             }
-            return { ...state, plan: { ...plan, intentions, intentionSessions } };
+            return { ...state, plan: { ...plan, intentions, linkedTasks, taskSessions } };
         }
 
         case 'UPDATE_INTENTION': {
             const intentions = plan.intentions.map((i) =>
                 i.id === action.intention.id ? action.intention : i,
-            );
-            return { ...state, plan: { ...plan, intentions } };
-        }
-
-        case 'CATEGORIZE_INTENTION': {
-            const intentions = plan.intentions.map((i) =>
-                i.id === action.intentionId ? { ...i, type: action.intentionType } : i,
             );
             return { ...state, plan: { ...plan, intentions } };
         }
@@ -189,66 +223,18 @@ function reducer(state: State, action: Action): State {
             return { ...state, plan: { ...plan, intentions: reordered } };
         }
 
-        case 'REORDER_SESSION_INTENTIONS': {
-            const intentionSessions = {
-                ...plan.intentionSessions,
-                [action.sessionId]: action.intentionIds,
-            };
-            return { ...state, plan: { ...plan, intentionSessions } };
-        }
-
-        case 'ASSIGN_INTENTION': {
+        case 'TOGGLE_INTENTION_COMPLETE': {
             const intention = plan.intentions.find((i) => i.id === action.intentionId);
             if (!intention) return state;
-
-            const intentionSessions = { ...plan.intentionSessions };
-
-            if (intention.type === 'background') {
-                // Background: allow multi-session — just add to the target session
-                const current = intentionSessions[action.sessionId] ?? [];
-                if (current.includes(action.intentionId)) return state;
-                intentionSessions[action.sessionId] = [...current, action.intentionId];
-            } else {
-                // Main: exclusive — remove from any other session first
-                for (const sid of Object.keys(intentionSessions)) {
-                    intentionSessions[sid] = intentionSessions[sid].filter((id) => id !== action.intentionId);
-                }
-                intentionSessions[action.sessionId] = [
-                    ...(intentionSessions[action.sessionId] ?? []),
-                    action.intentionId,
-                ];
-            }
-
-            // Update the intention's assignedSessions array
-            const newAssigned = Object.entries(intentionSessions)
-                .filter(([, ids]) => ids.includes(action.intentionId))
-                .map(([sid]) => sid);
-
+            const newCompleted = !intention.completed;
             const intentions = plan.intentions.map((i) =>
-                i.id === action.intentionId ? { ...i, assignedSessions: newAssigned } : i,
+                i.id === action.intentionId ? { ...i, completed: newCompleted } : i,
             );
-
-            return { ...state, plan: { ...plan, intentions, intentionSessions } };
-        }
-
-        case 'UNASSIGN_INTENTION': {
-            const intentionSessions = { ...plan.intentionSessions };
-            intentionSessions[action.sessionId] = (intentionSessions[action.sessionId] ?? []).filter(
-                (id) => id !== action.intentionId,
+            // Also toggle all linked tasks
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.intentionId === action.intentionId ? { ...lt, completed: newCompleted } : lt,
             );
-            const intentions = plan.intentions.map((i) =>
-                i.id === action.intentionId
-                    ? { ...i, assignedSessions: i.assignedSessions.filter((s) => s !== action.sessionId) }
-                    : i,
-            );
-            return { ...state, plan: { ...plan, intentions, intentionSessions } };
-        }
-
-        case 'TOGGLE_INTENTION_COMPLETE': {
-            const intentions = plan.intentions.map((i) =>
-                i.id === action.intentionId ? { ...i, completed: !i.completed } : i,
-            );
-            return { ...state, plan: { ...plan, intentions } };
+            return { ...state, plan: { ...plan, intentions, linkedTasks } };
         }
 
         case 'MARK_BROKEN_DOWN': {
@@ -258,12 +244,131 @@ function reducer(state: State, action: Action): State {
             return { ...state, plan: { ...plan, intentions } };
         }
 
-        case 'TOGGLE_HABIT': {
-            const intentions = plan.intentions.map((i) =>
-                i.id === action.intentionId ? { ...i, isHabit: !i.isHabit } : i,
+        // ---- Task-level actions (v4) ----
+
+        case 'LINK_TASK': {
+            const { intentionId, todoistId } = action;
+            // If already linked to another intention, move it
+            let linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === todoistId ? { ...lt, intentionId } : lt,
             );
-            return { ...state, plan: { ...plan, intentions } };
+            const intentions = plan.intentions.map((i) => {
+                if (i.id === intentionId) {
+                    // Add to target if not already there
+                    const ids = i.linkedTaskIds.includes(todoistId)
+                        ? i.linkedTaskIds
+                        : [...i.linkedTaskIds, todoistId];
+                    return { ...i, linkedTaskIds: ids };
+                }
+                // Remove from previous owner (if moving)
+                return { ...i, linkedTaskIds: i.linkedTaskIds.filter((id) => id !== todoistId) };
+            });
+            // Create new LinkedTask if it doesn't exist yet
+            const existing = linkedTasks.find((lt) => lt.todoistId === todoistId);
+            if (!existing) {
+                linkedTasks = [...linkedTasks, {
+                    todoistId,
+                    intentionId,
+                    type: 'unclassified',
+                    assignedSessions: [],
+                    completed: false,
+                    isHabit: false,
+                }];
+            }
+            return { ...state, plan: { ...plan, intentions, linkedTasks } };
         }
+
+        case 'UNLINK_TASK': {
+            const { todoistId } = action;
+            const linkedTasks = plan.linkedTasks.filter((lt) => lt.todoistId !== todoistId);
+            const intentions = plan.intentions.map((i) => ({
+                ...i,
+                linkedTaskIds: i.linkedTaskIds.filter((id) => id !== todoistId),
+            }));
+            const taskSessions = { ...plan.taskSessions };
+            for (const sid of Object.keys(taskSessions)) {
+                taskSessions[sid] = taskSessions[sid].filter((id) => id !== todoistId);
+            }
+            return { ...state, plan: { ...plan, intentions, linkedTasks, taskSessions } };
+        }
+
+        case 'CATEGORIZE_TASK': {
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId ? { ...lt, type: action.taskType } : lt,
+            );
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'TOGGLE_TASK_HABIT': {
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId ? { ...lt, isHabit: !lt.isHabit } : lt,
+            );
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'ASSIGN_TASK': {
+            const task = plan.linkedTasks.find((lt) => lt.todoistId === action.todoistId);
+            if (!task) return state;
+
+            const taskSessions = { ...plan.taskSessions };
+
+            if (task.type === 'background') {
+                // Background: allow multi-session — just add to the target session
+                const current = taskSessions[action.sessionId] ?? [];
+                if (current.includes(action.todoistId)) return state;
+                taskSessions[action.sessionId] = [...current, action.todoistId];
+            } else {
+                // Main: exclusive — remove from any other session first
+                for (const sid of Object.keys(taskSessions)) {
+                    taskSessions[sid] = taskSessions[sid].filter((id) => id !== action.todoistId);
+                }
+                taskSessions[action.sessionId] = [
+                    ...(taskSessions[action.sessionId] ?? []),
+                    action.todoistId,
+                ];
+            }
+
+            // Update the task's assignedSessions array
+            const newAssigned = Object.entries(taskSessions)
+                .filter(([, ids]) => ids.includes(action.todoistId))
+                .map(([sid]) => sid);
+
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId ? { ...lt, assignedSessions: newAssigned } : lt,
+            );
+
+            return { ...state, plan: { ...plan, linkedTasks, taskSessions } };
+        }
+
+        case 'UNASSIGN_TASK': {
+            const taskSessions = { ...plan.taskSessions };
+            taskSessions[action.sessionId] = (taskSessions[action.sessionId] ?? []).filter(
+                (id) => id !== action.todoistId,
+            );
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId
+                    ? { ...lt, assignedSessions: lt.assignedSessions.filter((s) => s !== action.sessionId) }
+                    : lt,
+            );
+            return { ...state, plan: { ...plan, linkedTasks, taskSessions } };
+        }
+
+        case 'TOGGLE_TASK_COMPLETE': {
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId ? { ...lt, completed: !lt.completed } : lt,
+            );
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'REORDER_SESSION_TASKS': {
+            const taskSessions = {
+                ...plan.taskSessions,
+                [action.sessionId]: action.taskIds,
+            };
+            return { ...state, plan: { ...plan, taskSessions } };
+        }
+
+        // ---- Wizard / global actions ----
 
         case 'SET_WIZARD_STEP':
             return { ...state, plan: { ...plan, wizardStep: action.step } };

@@ -1,15 +1,27 @@
+import { useMemo } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useTodoist } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 
 export function Step4ScheduleBackground() {
     const { plan, settings, dispatch } = useDayPlan();
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
+    const { taskMap } = useTodoist();
 
-    const backgroundIntentions = plan.intentions.filter((i) => i.type === 'background');
+    const backgroundTasks = plan.linkedTasks.filter((lt) => lt.type === 'background');
+    const mainTasks = plan.linkedTasks.filter((lt) => lt.type === 'main');
+
+    const intentionMap = useMemo(
+        () => new Map(plan.intentions.map((i) => [i.id, i])),
+        [plan.intentions],
+    );
+
+    const getTaskTitle = (todoistId: string) =>
+        taskMap.get(todoistId)?.content ?? todoistId;
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 5 });
@@ -24,25 +36,26 @@ export function Step4ScheduleBackground() {
                         <div>
                             <h2 className="text-2xl font-semibold mb-2">Schedule nudges &amp; habits</h2>
                             <p className="text-text-light text-sm">
-                                Background intentions appear as gentle nudges during your sessions. You can assign
+                                Background tasks appear as gentle nudges during your sessions. You can assign
                                 each one to <strong>multiple sessions</strong> — they'll remind you throughout the day.
                             </p>
                         </div>
 
-                        {/* Background intentions overview */}
-                        {backgroundIntentions.length > 0 && (
+                        {/* Background tasks overview */}
+                        {backgroundTasks.length > 0 && (
                             <div>
                                 <h3 className="text-sm font-medium text-text-light mb-2">Your nudges</h3>
                                 <div className="flex flex-wrap gap-2">
-                                    {backgroundIntentions.map((intention) => (
+                                    {backgroundTasks.map((lt) => (
                                         <span
-                                            key={intention.id}
+                                            key={lt.todoistId}
                                             className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
+                                            title={intentionMap.get(lt.intentionId)?.title}
                                         >
-                                            {intention.isHabit && '🔄 '}{intention.title}
-                                            {intention.assignedSessions.length > 0 && (
+                                            {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
+                                            {lt.assignedSessions.length > 0 && (
                                                 <span className="ml-1 text-accent">
-                                                    ({intention.assignedSessions.length} session{intention.assignedSessions.length !== 1 ? 's' : ''})
+                                                    ({lt.assignedSessions.length} session{lt.assignedSessions.length !== 1 ? 's' : ''})
                                                 </span>
                                             )}
                                         </span>
@@ -53,13 +66,11 @@ export function Step4ScheduleBackground() {
 
                         <div className="space-y-4">
                             {remainingSessions.map((session) => {
-                                const assignedIds = plan.intentionSessions[session.id] ?? [];
-                                const mainInSession = plan.intentions.filter(
-                                    (i) => i.type === 'main' && assignedIds.includes(i.id),
-                                );
-                                const bgInSession = backgroundIntentions.filter((i) => assignedIds.includes(i.id));
-                                const notInThisSession = backgroundIntentions.filter(
-                                    (i) => !assignedIds.includes(i.id),
+                                const assignedIds = plan.taskSessions[session.id] ?? [];
+                                const mainInSession = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));
+                                const bgInSession = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
+                                const notInThisSession = backgroundTasks.filter(
+                                    (lt) => !assignedIds.includes(lt.todoistId),
                                 );
 
                                 return (
@@ -71,37 +82,37 @@ export function Step4ScheduleBackground() {
                                             </span>
                                         </div>
 
-                                        {/* Main intentions (read-only context) */}
+                                        {/* Main tasks (read-only context) */}
                                         {mainInSession.length > 0 && (
                                             <div className="flex flex-wrap gap-2 mb-2">
-                                                {mainInSession.map((intention) => (
+                                                {mainInSession.map((lt) => (
                                                     <span
-                                                        key={intention.id}
+                                                        key={lt.todoistId}
                                                         className="px-3 py-1.5 text-xs rounded-full bg-accent/10 text-accent"
                                                     >
-                                                        {intention.title}
+                                                        {getTaskTitle(lt.todoistId)}
                                                     </span>
                                                 ))}
                                             </div>
                                         )}
 
-                                        {/* Assigned background intentions */}
+                                        {/* Assigned background tasks */}
                                         {bgInSession.length > 0 && (
                                             <div className="flex flex-wrap gap-2 mb-3">
-                                                {bgInSession.map((intention) => (
+                                                {bgInSession.map((lt) => (
                                                     <button
-                                                        key={intention.id}
+                                                        key={lt.todoistId}
                                                         onClick={() =>
                                                             dispatch({
-                                                                type: 'UNASSIGN_INTENTION',
-                                                                intentionId: intention.id,
+                                                                type: 'UNASSIGN_TASK',
+                                                                todoistId: lt.todoistId,
                                                                 sessionId: session.id,
                                                             })
                                                         }
                                                         className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
                                                         title="Click to remove from this session"
                                                     >
-                                                        {intention.isHabit && '🔄 '}{intention.title} ×
+                                                        {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)} ×
                                                     </button>
                                                 ))}
                                             </div>
@@ -110,19 +121,19 @@ export function Step4ScheduleBackground() {
                                         {/* Assign buttons — show all not-yet-in-this-session */}
                                         {notInThisSession.length > 0 && (
                                             <div className="flex flex-wrap gap-2">
-                                                {notInThisSession.map((intention) => (
+                                                {notInThisSession.map((lt) => (
                                                     <button
-                                                        key={intention.id}
+                                                        key={lt.todoistId}
                                                         onClick={() =>
                                                             dispatch({
-                                                                type: 'ASSIGN_INTENTION',
-                                                                intentionId: intention.id,
+                                                                type: 'ASSIGN_TASK',
+                                                                todoistId: lt.todoistId,
                                                                 sessionId: session.id,
                                                             })
                                                         }
                                                         className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                     >
-                                                        + {intention.isHabit && '🔄 '}{intention.title}
+                                                        + {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
                                                     </button>
                                                 ))}
                                             </div>

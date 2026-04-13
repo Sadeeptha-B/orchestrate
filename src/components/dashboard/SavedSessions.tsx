@@ -29,7 +29,7 @@ function validateImport(data: unknown): SavedDayPlan[] | null {
             typeof (item as SavedDayPlan).savedAt !== 'string' ||
             typeof (item as SavedDayPlan).label !== 'string' ||
             !(item as SavedDayPlan).plan ||
-            // Accept both v1 (tasks) and v2 (intentions) formats
+            // Accept v1 (tasks), v2/v3 (intentions), and v4 (intentions + linkedTasks)
             (!Array.isArray((item as SavedDayPlan).plan?.intentions) &&
                 !Array.isArray((item as unknown as { plan: { tasks: unknown[] } }).plan?.tasks))
         ) {
@@ -128,8 +128,12 @@ export function SavedSessions({ compact = false, hideHeading = false }: SavedSes
             <div className="space-y-2">
                 {history.map((entry) => {
                     const items = entry.plan.intentions ?? (entry.plan as unknown as { tasks: typeof entry.plan.intentions }).tasks ?? [];
-                    const itemCount = items.length;
-                    const doneCount = items.filter((i) => i.completed).length;
+                    const linkedTasks = (entry.plan as { linkedTasks?: { completed: boolean }[] }).linkedTasks;
+                    // v4: count linked tasks; fallback: count intentions/tasks
+                    const itemCount = linkedTasks ? linkedTasks.length : items.length;
+                    const doneCount = linkedTasks
+                        ? linkedTasks.filter((lt) => lt.completed).length
+                        : items.filter((i) => i.completed).length;
                     const itemNames = items.map((i) => i.title).join('\n');
 
                     return (

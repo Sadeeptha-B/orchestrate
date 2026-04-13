@@ -1,10 +1,19 @@
 export interface Intention {
     id: string;
     title: string;
-    type: 'main' | 'background' | 'unclassified';
-    assignedSessions: string[];
+    linkedTaskIds: string[];   // ordered Todoist task IDs linked to this intention
     completed: boolean;
     brokenDown: boolean;
+    isHabit: boolean;
+}
+
+/** A Todoist task linked to an intention within Orchestrate's data model. */
+export interface LinkedTask {
+    todoistId: string;                                    // Todoist task ID (primary key)
+    intentionId: string;                                  // parent intention
+    type: 'main' | 'background' | 'unclassified';        // categorization
+    assignedSessions: string[];                           // session slot IDs
+    completed: boolean;
     isHabit: boolean;
 }
 
@@ -44,7 +53,8 @@ export interface Playlist {
 export interface DayPlan {
     date: string; // ISO date string (YYYY-MM-DD)
     intentions: Intention[];
-    intentionSessions: Record<string, string[]>; // sessionId -> intentionId[]
+    linkedTasks: LinkedTask[];                             // all tasks across all intentions
+    taskSessions: Record<string, string[]>;               // sessionId -> todoistId[]
     wizardStep: number; // 1–5
     setupComplete: boolean;
     checkIns: CheckIn[];

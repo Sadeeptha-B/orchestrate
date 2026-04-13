@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
 import { useTodoist, type TodoistTask, type TodoistProject, type TodoistSection } from '../../hooks/useTodoist';
+import type { LinkedTask } from '../../types';
 
 // --- Todoist color map (color name → hex) ---
 const TODOIST_COLORS: Record<string, string> = {
@@ -70,12 +71,22 @@ function countTasksInNode(node: ProjectNode): number {
 
 // --- Component ---
 
+interface LinkingProps {
+    linkingIntentionId: string;
+    linkedTaskIds: string[];                  // IDs linked to the current intention (pre-checked)
+    allLinkedTasks: LinkedTask[];             // all linked tasks across intentions (for "(linked to: X)" labels)
+    intentionTitles: Record<string, string>;  // intentionId → title lookup
+    onLinkTask: (todoistId: string) => void;
+    onUnlinkTask: (todoistId: string) => void;
+}
+
 interface TodoistPanelProps {
     mode?: 'compact' | 'full';
     onSetup?: () => void;
+    linking?: LinkingProps;
 }
 
-export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
+export function TodoistPanel({ mode = 'full', onSetup, linking }: TodoistPanelProps) {
     const {
         tasks,
         projects,
@@ -119,6 +130,19 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
         }
         return map;
     }, [tasks]);
+
+    // Flatten projects for the "add task" project picker
+    const flatProjects = useMemo(() => {
+        const result: { id: string; name: string; depth: number }[] = [];
+        function walk(nodes: ProjectNode[], depth: number) {
+            for (const n of nodes) {
+                result.push({ id: n.project.id, name: n.project.name, depth });
+                walk(n.children, depth + 1);
+            }
+        }
+        walk(tree, 0);
+        return result;
+    }, [tree]);
 
     if (!isConfigured) {
         return (
@@ -179,19 +203,6 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
         await updateTask(taskId, { due_date: today });
     };
 
-    // Flatten projects for the "add task" project picker
-    const flatProjects = useMemo(() => {
-        const result: { id: string; name: string; depth: number }[] = [];
-        function walk(nodes: ProjectNode[], depth: number) {
-            for (const n of nodes) {
-                result.push({ id: n.project.id, name: n.project.name, depth });
-                walk(n.children, depth + 1);
-            }
-        }
-        walk(tree, 0);
-        return result;
-    }, [tree]);
-
     return (
         <div className="flex flex-col h-full">
             {/* Header */}
@@ -247,6 +258,7 @@ export function TodoistPanel({ mode = 'full', onSetup }: TodoistPanelProps) {
                         onClearSchedule={handleClearSchedule}
                         subTaskMap={subTaskMap}
                         compact={mode === 'compact'}
+                        linking={linking}
                     />
                 ))}
             </div>
@@ -323,6 +335,7 @@ function ProjectTreeNode({
     onClearSchedule,
     subTaskMap,
     compact,
+    linking,
 }: {
     node: ProjectNode;
     depth: number;
@@ -334,6 +347,7 @@ function ProjectTreeNode({
     onClearSchedule: (taskId: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
+    linking?: LinkingProps;
 }) {
     const [collapsed, setCollapsed] = useState(depth > 0);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -488,6 +502,7 @@ function ProjectTreeNode({
                             onClearSchedule={onClearSchedule}
                             subTaskMap={subTaskMap}
                             compact={compact}
+                            linking={linking}
                         />
                     ))}
 
@@ -498,6 +513,7 @@ function ProjectTreeNode({
                         return (
                             <SectionGroup
                                 key={section.id}
+                                linking={linking}
                                 section={section}
                                 tasks={sectionTasks}
                                 depth={depth + 1}
@@ -525,6 +541,7 @@ function ProjectTreeNode({
                             onClearSchedule={onClearSchedule}
                             subTaskMap={subTaskMap}
                             compact={compact}
+                            linking={linking}
                         />
                     ))}
                 </div>
@@ -545,6 +562,7 @@ function SectionGroup({
     onClearSchedule,
     subTaskMap,
     compact,
+    linking,
 }: {
     section: TodoistSection;
     tasks: TodoistTask[];
@@ -555,6 +573,7 @@ function SectionGroup({
     onClearSchedule: (taskId: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
+    linking?: LinkingProps;
 }) {
     const [collapsed, setCollapsed] = useState(false);
 
@@ -590,6 +609,7 @@ function SectionGroup({
                         onClearSchedule={onClearSchedule}
                         subTaskMap={subTaskMap}
                         compact={compact}
+                        linking={linking}
                     />
                 ))}
         </div>
@@ -607,6 +627,7 @@ function TaskRow({
     onClearSchedule,
     subTaskMap,
     compact,
+    linking,
 }: {
     task: TodoistTask;
     depth: number;
@@ -616,6 +637,7 @@ function TaskRow({
     onClearSchedule: (taskId: string) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
+    linking?: LinkingProps;
 }) {
     const children = subTaskMap.get(task.id);
     const [childrenCollapsed, setChildrenCollapsed] = useState(false);
@@ -662,10 +684,21 @@ function TaskRow({
         setShowTimePicker(false);
     };
 
+    // Linking mode state
+    const isLinkedToCurrentIntention = linking?.linkedTaskIds.includes(task.id) ?? false;
+    const linkedToOther = linking
+        ? linking.allLinkedTasks.find(
+            (lt) => lt.todoistId === task.id && lt.intentionId !== linking.linkingIntentionId,
+        )
+        : null;
+    const linkedToOtherTitle = linkedToOther
+        ? linking!.intentionTitles[linkedToOther.intentionId]
+        : null;
+
     return (
         <div>
             <div
-                className="flex items-start gap-2 py-1 px-2 group"
+                className={`flex items-start gap-2 py-1 px-2 group ${isLinkedToCurrentIntention ? 'bg-accent/5 border-l-2 border-accent' : ''}`}
                 style={{ paddingLeft: `${8 + depth * 16}px` }}
             >
                 {/* Sub-task toggle */}
@@ -680,13 +713,37 @@ function TaskRow({
                 ) : (
                     <span className="w-3 flex-shrink-0" />
                 )}
-                <button
-                    onClick={() => onComplete(task.id)}
-                    className="w-4 h-4 mt-0.5 flex-shrink-0 rounded-full border border-border hover:border-accent hover:bg-accent/10 transition-colors cursor-pointer"
-                    title="Complete"
-                />
+                {/* Linking checkbox (when in linking mode) */}
+                {linking && (
+                    <input
+                        type="checkbox"
+                        checked={isLinkedToCurrentIntention}
+                        onChange={() => {
+                            if (isLinkedToCurrentIntention) {
+                                linking.onUnlinkTask(task.id);
+                            } else {
+                                linking.onLinkTask(task.id);
+                            }
+                        }}
+                        className="w-4 h-4 mt-0.5 flex-shrink-0 accent-accent cursor-pointer"
+                        title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
+                    />
+                )}
+                {/* Completion button (hidden in linking mode) */}
+                {!linking && (
+                    <button
+                        onClick={() => onComplete(task.id)}
+                        className="w-4 h-4 mt-0.5 flex-shrink-0 rounded-full border border-border hover:border-accent hover:bg-accent/10 transition-colors cursor-pointer"
+                        title="Complete"
+                    />
+                )}
                 <div className="min-w-0 flex-1">
                     <p className="text-sm leading-snug">{task.content}</p>
+                    {linkedToOtherTitle && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                            linked to: {linkedToOtherTitle}
+                        </p>
+                    )}
                     {!compact && task.due && (
                         <p className="text-xs text-text-light mt-0.5">
                             {isScheduled
@@ -789,6 +846,7 @@ function TaskRow({
                         onClearSchedule={onClearSchedule}
                         subTaskMap={subTaskMap}
                         compact={compact}
+                        linking={linking}
                     />
                 ))}
         </div>

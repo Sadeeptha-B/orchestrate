@@ -79,8 +79,8 @@ export function Dashboard() {
         setSaveName('');
     };
 
-    const completedCount = plan.intentions.filter((i) => i.completed).length;
-    const totalCount = plan.intentions.length;
+    const completedCount = plan.linkedTasks.filter((lt) => lt.completed).length;
+    const totalCount = plan.linkedTasks.length;
 
     return (
         <div className="min-h-screen flex flex-col">
