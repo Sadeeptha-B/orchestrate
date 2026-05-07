@@ -142,17 +142,17 @@ export function SessionTimelineBar({
                                 {sessionMain.map((lt) => (
                                     <span
                                         key={lt.todoistId}
-                                        className="px-1.5 py-0.5 text-[9px] rounded-full bg-accent/15 text-accent leading-tight"
+                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-accent/15 text-accent'}`}
                                     >
-                                        {getTaskTitle(lt.todoistId)}
+                                        {lt.completed && '🎉 '}{getTaskTitle(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionBg.map((lt) => (
                                     <span
                                         key={lt.todoistId}
-                                        className="px-1.5 py-0.5 text-[9px] rounded-full bg-surface-dark text-text-light leading-tight"
+                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
                                     >
-                                        {lt.isHabit && '🔄 '}{getTaskTitle(lt.todoistId)}
+                                        {lt.completed ? '🎉 ' : lt.isHabit ? '🔄 ' : ''}{getTaskTitle(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionMain.length === 0 && sessionBg.length === 0 && (

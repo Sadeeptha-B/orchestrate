@@ -1,3 +1,11 @@
+> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 4. Preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable.
+>
+> Iteration 5 (not yet implemented at the time of refactor) lives in [../backlog.md](../backlog.md) instead. For the durable "why" see [../vision.md](../vision.md); for current implementation state see [../synthesis.md](../synthesis.md).
+>
+> Future shipped iterations should land here as additional entries.
+
+# Orchestrate — Iteration History
+
 ## Iteration 1:
 
 I have often found that on a new day, it is essential to contextualize your tasks. Typical task manager programs, while they maintain lists, do not solve the extra friction for contextualization in terms of the new day, which requires going through the todolist and getting a holistic overview of it. What I want to build is mainly a web app that walks you through this contextualization process.
@@ -20,9 +28,9 @@ I plan to achieve this through a number of steps
 
 5. Then the app should invite the user to schedule background tasks accordingly within the day based on his main task allocation
 
-6. Refer to [Music Routine](./music_routine.md) that decides on music for the user based on the type of work. The app should then prompt the user to start the "Start work music"
+6. Refer to [Music Routine](../music_routine.md) that decides on music for the user based on the type of work. The app should then prompt the user to start the "Start work music"
 
-7. Then the app should show all the different playlists detailed in [Music Routine](./music_routine.md)  in a format so that it is always visible to the user.
+7. Then the app should show all the different playlists detailed in [Music Routine](../music_routine.md)  in a format so that it is always visible to the user.
 
 8. Hour by hour the app should prompt the user and ask how his day is going and remind him to recontextualize if necessary. It would also ask him the type of work he's doing and to switch playlists if necessary
 

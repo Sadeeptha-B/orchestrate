@@ -1,3 +1,5 @@
+> **Looking for a high-level overview?** Start at [synthesis.md](./synthesis.md). This document goes deeper on data-model specifics.
+
 # Orchestrate — Data Model Reference
 
 This document describes every data type, the reducer action catalog, the migration chain, localStorage schemas, and the Todoist data lifecycle. It is the companion to the [Architecture Guide](architecture.md).

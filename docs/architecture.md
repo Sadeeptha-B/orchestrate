@@ -1,3 +1,5 @@
+> **Looking for a high-level overview?** Start at [synthesis.md](./synthesis.md). This document goes deeper on architectural specifics.
+
 # Orchestrate — Architecture Guide
 
 This document describes the architecture of Orchestrate: how the application is structured, how data flows between components, and how external services are integrated. It is intended to be read alongside the companion [Data Model](data-model.md) document.
