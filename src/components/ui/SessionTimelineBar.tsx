@@ -1,6 +1,12 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { timeToMinutes } from '../../lib/time';
+import { getTaskTitle } from '../../lib/tasks';
 import type { LinkedTask, SessionSlot } from '../../types';
+
+function nowInMinutes(): number {
+    const d = new Date();
+    return d.getHours() * 60 + d.getMinutes();
+}
 
 /** Format minutes since midnight to a short label like "6am", "2:30pm". */
 function formatHour(minutes: number): string {
@@ -70,17 +76,23 @@ export function SessionTimelineBar({
         };
     };
 
-    const getTaskTitle = (todoistId: string) => {
-        const fromTodoist = taskMap.get(todoistId)?.content;
-        if (fromTodoist) return fromTodoist;
-        const lt = linkedTasks.find((t) => t.todoistId === todoistId);
-        return lt?.titleSnapshot ?? todoistId;
-    };
+    const titleFor = (todoistId: string) => getTaskTitle(todoistId, linkedTasks, taskMap);
 
     const isInteractive = onSelectSession !== undefined;
 
+    // Current-time indicator — re-render once per minute
+    const [now, setNow] = useState(nowInMinutes);
+    useEffect(() => {
+        const id = setInterval(() => setNow(nowInMinutes()), 60_000);
+        return () => clearInterval(id);
+    }, []);
+    const nowPercent =
+        sessions.length > 0 && now >= dayStart && now <= dayEnd
+            ? ((now - dayStart) / totalMinutes) * 100
+            : null;
+
     return (
-        <div className="space-y-1">
+        <div className="relative space-y-1 pt-5">
             {/* Hour labels */}
             <div className="relative h-5">
                 {hourMarks.map((m) => (
@@ -105,8 +117,9 @@ export function SessionTimelineBar({
                 ))}
             </div>
 
-            {/* Session blocks */}
-            <div className="relative" style={{ minHeight: 80 }}>
+            {/* Session blocks — single-cell grid so the cell auto-sizes to the tallest block.
+                Each block layers in the same cell via grid-area, positioned horizontally by margin-left/width. */}
+            <div className="grid items-start" style={{ gridTemplateColumns: '1fr', minHeight: 80 }}>
                 {sessions.map((session) => {
                     const { left, width } = slotPosition(session);
                     const isSelected = selectedSessionId === session.id;
@@ -116,7 +129,7 @@ export function SessionTimelineBar({
                     const sessionBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
 
                     const blockClasses = [
-                        'absolute top-0 rounded-lg border p-2 text-left overflow-hidden transition-colors',
+                        'rounded-lg border p-2 text-left overflow-hidden transition-colors',
                         isSelected
                             ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
                             : isCurrent
@@ -144,7 +157,7 @@ export function SessionTimelineBar({
                                         key={lt.todoistId}
                                         className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-accent/15 text-accent'}`}
                                     >
-                                        {lt.completed && '🎉 '}{getTaskTitle(lt.todoistId)}
+                                        {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionBg.map((lt) => (
@@ -152,7 +165,7 @@ export function SessionTimelineBar({
                                         key={lt.todoistId}
                                         className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
                                     >
-                                        {lt.completed ? '🎉 ' : lt.isHabit ? '🔄 ' : ''}{getTaskTitle(lt.todoistId)}
+                                        {lt.completed ? '🎉 ' : lt.isHabit ? '🔄 ' : ''}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionMain.length === 0 && sessionBg.length === 0 && (
@@ -162,12 +175,19 @@ export function SessionTimelineBar({
                         </>
                     );
 
+                    const blockStyle = {
+                        gridArea: '1 / 1',
+                        marginLeft: `${left}%`,
+                        width: `${width}%`,
+                        minHeight: 70,
+                    } as const;
+
                     return isInteractive ? (
                         <button
                             key={session.id}
                             onClick={() => onSelectSession(session.id)}
                             className={blockClasses}
-                            style={{ left: `${left}%`, width: `${width}%`, minHeight: 70 }}
+                            style={blockStyle}
                         >
                             {content}
                         </button>
@@ -175,13 +195,27 @@ export function SessionTimelineBar({
                         <div
                             key={session.id}
                             className={blockClasses}
-                            style={{ left: `${left}%`, width: `${width}%`, minHeight: 70 }}
+                            style={blockStyle}
                         >
                             {content}
                         </div>
                     );
                 })}
             </div>
+
+            {/* Current-time indicator: time label, dot, vertical line spanning the bar */}
+            {nowPercent != null && (
+                <div
+                    className="absolute top-0 bottom-0 pointer-events-none z-10"
+                    style={{ left: `${nowPercent}%` }}
+                >
+                    <span className="absolute top-0 -translate-x-1/2 text-[10px] font-semibold text-accent whitespace-nowrap leading-none">
+                        {formatHour(now)}
+                    </span>
+                    <div className="absolute top-4 bottom-0 w-px bg-accent -translate-x-1/2" />
+                    <div className="absolute top-4 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-accent" />
+                </div>
+            )}
         </div>
     );
 }

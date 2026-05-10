@@ -2,11 +2,13 @@ import { useState, useMemo } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
+import { formatDuration, timeToMinutes } from '../../lib/time';
+import { getTaskTitle } from '../../lib/tasks';
 import type { LinkedTask } from '../../types';
 
 export function Step3Schedule() {
@@ -37,41 +39,23 @@ export function Step3Schedule() {
         return groups;
     }, [mainTasks]);
 
-    const getTaskTitle = (todoistId: string) => {
-        const fromTodoist = taskMap.get(todoistId)?.content;
-        if (fromTodoist) return fromTodoist;
-        const lt = plan.linkedTasks.find((t) => t.todoistId === todoistId);
-        return lt?.titleSnapshot ?? todoistId;
-    };
+    const titleFor = (todoistId: string) => getTaskTitle(todoistId, plan.linkedTasks, taskMap);
 
     const getTaskLabel = (lt: LinkedTask) => {
-        const title = getTaskTitle(lt.todoistId);
-        if (lt.estimatedMinutes) {
-            return `${title} — ${lt.estimatedMinutes >= 60 ? `${(lt.estimatedMinutes / 60).toFixed(lt.estimatedMinutes % 60 ? 1 : 0)}h` : `${lt.estimatedMinutes}m`}`;
-        }
-        return title;
+        const title = titleFor(lt.todoistId);
+        return lt.estimatedMinutes ? `${title} — ${formatDuration(lt.estimatedMinutes)}` : title;
     };
 
     const getSessionCapacity = (sessionId: string) => {
         const session = remainingSessions.find((s) => s.id === sessionId);
         if (!session) return null;
-        const [sh, sm] = session.startTime.split(':').map(Number);
-        const [eh, em] = session.endTime.split(':').map(Number);
-        const totalMinutes = (eh * 60 + em) - (sh * 60 + sm);
+        const totalMinutes = timeToMinutes(session.endTime) - timeToMinutes(session.startTime);
         const assignedIds = plan.taskSessions[sessionId] ?? [];
         const estimatedTotal = assignedIds.reduce((sum, id) => {
             const lt = plan.linkedTasks.find((t) => t.todoistId === id);
             return sum + (lt?.estimatedMinutes ?? 0);
         }, 0);
         return { totalMinutes, estimatedTotal };
-    };
-
-    const formatDuration = (minutes: number) => {
-        const h = Math.floor(minutes / 60);
-        const m = minutes % 60;
-        if (h === 0) return `${m}m`;
-        if (m === 0) return `${h}h`;
-        return `${h}h ${m}m`;
     };
 
     const hasAnyAssignment = Object.values(plan.taskSessions).some((ids) => ids.length > 0);
@@ -107,7 +91,7 @@ export function Step3Schedule() {
                                         className="px-3 py-1.5 text-xs rounded-full bg-success/10 text-text-light border border-success/20 line-through"
                                         title={intentionMap.get(lt.intentionId)?.title}
                                     >
-                                        🎉 {getTaskTitle(lt.todoistId)}
+                                        🎉 {titleFor(lt.todoistId)}
                                     </span>
                                 ))}
                             </div>

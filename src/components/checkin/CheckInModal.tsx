@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
+import { spotifyPlaylistId } from '../../lib/spotify';
 import type { WorkType, CheckIn } from '../../types';
 
 const FEELINGS = [
@@ -144,7 +145,7 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                             </p>
                         </div>
                         <a
-                            href={`spotify:playlist:${suggestedPlaylist.spotifyUrl.match(/playlist\/([a-zA-Z0-9]+)/)?.[1] ?? ''}`}
+                            href={`spotify:playlist:${spotifyPlaylistId(suggestedPlaylist.spotifyUrl)}`}
                             className="text-xs text-accent hover:underline flex-shrink-0"
                         >
                             Open

@@ -30,12 +30,16 @@ Every React component in the app sits inside a nested provider tree. The order m
 StrictMode
 └── BrowserRouter (basename: /orchestrate/)
     └── ErrorBoundary
-        └── DayPlanProvider          ← core app state (plan, settings, history)
+        └── DayPlanProvider          ← core app state (plan, settings, history, life)
             └── TodoistProvider      ← Todoist data + API actions
                 └── AppRoutes        ← router switch
-                    ├── Welcome      (when !setupComplete)
+                    ├── Welcome      (hub: when !setupComplete, at /)
                     ├── Wizard       (at /setup)
-                    └── Dashboard    (when setupComplete, at /)
+                    ├── Dashboard    (when setupComplete, at /)
+                    ├── LifeView     (at /life)
+                    ├── SeasonsManager (at /season)
+                    ├── SeasonDetail (at /season/:id)
+                    └── HabitsLibrary (at /habits)
 ```
 
 **Why this order?**
@@ -50,9 +54,15 @@ Orchestrate has three routes, all defined in the `AppRoutes` component inside `A
 
 | Path | Component | Guard |
 |---|---|---|
-| `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` |
+| `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` (hub) |
 | `/setup` | `Wizard` | Accessible when `setupComplete` is true (editing) or when navigated from Welcome (`location.state.fromWelcome`) |
+| `/life` | `LifeView` | Always reachable. Hub showing active season + anchor habits + all active habits |
+| `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
+| `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
+| `/habits` | `HabitsLibrary` | Always reachable. CRUD habits with anchor protection |
 | `*` | Redirect to `/` | Catch-all |
+
+Life routes were previously gated on `plan.setupComplete`, but `setupComplete` is a *daily* flag while seasons and habits are *durable*. The gate caused habits to become unreachable on a fresh day until the wizard was completed; it has been removed.
 
 Navigation between screens is done via `react-router-dom`'s `useNavigate()`. The wizard-to-dashboard transition happens when `COMPLETE_SETUP` is dispatched.
 
@@ -68,14 +78,19 @@ Welcome → Wizard (4 steps) → Dashboard
              └────────────────────┘  (Edit Plan / Recontextualize)
 ```
 
-### 4.1 Welcome Screen
+### 4.1 Welcome (Home Hub)
 
-The landing page (`Welcome.tsx`) detects three states:
+Since v5, the landing page (`Welcome.tsx`) is a multi-purpose hub rather than a single "plan your day" CTA. It surfaces:
+
+- **Today card** — plan status (idle / resuming / first-time), primary CTA (`Plan Your Day` / `Resume Planning`) that navigates to `/setup` with `fromWelcome: true`, and the wizard step timeline (driven by `WIZARD_STEPS` in [src/data/wizardSteps.ts](../src/data/wizardSteps.ts)).
+- **Life card** — active season summary (linked to `/season/:id`), anchor habits as inline pills, and quick links to `/habits` and `/season`. Surfaces durable v5 state without forcing the user through the wizard first.
+
+Three plan-status modes are still detected (used to choose the status copy and primary CTA label):
 1. **First ever visit** — no history, no in-progress plan.
 2. **Resuming** — intentions exist or `wizardStep > 1`.
 3. **Returning** — history exists but today's plan is fresh.
 
-It renders a CTA that navigates to `/setup` with `fromWelcome: true` in router state.
+The hub appears at `/` whenever `plan.setupComplete === false`. Once setup is complete, `/` shows the Dashboard instead. The Life surfaces remain reachable from both.
 
 ### 4.2 Wizard Flow
 
@@ -125,12 +140,20 @@ This is the heart of the application. It manages:
 - **`settings`** — persistent `AppSettings` (notification preference, session slots, encrypted Todoist token, Google Calendar config).
 - **`editingStep`** — tracks whether the user is re-editing from the dashboard (`number | null`).
 - **`history`** — array of `SavedDayPlan` entries for past sessions.
+- **`life`** — persistent `LifeContext` (seasons, habits, activeSeasonId) — added in v5.
 
-**Architecture:** `useReducer` with a ~25-action discriminated union. State is initialized lazily from `localStorage` via `loadPlan()`, `loadSettings()`, and `loadHistory()`. Three `useEffect` hooks persist each slice back to `localStorage` on every change.
+**Architecture:** `useReducer` with a ~35-action discriminated union. State is initialized lazily from `localStorage` via `loadPlan()`, `loadSettings()`, `loadHistory()`, and `loadLifeContext()`. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
 
 **Plan date freshness:** `loadPlan()` checks `parsed.date !== todayISO()`. If the stored plan is from a previous day, a fresh plan is returned. This means the plan auto-resets daily.
 
-**Migration chain:** Plans are stored with a `_wizardSteps` marker. On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions). This ensures backwards compatibility when the data shape evolves.
+**Migration chain:** Plans are stored with a `_wizardSteps` marker (legacy) and, since v5, an explicit `_schemaVersion: 5` marker. On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions) → v4.1 (estimatedMinutes) → v5 (no plan-shape change; `LifeContext` is loaded separately, with a one-time backfill that surfaces legacy `isHabit: true` entries as inactive `Habit` candidates). Schema v5 stamps `_schemaVersion: 5` onto plan, settings, life, and saved-session payloads on every persist.
+
+**Cross-slice invariants** the reducer enforces (v5):
+- Activating a season auto-deactivates the previously active one.
+- Deleting a season clears its id from any habit's `seasonIds`.
+- Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; the UI offers to deactivate first).
+- Deleting a habit clears `sourceHabitId` from any intentions still referencing it.
+- `INJECT_HABIT_INTENTIONS` is idempotent — it skips habits that already have an intention with the matching `sourceHabitId` for today.
 
 See the [Data Model](data-model.md) document for the full action catalog and type definitions.
 
@@ -155,7 +178,6 @@ Manages all Todoist API data and mutations. Split into two contexts for render o
 **Consumer hooks** (`src/hooks/useTodoist.ts`):
 - `useTodoistData()` — for components that only read data (most wizard steps, SessionTimeline, CheckInModal).
 - `useTodoistActions()` — for components that mutate data (TodoistPanel).
-- `useTodoist()` — convenience combo for components that need both.
 
 ### 5.3 MusicContext — Playlist Selection
 
@@ -185,6 +207,9 @@ Located in `src/components/ui/`:
 | `ErrorBoundary` | React error boundary with fallback UI |
 | `EditableTaskList` | Reusable list with inline rename, drag-and-drop reorder, and remove — dispatches to `DayPlanContext` |
 | `SessionTimelineBar` | Visual timeline bar rendering sessions as positioned blocks with assigned task pills. Dual mode: interactive (clickable, used in Step 3) vs display (used in dashboard) |
+| `Logo` | App favicon `<img>` with overridable className. Sole owner of the `import.meta.env.BASE_URL + 'favicon.svg'` URL pattern |
+| `ThemeToggle` | Self-contained light/dark toggle button (consumes `useTheme`); `size: 'sm' \| 'md'` prop |
+| `formStyles` | Shared `inputClass` / `labelClass` Tailwind strings used by `HabitForm`, `SeasonForm` |
 
 ### 6.2 TodoistPanel
 
@@ -251,13 +276,16 @@ All persistence is via `localStorage`. No backend or database is used.
 
 | Key | Content | Written By |
 |---|---|---|
-| `orchestrate-day-plan` | Current `DayPlan` + `_wizardSteps` marker | `DayPlanProvider` (on plan change) |
-| `orchestrate-settings` | `AppSettings` (notification pref, session slots, encrypted token, calendar IDs) | `DayPlanProvider` (on settings change) |
+| `orchestrate-day-plan` | Current `DayPlan` + `_wizardSteps` + `_schemaVersion` markers | `DayPlanProvider` (on plan change) |
+| `orchestrate-settings` | `AppSettings` + `_schemaVersion` (notification pref, session slots, encrypted token, calendar IDs) | `DayPlanProvider` (on settings change) |
 | `orchestrate-history` | `SavedDayPlan[]` array | `DayPlanProvider` (on history change) |
+| `orchestrate-life-context` | `LifeContext` + `_schemaVersion` (seasons, habits, activeSeasonId, backfill flag) — **added in v5** | `DayPlanProvider` (on life change) |
 | `orchestrate-todoist-cache` | `TodoistCache` (tasks, projects, sections, fetchedAt timestamp) | `TodoistProvider` (on data change) |
 | `orchestrate-theme` | `"light"` or `"dark"` | `useTheme` hook |
 | `orchestrate-active-playlist` | Playlist ID string | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<string, string>` | `MusicProvider` |
+
+**Backup affordance (v5):** `SavedSessions` exposes a "Full Backup" export and "Restore Backup" import. The export bundles `{ settings, life, history, _backupVersion: 1 }` into a single JSON file. The import dispatches `IMPORT_BACKUP`, which merges by id — existing entries are never overwritten, new entries are appended. This is the user's safety net in lieu of a backend sync server.
 
 ---
 
@@ -289,9 +317,9 @@ Orchestrate supports light and dark themes.
 | `useNotifications` | `hooks/useNotifications.ts` | Web Notifications API wrapper (`requestPermission`, `sendNotification`) |
 | `useResizablePanel` | `hooks/useResizablePanel.ts` | Drag-to-resize panel, clamped 220–480px |
 | `useTheme` | `hooks/useTheme.ts` | Light/dark toggle with `useSyncExternalStore` + localStorage |
+| `useDayPlan` | `hooks/useDayPlan.ts` | Consumer for `DayPlanContext` (lives in its own file so the context module can stay component-only for fast refresh) |
 | `useTodoistData` | `hooks/useTodoist.ts` | Read-only Todoist context consumer |
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
-| `useTodoist` | `hooks/useTodoist.ts` | Convenience combo of data + actions |
 
 ---
 
@@ -312,6 +340,7 @@ src/
 │
 ├── hooks/
 │   ├── useCurrentSession.ts    # Time-based session detection
+│   ├── useDayPlan.ts           # DayPlanContext consumer (kept separate so the context file stays component-only)
 │   ├── useHourlyCheckin.ts     # Hourly check-in trigger
 │   ├── useNotifications.ts     # Web Notifications wrapper
 │   ├── useResizablePanel.ts    # Drag-to-resize
@@ -320,7 +349,12 @@ src/
 │
 ├── lib/
 │   ├── crypto.ts               # AES-256-GCM encryption/decryption
-│   └── time.ts                 # timeToMinutes utility
+│   ├── time.ts                 # timeToMinutes, minutesToTime, addMinutesToTime, formatDuration, todayISO
+│   ├── habits.ts               # v5: habitMatchesDate(habit, dateISO)
+│   ├── seasons.ts              # v5: findActiveSeason, getSeasonProgress
+│   ├── tasks.ts                # getTaskTitle (Todoist content → titleSnapshot → ID), collectDescendantIds (cascade-delete BFS)
+│   ├── spotify.ts              # spotifyPlaylistId, isValidSpotifyUrl
+│   └── todoistApi.ts           # API_BASE constant (dev proxy vs prod direct)
 │
 ├── data/
 │   ├── sessions.ts             # Default session slot definitions
@@ -348,6 +382,15 @@ src/
 │   │   ├── TodoistPanel.tsx    # Full Todoist task tree with CRUD
 │   │   ├── TodoistSetup.tsx    # Token + Google Calendar config
 │   │   └── GoogleCalendarEmbed.tsx # Google Calendar iframe
+│   ├── life/                   # v5: hierarchical planning surfaces
+│   │   ├── LifeShell.tsx       # Shared layout for /life, /season, /habits
+│   │   ├── LifeView.tsx        # /life — hub
+│   │   ├── SeasonsManager.tsx  # /season — list + create + activate
+│   │   ├── SeasonDetail.tsx    # /season/:id — single-season editor
+│   │   ├── SeasonForm.tsx      # Reusable create/edit form
+│   │   ├── HabitsLibrary.tsx   # /habits — CRUD with anchor protection
+│   │   ├── HabitForm.tsx       # Reusable create/edit form
+│   │   └── ActiveSeasonBadge.tsx # Badge in Dashboard + Wizard headers
 │   └── ui/
 │       ├── Button.tsx
 │       ├── Card.tsx
@@ -356,7 +399,10 @@ src/
 │       ├── ErrorBoundary.tsx
 │       ├── EditableTaskList.tsx
 │       ├── SessionTimelineBar.tsx
-│       └── AboutContent.tsx
+│       ├── AboutContent.tsx
+│       ├── Logo.tsx            # favicon img with overridable className
+│       ├── ThemeToggle.tsx     # light/dark toggle button (uses useTheme)
+│       └── formStyles.ts       # shared input/label Tailwind class strings
 │
 public/
 ├── sw.js                       # Service worker

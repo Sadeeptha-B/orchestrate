@@ -1,10 +1,22 @@
 import { useState, useCallback, useMemo } from 'react';
 import { Card } from '../ui/Card';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoistData } from '../../hooks/useTodoist';
+import { useTodoistData, type TodoistTask } from '../../hooks/useTodoist';
+import { addMinutesToTime, formatDuration, timeToMinutes, todayISO } from '../../lib/time';
 import type { LinkedTask, SessionSlot } from '../../types';
+
+/** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
+function getScheduledRange(task: TodoistTask | undefined): string | null {
+    if (!task?.due?.date) return null;
+    const todayStr = todayISO();
+    if (!task.due.date.startsWith(todayStr) || !task.due.date.includes('T')) return null;
+    const start = task.due.date.slice(11, 16);
+    const durationMinutes = task.duration?.unit === 'minute' ? task.duration.amount : null;
+    if (!durationMinutes) return start;
+    return `${start}–${addMinutesToTime(start, durationMinutes)}`;
+}
 
 // ---- shared task row hooks (used by both CurrentSession and SessionTimeline) ----
 
@@ -68,9 +80,10 @@ interface TaskRowProps {
     isStale: boolean;
     sessionId: string;
     drag: ReturnType<typeof useTaskDrag>;
+    scheduledRange: string | null;
 }
 
-function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) {
+function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
     const { dispatch } = useDayPlan();
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
@@ -125,6 +138,12 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) 
                 {title}
             </span>
 
+            {scheduledRange && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent flex-shrink-0 tabular-nums">
+                    {scheduledRange}
+                </span>
+            )}
+
             {linkedTask.estimatedMinutes != null && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light flex-shrink-0 tabular-nums">
                     {linkedTask.estimatedMinutes}m
@@ -160,7 +179,7 @@ function SessionCard({
     isPast: boolean;
     taskIds: string[];
     linkedTasks: LinkedTask[];
-    taskMap: Map<string, { id: string; content: string }>;
+    taskMap: Map<string, TodoistTask>;
     intentions: Map<string, { id: string; title: string }>;
     drag: ReturnType<typeof useTaskDrag>;
 }) {
@@ -199,23 +218,18 @@ function SessionCard({
                 </div>
                 <div className="flex items-center gap-2">
                     {(() => {
-                        const [sh, sm] = session.startTime.split(':').map(Number);
-                        const [eh, em] = session.endTime.split(':').map(Number);
-                        const totalMin = (eh * 60 + em) - (sh * 60 + sm);
+                        const totalMin = timeToMinutes(session.endTime) - timeToMinutes(session.startTime);
                         const estTotal = tasksInSession.reduce((s, lt) => s + (lt.estimatedMinutes ?? 0), 0);
                         if (estTotal === 0) return null;
-                        const h = Math.floor(estTotal / 60);
-                        const m = estTotal % 60;
-                        const fmt = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
                         const over = estTotal > totalMin;
                         return (
                             <span className={`text-[10px] tabular-nums ${over ? 'text-amber-600 dark:text-amber-400' : 'text-text-light'}`}>
-                                {fmt} est.{over && ' \u26a0'}
+                                {formatDuration(estTotal)} est.{over && ' \u26a0'}
                             </span>
                         );
                     })()}
                     <span className="text-xs text-text-light">
-                        {session.startTime} \u2013 {session.endTime}
+                        {session.startTime}{' \u2013 '}{session.endTime}
                     </span>
                 </div>
             </div>
@@ -248,6 +262,7 @@ function SessionCard({
                                             isStale={isStale}
                                             sessionId={session.id}
                                             drag={drag}
+                                            scheduledRange={getScheduledRange(todoistTask)}
                                         />
                                     );
                                 })}
@@ -266,7 +281,7 @@ function SessionCard({
 
 export function CurrentSession() {
     const { plan, settings } = useDayPlan();
-    const { currentSession } = useCurrentSession(settings.sessionSlots);
+    const { currentSession, remainingSessions } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
     const drag = useTaskDrag();
 
@@ -276,10 +291,32 @@ export function CurrentSession() {
     );
 
     if (!currentSession) {
+        const upcoming = remainingSessions[0];
+        if (!upcoming) {
+            return (
+                <Card>
+                    <p className="text-sm text-text-light">No more sessions today.</p>
+                </Card>
+            );
+        }
+        const upcomingTaskIds = plan.taskSessions[upcoming.id] ?? [];
         return (
-            <Card>
-                <p className="text-sm text-text-light">No active session right now.</p>
-            </Card>
+            <div className="space-y-2">
+                <p className="text-xs text-text-light px-1">
+                    No active session — next up at{' '}
+                    <span className="tabular-nums text-text font-medium">{upcoming.startTime}</span>
+                </p>
+                <SessionCard
+                    session={upcoming}
+                    isCurrent={false}
+                    isPast={false}
+                    taskIds={upcomingTaskIds}
+                    linkedTasks={plan.linkedTasks}
+                    taskMap={taskMap}
+                    intentions={intentionMap}
+                    drag={drag}
+                />
+            </div>
         );
     }
 

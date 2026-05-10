@@ -3,21 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { useDayPlan } from '../../context/DayPlanContext';
-import { useTheme } from '../../hooks/useTheme';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { SavedSessions } from '../dashboard/SavedSessions';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { AboutContent } from '../ui/AboutContent';
-
-const TOTAL_STEPS = 4;
-
-const STEP_LABELS = [
-    'Intentions',
-    'Refine',
-    'Schedule',
-    'Music',
-];
+import { Logo } from '../ui/Logo';
+import { ThemeToggle } from '../ui/ThemeToggle';
+import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
+import { WIZARD_STEPS, TOTAL_STEPS } from '../../data/wizardSteps';
 
 interface WizardLayoutProps {
     children: ReactNode;
@@ -41,7 +35,6 @@ export function WizardLayout({
 }: WizardLayoutProps) {
     const { plan, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
-    const { theme, toggle: toggleTheme } = useTheme();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
     const showSidebar = !isEditing;
@@ -106,10 +99,13 @@ export function WizardLayout({
             <div className="flex-1 flex flex-col min-w-0">
                 <header className={`px-6 pt-6 pb-4 mx-auto w-full ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                     <div className="flex items-center justify-between mb-4">
-                        <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                            <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
-                            Orchestrate
-                        </h1>
+                        <div className="flex items-center gap-3 min-w-0">
+                            <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
+                                <Logo />
+                                Orchestrate
+                            </h1>
+                            <ActiveSeasonBadge />
+                        </div>
                         <div className="flex gap-2">
                             {showSidebar && !panelOpen && (
                                 <Button
@@ -139,20 +135,13 @@ export function WizardLayout({
                             >
                                 ⚙
                             </button>
-                            <button
-                                onClick={toggleTheme}
-                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                                title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                            >
-                                {theme === 'dark' ? '☀️' : '🌙'}
-                            </button>
+                            <ThemeToggle />
                         </div>
                     </div>
                     <ProgressBar current={step} total={TOTAL_STEPS} />
                     {/* Step navigation pills — always visible */}
                     <div className="flex gap-1.5 mt-3 flex-wrap">
-                        {STEP_LABELS.map((label, i) => {
-                            const stepNum = i + 1;
+                        {WIZARD_STEPS.map(({ num: stepNum, label }) => {
                             const isCurrent = step === stepNum;
                             const isReachable = plan.setupComplete || stepNum <= step;
                             const canClick = plan.setupComplete

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
 import type { Intention } from '../../types';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 
 interface EditableTaskListProps {
     tasks: Intention[];

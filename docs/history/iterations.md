@@ -70,3 +70,25 @@ There are some inconsistencies in this model. For one, after creating todoist ta
 When mapping intentions to tasks in the todoist panel, we should keep a record of which tasks have been created when each intention is being mapped. Maybe some form of queue would be good? However, keep in mind that the user may create and delete a task during this mapping step. We will need to capture the final result of the user behavior during mapping, and then aggregate them under a specific intention. Then, when setting the main and background tasks, it is these tasks that should be selected as main and background and the actual scheduling should focus on scheduling these tasks into time, though showing the relationship to the intentions would be useful. Keep in mind that a single intention may have both background and main tasks. 
 
 We will have to plan this change well. 
+
+## Iteration 5 — Life scaffolding primitives
+
+Iteration 5 lifts Orchestrate from a day-execution engine to a life-scaffolding companion. The motivation is captured in [orchestrate_life_migration_spec.md](../orchestrate_life_migration_spec.md): the user is migrating into a more intentional lifestyle (sleep discipline, weekend degree work, gym, tech growth, side projects) and the app needs to hold context above the day to support that.
+
+This iteration introduces three first-class concepts above the existing daily plan:
+
+- **Seasons** — medium-horizon focus periods (4–12 weeks typically) with a primary theme, supporting goals, explicit non-goals, success criteria, and an optional capacity budget. Exactly one season is active at a time.
+- **Habits as first-class entities** — recurring stabilizers separate from `LinkedTask.isHabit` (which is now deprecated). Each habit has a recurrence rule, minimum-viable form, trigger cue, completion rule, failure tolerance, anchor flag, and optional persistent Todoist task to auto-link.
+- **LifeContext** — a new persistent state slice (`orchestrate-life-context` localStorage key) holding seasons + habits, owned by the same `DayPlanProvider` so cross-slice invariants stay in the reducer.
+
+When a habit is active, on Step 1 entry it is auto-injected as an intention with `sourceHabitId` set. The user can map it to a Todoist task as normal (or accept the auto-linked task if `autoLinkTodoistId` is set on the habit), or skip it for today. In Step 2, habit-derived linked tasks have their category locked to `background` — honoring the rule that habit-tasks must always be background.
+
+New routes (`/life`, `/season`, `/season/:id`, `/habits`) provide hierarchical planning surfaces above the daily wizard. The Dashboard and WizardLayout headers gain an `ActiveSeasonBadge` for always-visible seasonal context. The Dashboard gains a "Life" button next to "Saved Sessions."
+
+To preserve the no-backend constraint while supporting the much larger surface area of persistent data, this iteration also introduces a "Full Backup" export/import in `SavedSessions` that bundles `{ settings, life, history }` into a single JSON snapshot — the user's manual safety net in lieu of a sync server.
+
+A schema-version marker (`_schemaVersion: 5`) is now stamped on saved plans, settings, and life context. A one-time backfill scans existing intentions/saved-sessions for `isHabit: true` entries and surfaces them as inactive Habit candidates so the user can promote them.
+
+Iterations 6–8 (capacity intelligence, modes/rituals/recovery, reviews/drift detection/hierarchical views) are sketched in [plan_v5.md](./plan_v5.md) but deferred for separate plans.
+
+See [plan_v5.md](./plan_v5.md) for the full implementation plan.

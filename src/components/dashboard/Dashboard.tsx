@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
 import { SavedSessions } from './SavedSessions';
@@ -12,10 +12,13 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
-import { useTheme } from '../../hooks/useTheme';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { Logo } from '../ui/Logo';
+import { ThemeToggle } from '../ui/ThemeToggle';
+import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
+import { SeasonContextCard } from '../life/SeasonContextCard';
 
 export function Dashboard() {
     const { plan, settings, history, dispatch } = useDayPlan();
@@ -25,7 +28,6 @@ export function Dashboard() {
         plan.setupComplete,
         settings.notificationPreference,
     );
-    const { theme, toggle: toggleTheme } = useTheme();
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
@@ -85,12 +87,15 @@ export function Dashboard() {
     return (
         <div className="min-h-screen flex flex-col">
             <header className="px-6 py-4 border-b border-border">
-                <div className="max-w-6xl mx-auto flex items-center justify-between">
-                    <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                        <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
-                        Orchestrate
-                    </h1>
-                    <div className="flex items-center gap-3">
+                <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
+                            <Logo />
+                            Orchestrate
+                        </h1>
+                        <ActiveSeasonBadge />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-y-2 gap-x-3">
                         <span className="text-xs text-text-light">
                             {completedCount}/{totalCount} done
                         </span>
@@ -102,6 +107,9 @@ export function Dashboard() {
                         </Button>
                         <Button variant="ghost" size="sm" onClick={handleNewDay}>
                             Start New Day
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/life')}>
+                            Life
                         </Button>
                         {hasSavedSessions && (
                             <Button
@@ -115,13 +123,7 @@ export function Dashboard() {
                         <Button variant="ghost" size="sm" onClick={() => setShowSettingsModal(true)}>
                             Settings
                         </Button>
-                        <button
-                            onClick={toggleTheme}
-                            className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                        >
-                            {theme === 'dark' ? '☀️' : '🌙'}
-                        </button>
+                        <ThemeToggle />
                     </div>
                 </div>
             </header>
@@ -180,12 +182,17 @@ export function Dashboard() {
                             </div>
                         </MusicProvider>
 
-                        {/* All sessions timeline */}
-                        <div>
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
-                                Timeline
-                            </h3>
-                            <SessionTimeline />
+                        {/* Timeline + Season side rail */}
+                        <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+                            <div className="flex-1 min-w-0">
+                                <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
+                                    Timeline
+                                </h3>
+                                <SessionTimeline />
+                            </div>
+                            <aside className="lg:w-72 lg:flex-shrink-0">
+                                <SeasonContextCard />
+                            </aside>
                         </div>
 
                         {/* Current session */}
@@ -278,7 +285,7 @@ export function Dashboard() {
                             autoFocus
                         />
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                         <Button variant="ghost" size="sm" onClick={() => setShowNewDayModal(false)}>
                             Cancel
                         </Button>
@@ -313,7 +320,7 @@ export function Dashboard() {
                             autoFocus
                         />
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                         <Button variant="ghost" size="sm" onClick={() => setShowSaveModal(false)}>
                             Cancel
                         </Button>

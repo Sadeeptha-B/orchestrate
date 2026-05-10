@@ -2,22 +2,31 @@ export function AboutContent() {
     return (
         <div className="space-y-3 text-sm text-text-light">
             <p>
-                Orchestrate is a <strong className="text-text">daily companion app</strong> — not a replacement
-                for your task manager or calendar. These tools operate at different levels of abstraction and it is Orchestrate's job to help you contextualize your day, tasks and calendar to  help you start each day with clarity. 
+                Orchestrate is a <strong className="text-text">daily contextualization companion</strong> — not a
+                replacement for your task manager or calendar, but a layer that sits alongside them. Its job is to
+                reduce the friction between "I have a list of things to do" and "I know exactly what I'm doing today
+                and why."
             </p>
             <p>
-                Task managers are great at holding lists, but they don't solve the friction of
-                <strong className="text-text"> contextualizing your day</strong>. Todolists tend to be "epics" —
-                broad ongoing projects. When starting a new day, you don't think in epics; you think in
-                <strong className="text-text"> intentions</strong>: specific goals for today.
+                Each morning, a short wizard walks you through setting <strong className="text-text">intentions</strong>{' '}
+                (today-scoped focus areas), mapping them to specific tasks from Todoist, estimating and scheduling
+                those tasks into sessions, and locking into a working state with a music cue. Through the day,
+                hourly check-ins ask how you're doing and suggest a playlist — keeping you connected rather than
+                letting the day drift.
             </p>
             <p>
-                Orchestrate walks you through turning those intentions into a structured day: mapping them
-                to tasks, scheduling them into sessions, and keeping you on track with music and hourly check-ins.
+                Beneath the daily flow sits a <strong className="text-text">life scaffolding layer</strong> that holds
+                the <em>why</em> across days, weeks, and months.{' '}
+                <strong className="text-text">Seasons</strong> are medium-horizon focus periods — a theme, supporting
+                goals, and an optional capacity budget that shape what you take on each day.{' '}
+                <strong className="text-text">Habits</strong> are recurring stabilizers (sleep, gym, deep work blocks)
+                that auto-inject into your daily intentions so the things that matter most are never crowded out by
+                the urgent.
             </p>
             <p>
-                It counters <strong className="text-text">task blindness and time blindness</strong> by
-                nudging you to recontextualize throughout the day — so you stay connected to what matters.
+                Together, they counter <strong className="text-text">task blindness and time blindness</strong>:{' '}
+                the tendency to open a todo list on a fresh day and feel lost, or to reach evening having been
+                busy but not purposeful.
             </p>
         </div>
     );

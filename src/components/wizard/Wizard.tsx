@@ -1,4 +1,4 @@
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { Step1Intentions } from './Step1Intentions';
 import { Step2Refine } from './Step2Refine';
 import { Step3Schedule } from './Step3Schedule';
