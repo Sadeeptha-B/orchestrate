@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { findActiveSeason } from '../../lib/seasons';
 
 export function SeasonFocusBanner() {

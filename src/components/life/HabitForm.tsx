@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
+import { inputClass, labelClass } from '../ui/formStyles';
 import type { Habit, HabitRecurrence, HabitRecurrenceKind, Season } from '../../types';
 
 export type HabitDraft = Omit<Habit, 'id' | 'createdAt'>;
@@ -11,11 +12,6 @@ interface HabitFormProps {
     onSubmit: (draft: HabitDraft) => void;
     onCancel?: () => void;
 }
-
-const inputClass =
-    'w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors';
-
-const labelClass = 'block text-xs font-medium text-text-light mb-1';
 
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { DayPlanProvider, useDayPlan } from './context/DayPlanContext';
+import { DayPlanProvider } from './context/DayPlanContext';
+import { useDayPlan } from './hooks/useDayPlan';
 import { TodoistProvider } from './context/TodoistContext';
 import { Wizard } from './components/wizard/Wizard';
 import { Dashboard } from './components/dashboard/Dashboard';

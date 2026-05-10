@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import type { CalendarViewMode } from '../../types';
 
 const VIEW_MODE_LABELS: Record<CalendarViewMode, string> = {

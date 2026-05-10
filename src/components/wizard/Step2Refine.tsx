@@ -1,11 +1,18 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { WizardLayout } from './WizardLayout';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { Modal } from '../ui/Modal';
 import type { LinkedTask } from '../../types';
+
+/**
+ * Task-manager panel state. `auto` defers to the long-task heuristic so the panel
+ * pops open when an estimate first exceeds 60min. Once the user explicitly opens
+ * or closes the panel, their intent sticks for the rest of Step 2.
+ */
+type PanelIntent = 'auto' | 'open' | 'closed';
 
 const TYPE_OPTIONS: { value: LinkedTask['type']; label: string; description: string }[] = [
     { value: 'main', label: 'Main', description: 'Primary work thread for the day' },
@@ -20,26 +27,16 @@ export function Step2Refine() {
     const { taskMap } = useTodoistData();
     const [currentIntentionIndex, setCurrentIntentionIndex] = useState(0);
     const [showSetup, setShowSetup] = useState(false);
-    const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+    const [panelIntent, setPanelIntent] = useState<PanelIntent>('auto');
 
     const intentions = plan.intentions;
     const currentIntention = intentions[currentIntentionIndex];
+    // Habit-derived linked tasks are locked to 'background' at LINK_TASK time;
+    // this set drives the UI affordance only.
     const habitLockedIntentionIds = useMemo(
         () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
         [plan.intentions],
     );
-
-    // Habit-derived linked tasks are locked to 'background'. Auto-categorize on entry
-    // so the user can proceed without needing to interact with the category toggle.
-    useEffect(() => {
-        for (const lt of plan.linkedTasks) {
-            if (lt.completed) continue;
-            if (!habitLockedIntentionIds.has(lt.intentionId)) continue;
-            if (lt.type !== 'background') {
-                dispatch({ type: 'CATEGORIZE_TASK', todoistId: lt.todoistId, taskType: 'background' });
-            }
-        }
-    }, [plan.linkedTasks, habitLockedIntentionIds, dispatch]);
 
     const intentionTitleMap = useMemo(
         () => Object.fromEntries(plan.intentions.map((i) => [i.id, i.title])),
@@ -58,15 +55,15 @@ export function Step2Refine() {
 
     const isLastIntention = currentIntentionIndex >= intentions.length - 1;
 
-    // Auto-open task panel when any non-background task in current intention exceeds 1hr
+    // Auto-open task panel when any non-background task in current intention exceeds 1hr,
+    // unless the user has explicitly opened or closed it.
     const hasLongTask = currentLinkedTasks.some(
         (lt) => !lt.completed && lt.type !== 'background' && lt.estimatedMinutes !== null && lt.estimatedMinutes > 60,
     );
-    useEffect(() => {
-        if (hasLongTask) setTaskPanelOpen(true);
-    }, [hasLongTask]);
+    const taskPanelOpen = panelIntent === 'open' || (panelIntent === 'auto' && hasLongTask);
 
-    const openTaskPanel = useCallback(() => setTaskPanelOpen(true), []);
+    const openTaskPanel = useCallback(() => setPanelIntent('open'), []);
+    const closeTaskPanel = useCallback(() => setPanelIntent('closed'), []);
 
     const handleNextIntention = () => {
         if (isLastIntention) {
@@ -216,7 +213,7 @@ export function Step2Refine() {
                                     Link tasks to: {currentIntention.title}
                                 </span>
                                 <button
-                                    onClick={() => setTaskPanelOpen(false)}
+                                    onClick={closeTaskPanel}
                                     className="text-xs text-text-light hover:text-text cursor-pointer"
                                     title="Collapse task manager"
                                 >

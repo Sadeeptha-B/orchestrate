@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
-import { format } from 'date-fns';
 import { useTodoistData, useTodoistActions } from '../../hooks/useTodoist';
 import type { TodoistTask, TodoistProject, TodoistSection } from '../../hooks/useTodoist';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
+import { addMinutesToTime, timeToMinutes, todayISO } from '../../lib/time';
+import { collectDescendantIds } from '../../lib/tasks';
 import type { LinkedTask } from '../../types';
 
 // --- Todoist color map (color name → hex) ---
@@ -231,18 +232,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
 
     const handleDeleteTask = useCallback(
         (taskId: string) => {
-            // Collect all descendant IDs that will be cascade-removed
-            const toRemove = new Set<string>([taskId]);
-            let changed = true;
-            while (changed) {
-                changed = false;
-                for (const t of tasks) {
-                    if (!toRemove.has(t.id) && t.parent_id && toRemove.has(t.parent_id)) {
-                        toRemove.add(t.id);
-                        changed = true;
-                    }
-                }
-            }
+            const toRemove = collectDescendantIds(tasks, [taskId], (t) => t.parent_id);
             deleteTask(taskId);
             for (const id of toRemove) {
                 if (plan.linkedTasks.some((lt) => lt.todoistId === id)) {
@@ -295,21 +285,17 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
     };
 
     const handleSchedule = async (taskId: string, startTime: string, endTime: string) => {
-        const today = format(new Date(), 'yyyy-MM-dd');
-        const [sh, sm] = startTime.split(':').map(Number);
-        const [eh, em] = endTime.split(':').map(Number);
-        const durationMinutes = (eh * 60 + em) - (sh * 60 + sm);
+        const durationMinutes = timeToMinutes(endTime) - timeToMinutes(startTime);
         if (durationMinutes <= 0) return;
         await updateTask(taskId, {
-            due_datetime: `${today}T${startTime}:00`,
+            due_datetime: `${todayISO()}T${startTime}:00`,
             duration: durationMinutes,
             duration_unit: 'minute',
         });
     };
 
     const handleClearSchedule = async (taskId: string) => {
-        const today = format(new Date(), 'yyyy-MM-dd');
-        await updateTask(taskId, { due_date: today });
+        await updateTask(taskId, { due_date: todayISO() });
     };
 
     return (
@@ -833,7 +819,7 @@ function TaskRow({
     }, []);
 
     // Parse existing schedule for today
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const todayStr = todayISO();
     const hasDueTime = task.due?.date?.includes('T') ?? false;
     const isDueToday = task.due?.date?.startsWith(todayStr) ?? false;
     const scheduledStart = hasDueTime && isDueToday
@@ -841,11 +827,7 @@ function TaskRow({
         : null;
     const durationMinutes = task.duration?.unit === 'minute' ? task.duration.amount : null;
     const scheduledEnd = scheduledStart && durationMinutes
-        ? (() => {
-            const [h, m] = scheduledStart.split(':').map(Number);
-            const total = h * 60 + m + durationMinutes;
-            return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-        })()
+        ? addMinutesToTime(scheduledStart, durationMinutes)
         : null;
     const isScheduled = scheduledStart !== null;
 
@@ -888,7 +870,7 @@ function TaskRow({
     return (
         <div>
             <div
-                className={`flex items-start gap-2 py-1 px-2 group ${isLinkedToCurrentIntention ? 'bg-accent/5 border-l-2 border-accent' : persistentLinkTitle ? 'bg-accent/5 border-l-2 border-accent' : ''}`}
+                className={`flex items-start gap-2 py-1 px-2 group ${(isLinkedToCurrentIntention || persistentLinkTitle) ? 'bg-accent/5 border-l-2 border-accent' : ''}`}
                 style={{ paddingLeft: `${8 + depth * 16}px` }}
             >
                 {/* Sub-task toggle */}
@@ -1027,11 +1009,7 @@ function TaskRow({
                             setPickerStart(val);
                             const est = estimateMap.get(task.id);
                             if (est && val) {
-                                const [h, m] = val.split(':').map(Number);
-                                const total = h * 60 + m + est;
-                                setPickerEnd(
-                                    `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`,
-                                );
+                                setPickerEnd(addMinutesToTime(val, est));
                             }
                         }}
                         className="px-1.5 py-0.5 text-xs rounded border border-border bg-card text-text focus:outline-none focus:ring-1 focus:ring-accent/30 dark:[color-scheme:dark]"

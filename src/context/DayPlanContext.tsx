@@ -1,11 +1,9 @@
 import {
     createContext,
-    useContext,
     useReducer,
     useEffect,
     type ReactNode,
 } from 'react';
-import { format } from 'date-fns';
 import type {
     DayPlan,
     Intention,
@@ -19,6 +17,7 @@ import type {
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 import { habitMatchesDate } from '../lib/habits';
+import { todayISO } from '../lib/time';
 
 // --------------- helpers ---------------
 
@@ -27,10 +26,8 @@ const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
 const SCHEMA_VERSION = 5;
-
-function todayISO(): string {
-    return format(new Date(), 'yyyy-MM-dd');
-}
+/** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
+const WIZARD_STEPS_COUNT = 4;
 
 function freshPlan(): DayPlan {
     return {
@@ -356,9 +353,14 @@ function reducer(state: State, action: Action): State {
 
         case 'LINK_TASK': {
             const { intentionId, todoistId } = action;
-            // If already linked to another intention, move it
+            // Habit-derived intentions force their tasks to 'background'.
+            const targetIntention = plan.intentions.find((i) => i.id === intentionId);
+            const lockToBackground = Boolean(targetIntention?.sourceHabitId);
+            // If already linked to another intention, move it (and re-apply the lock).
             let linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === todoistId ? { ...lt, intentionId } : lt,
+                lt.todoistId === todoistId
+                    ? { ...lt, intentionId, ...(lockToBackground ? { type: 'background' as const } : {}) }
+                    : lt,
             );
             const intentions = plan.intentions.map((i) => {
                 if (i.id === intentionId) {
@@ -377,7 +379,7 @@ function reducer(state: State, action: Action): State {
                 linkedTasks = [...linkedTasks, {
                     todoistId,
                     intentionId,
-                    type: 'unclassified',
+                    type: lockToBackground ? 'background' : 'unclassified',
                     assignedSessions: [],
                     completed: false,
                     isHabit: false,
@@ -525,7 +527,7 @@ function reducer(state: State, action: Action): State {
 
         case 'SAVE_DAY': {
             const entry: SavedDayPlan = {
-                plan: { ...structuredClone(plan), _wizardSteps: 4, _schemaVersion: SCHEMA_VERSION } as DayPlan,
+                plan: { ...structuredClone(plan), _wizardSteps: WIZARD_STEPS_COUNT, _schemaVersion: SCHEMA_VERSION } as DayPlan,
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };
@@ -565,10 +567,21 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'UPDATE_SEASON': {
-            const seasons = state.life.seasons.map((s) =>
-                s.id === action.season.id ? action.season : s,
+            // Enforce single-active-season invariant when the form flips `active`.
+            const incoming = action.season;
+            let seasons = state.life.seasons.map((s) =>
+                s.id === incoming.id ? incoming : s,
             );
-            return { ...state, life: { ...state.life, seasons } };
+            let activeSeasonId = state.life.activeSeasonId;
+            if (incoming.active) {
+                seasons = seasons.map((s) =>
+                    s.id === incoming.id ? s : { ...s, active: false },
+                );
+                activeSeasonId = incoming.id;
+            } else if (activeSeasonId === incoming.id) {
+                activeSeasonId = null;
+            }
+            return { ...state, life: { ...state.life, seasons, activeSeasonId } };
         }
 
         case 'DELETE_SEASON': {
@@ -706,7 +719,7 @@ function reducer(state: State, action: Action): State {
 
 // --------------- context ---------------
 
-interface DayPlanContextValue {
+export interface DayPlanContextValue {
     plan: DayPlan;
     settings: AppSettings;
     editingStep: number | null;
@@ -716,6 +729,7 @@ interface DayPlanContextValue {
 }
 
 const DayPlanContext = createContext<DayPlanContextValue | null>(null);
+export { DayPlanContext };
 
 export function DayPlanProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, null, () => {
@@ -736,7 +750,7 @@ export function DayPlanProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         localStorage.setItem(
             STORAGE_KEY,
-            JSON.stringify({ ...state.plan, _wizardSteps: 4, _schemaVersion: SCHEMA_VERSION }),
+            JSON.stringify({ ...state.plan, _wizardSteps: WIZARD_STEPS_COUNT, _schemaVersion: SCHEMA_VERSION }),
         );
     }, [state.plan]);
 
@@ -774,8 +788,3 @@ export function DayPlanProvider({ children }: { children: ReactNode }) {
     );
 }
 
-export function useDayPlan(): DayPlanContextValue {
-    const ctx = useContext(DayPlanContext);
-    if (!ctx) throw new Error('useDayPlan must be used within DayPlanProvider');
-    return ctx;
-}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { encryptToken } from '../../lib/crypto';
 import { validateTodoistToken } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';

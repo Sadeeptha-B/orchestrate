@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
 import { SavedSessions } from './SavedSessions';
@@ -12,10 +12,11 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
-import { useTheme } from '../../hooks/useTheme';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { Logo } from '../ui/Logo';
+import { ThemeToggle } from '../ui/ThemeToggle';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
 
@@ -27,7 +28,6 @@ export function Dashboard() {
         plan.setupComplete,
         settings.notificationPreference,
     );
-    const { theme, toggle: toggleTheme } = useTheme();
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
@@ -90,7 +90,7 @@ export function Dashboard() {
                 <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
                     <div className="flex items-center gap-3 min-w-0">
                         <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                            <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
+                            <Logo />
                             Orchestrate
                         </h1>
                         <ActiveSeasonBadge />
@@ -123,13 +123,7 @@ export function Dashboard() {
                         <Button variant="ghost" size="sm" onClick={() => setShowSettingsModal(true)}>
                             Settings
                         </Button>
-                        <button
-                            onClick={toggleTheme}
-                            className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                        >
-                            {theme === 'dark' ? '☀️' : '🌙'}
-                        </button>
+                        <ThemeToggle />
                     </div>
                 </div>
             </header>

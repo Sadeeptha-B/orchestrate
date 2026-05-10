@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -8,6 +8,7 @@ import { EditableTaskList } from '../ui/EditableTaskList';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
+import { getTaskTitle } from '../../lib/tasks';
 import type { Intention, LinkedTask } from '../../types';
 
 const HABIT_BADGE_CLASS =
@@ -48,12 +49,10 @@ export function Step1Intentions() {
         });
     }, []);
 
-    const getTaskTitle = useCallback((todoistId: string, linkedTasks: LinkedTask[]) => {
-        const fromTodoist = taskMap.get(todoistId)?.content;
-        if (fromTodoist) return fromTodoist;
-        const lt = linkedTasks.find((t) => t.todoistId === todoistId);
-        return lt?.titleSnapshot ?? todoistId;
-    }, [taskMap]);
+    const titleFor = useCallback(
+        (todoistId: string, linkedTasks: LinkedTask[]) => getTaskTitle(todoistId, linkedTasks, taskMap),
+        [taskMap],
+    );
 
     // Inline editing for the current mapping intention
     const [editingTitle, setEditingTitle] = useState(false);
@@ -387,7 +386,7 @@ export function Step1Intentions() {
                                                     {!isCollapsed && linkedTasks.length > 0 && (
                                                         <div className="border-t border-border/50 px-3 py-2 space-y-1">
                                                             {linkedTasks.map((lt) => {
-                                                                const title = getTaskTitle(lt.todoistId, plan.linkedTasks);
+                                                                const title = titleFor(lt.todoistId, plan.linkedTasks);
                                                                 return (
                                                                     <div
                                                                         key={lt.todoistId}
@@ -489,7 +488,7 @@ export function Step1Intentions() {
                                                 {!currentTasksCollapsed && (
                                                     <div className="border-t border-border/50 px-3 py-2 space-y-1">
                                                         {currentLinked.map((lt) => {
-                                                            const title = getTaskTitle(lt.todoistId, plan.linkedTasks);
+                                                            const title = titleFor(lt.todoistId, plan.linkedTasks);
                                                             return (
                                                                 <div
                                                                     key={lt.todoistId}

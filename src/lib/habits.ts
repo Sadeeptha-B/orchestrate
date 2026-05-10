@@ -1,4 +1,12 @@
-import type { Habit } from '../types';
+import type { Habit, LifeContext } from '../types';
+
+export function getActiveHabits(life: LifeContext): Habit[] {
+    return life.habits.filter((habit) => habit.active);
+}
+
+export function getAnchorHabits(habits: Habit[]): Habit[] {
+    return habits.filter((habit) => habit.isAnchor);
+}
 
 /**
  * True if the habit's recurrence rule matches the given local-calendar date.

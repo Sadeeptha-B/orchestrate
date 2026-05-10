@@ -1,6 +1,21 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
+import { inputClass, labelClass } from '../ui/formStyles';
+import { todayISO } from '../../lib/time';
 import type { Season, SeasonCapacity } from '../../types';
+
+function splitLines(raw: string) {
+    return raw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+}
+
+function parseOptionalNumber(value: string): number | null {
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
 
 export type SeasonDraft = Omit<Season, 'id'>;
 
@@ -10,19 +25,6 @@ interface SeasonFormProps {
     onSubmit: (draft: SeasonDraft) => void;
     onCancel?: () => void;
 }
-
-function todayISO(): string {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${dd}`;
-}
-
-const inputClass =
-    'w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors';
-
-const labelClass = 'block text-xs font-medium text-text-light mb-1';
 
 export function SeasonForm({
     initial,
@@ -52,22 +54,18 @@ export function SeasonForm({
     );
     const [capacityNotes, setCapacityNotes] = useState(initial?.capacityBudget?.notes ?? '');
 
-    const splitLines = (raw: string) =>
-        raw
-            .split('\n')
-            .map((l) => l.trim())
-            .filter(Boolean);
-
-    const canSubmit = name.trim().length > 0 && startDate.length > 0;
+    const trimmedCapacityNotes = capacityNotes.trim();
+    const hasInvalidDateRange = Boolean(endDate && startDate && endDate < startDate);
+    const canSubmit = name.trim().length > 0 && startDate.length > 0 && !hasInvalidDateRange;
 
     const handleSubmit = () => {
         if (!canSubmit) return;
         const capacityBudget: SeasonCapacity | null =
-            weeklyGrowthHours || maxConcurrentHabits || capacityNotes
+            weeklyGrowthHours || maxConcurrentHabits || trimmedCapacityNotes
                 ? {
-                    weeklyGrowthHours: weeklyGrowthHours ? Number(weeklyGrowthHours) : null,
-                    maxConcurrentHabits: maxConcurrentHabits ? Number(maxConcurrentHabits) : null,
-                    notes: capacityNotes,
+                    weeklyGrowthHours: parseOptionalNumber(weeklyGrowthHours),
+                    maxConcurrentHabits: parseOptionalNumber(maxConcurrentHabits),
+                    notes: trimmedCapacityNotes,
                 }
                 : null;
         onSubmit({
@@ -124,6 +122,11 @@ export function SeasonForm({
                         value={endDate}
                         onChange={(e) => setEndDate(e.target.value)}
                     />
+                    {hasInvalidDateRange && (
+                        <p className="mt-1 text-xs text-red-500">
+                            End date must be the same as or after the start date.
+                        </p>
+                    )}
                 </div>
             </div>
 

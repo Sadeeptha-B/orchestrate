@@ -1,15 +1,17 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { LifeShell } from './LifeShell';
+import { findActiveSeason } from '../../lib/seasons';
+import { getActiveHabits, getAnchorHabits } from '../../lib/habits';
 
 export function LifeView() {
     const { life } = useDayPlan();
     const navigate = useNavigate();
-    const activeSeason = life.seasons.find((s) => s.id === life.activeSeasonId);
-    const activeHabits = life.habits.filter((h) => h.active);
-    const anchorHabits = activeHabits.filter((h) => h.isAnchor);
+    const activeSeason = findActiveSeason(life);
+    const activeHabits = getActiveHabits(life);
+    const anchorHabits = getAnchorHabits(activeHabits);
 
     return (
         <LifeShell

@@ -348,7 +348,7 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 
 | Action | Payload | Effect |
 |---|---|---|
-| `LINK_TASK` | `intentionId, todoistId` | Creates a new `LinkedTask` (or moves an existing one to a different intention). Updates both `linkedTasks` and `intentions[].linkedTaskIds` |
+| `LINK_TASK` | `intentionId, todoistId` | Creates a new `LinkedTask` (or moves an existing one to a different intention). Updates both `linkedTasks` and `intentions[].linkedTaskIds`. **If the target intention has `sourceHabitId`, the task's `type` is forced to `'background'` at link time** (the lock that previously lived in a Step 2 effect) |
 | `UNLINK_TASK` | `todoistId` | Removes the `LinkedTask`, cleans up `linkedTaskIds` and `taskSessions` |
 | `CATEGORIZE_TASK` | `todoistId, taskType` | Sets `type` to `'main'`, `'background'`, or `'unclassified'` |
 | `SET_TASK_ESTIMATE` | `todoistId, minutes` | Sets `estimatedMinutes` |
@@ -384,7 +384,7 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 | Action | Payload | Effect |
 |---|---|---|
 | `ADD_SEASON` | `season: Omit<Season,'id'>` | Appends a new season; if `active: true`, deactivates any other active season |
-| `UPDATE_SEASON` | `season: Season` | Replaces the matching season in-place |
+| `UPDATE_SEASON` | `season: Season` | Replaces the matching season in-place. **Enforces the single-active-season invariant**: if the incoming season has `active: true`, all other seasons are deactivated and `activeSeasonId` is set to the incoming id; if it now has `active: false` and was the active one, `activeSeasonId` is cleared |
 | `DELETE_SEASON` | `seasonId: string` | Removes the season; clears `activeSeasonId` if it was active; clears the id from any habit's `seasonIds` |
 | `ACTIVATE_SEASON` | `seasonId: string \| null` | Sets exactly one season active (or none). Updates `activeSeasonId` |
 | `ADD_HABIT` | `habit: Omit<Habit,'id'\|'createdAt'>` | Creates a new habit with UUID and timestamp |

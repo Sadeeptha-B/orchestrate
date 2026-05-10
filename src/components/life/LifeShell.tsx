@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useTheme } from '../../hooks/useTheme';
+import { Logo } from '../ui/Logo';
+import { ThemeToggle } from '../ui/ThemeToggle';
 
 interface Crumb {
     label: string;
@@ -16,7 +17,6 @@ interface LifeShellProps {
 
 export function LifeShell({ title, subtitle, crumbs = [], children }: LifeShellProps) {
     const navigate = useNavigate();
-    const { theme, toggle: toggleTheme } = useTheme();
 
     return (
         <div className="min-h-screen flex flex-col">
@@ -27,11 +27,7 @@ export function LifeShell({ title, subtitle, crumbs = [], children }: LifeShellP
                             to="/"
                             className="text-xl font-semibold text-accent flex items-center gap-2"
                         >
-                            <img
-                                src={import.meta.env.BASE_URL + 'favicon.svg'}
-                                alt=""
-                                className="w-6 h-6"
-                            />
+                            <Logo />
                             Orchestrate
                         </Link>
                         <span className="text-text-light text-sm">/</span>
@@ -54,13 +50,7 @@ export function LifeShell({ title, subtitle, crumbs = [], children }: LifeShellP
                         >
                             Back to Dashboard
                         </button>
-                        <button
-                            onClick={toggleTheme}
-                            className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                            aria-label="Toggle theme"
-                        >
-                            {theme === 'dark' ? '☀️' : '\u{1F319}'}
-                        </button>
+                        <ThemeToggle />
                     </div>
                 </div>
             </header>

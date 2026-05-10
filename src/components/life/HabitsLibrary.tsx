@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { HabitForm } from './HabitForm';
+import { getActiveHabits } from '../../lib/habits';
 import type { Habit } from '../../types';
 
 function recurrenceSummary(h: Habit): string {
@@ -28,6 +29,7 @@ export function HabitsLibrary() {
     const [showCreate, setShowCreate] = useState(false);
     const [editing, setEditing] = useState<Habit | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
+    const activeHabitCount = getActiveHabits(life).length;
 
     const sorted = [...life.habits].sort((a, b) => {
         if (a.active !== b.active) return a.active ? -1 : 1;
@@ -52,9 +54,8 @@ export function HabitsLibrary() {
                 <p className="text-sm text-text-light">
                     {life.habits.length === 0
                         ? 'No habits yet — start with one anchor habit (sleep, meditation, or gym).'
-                        : `${life.habits.length} habit${life.habits.length === 1 ? '' : 's'}, ${
-                              life.habits.filter((h) => h.active).length
-                          } active.`}
+                        : `${life.habits.length} habit${life.habits.length === 1 ? '' : 's'}, ${activeHabitCount
+                        } active.`}
                 </p>
                 <Button size="sm" onClick={() => setShowCreate(true)}>
                     New Habit

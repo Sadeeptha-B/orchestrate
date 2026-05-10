@@ -1,24 +1,21 @@
 import { useState, useCallback, useMemo } from 'react';
-import { format } from 'date-fns';
 import { Card } from '../ui/Card';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, type TodoistTask } from '../../hooks/useTodoist';
+import { addMinutesToTime, formatDuration, timeToMinutes, todayISO } from '../../lib/time';
 import type { LinkedTask, SessionSlot } from '../../types';
 
 /** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
 function getScheduledRange(task: TodoistTask | undefined): string | null {
     if (!task?.due?.date) return null;
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const todayStr = todayISO();
     if (!task.due.date.startsWith(todayStr) || !task.due.date.includes('T')) return null;
     const start = task.due.date.slice(11, 16);
     const durationMinutes = task.duration?.unit === 'minute' ? task.duration.amount : null;
     if (!durationMinutes) return start;
-    const [h, m] = start.split(':').map(Number);
-    const total = h * 60 + m + durationMinutes;
-    const end = `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-    return `${start}–${end}`;
+    return `${start}–${addMinutesToTime(start, durationMinutes)}`;
 }
 
 // ---- shared task row hooks (used by both CurrentSession and SessionTimeline) ----
@@ -221,18 +218,13 @@ function SessionCard({
                 </div>
                 <div className="flex items-center gap-2">
                     {(() => {
-                        const [sh, sm] = session.startTime.split(':').map(Number);
-                        const [eh, em] = session.endTime.split(':').map(Number);
-                        const totalMin = (eh * 60 + em) - (sh * 60 + sm);
+                        const totalMin = timeToMinutes(session.endTime) - timeToMinutes(session.startTime);
                         const estTotal = tasksInSession.reduce((s, lt) => s + (lt.estimatedMinutes ?? 0), 0);
                         if (estTotal === 0) return null;
-                        const h = Math.floor(estTotal / 60);
-                        const m = estTotal % 60;
-                        const fmt = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
                         const over = estTotal > totalMin;
                         return (
                             <span className={`text-[10px] tabular-nums ${over ? 'text-amber-600 dark:text-amber-400' : 'text-text-light'}`}>
-                                {fmt} est.{over && ' \u26a0'}
+                                {formatDuration(estTotal)} est.{over && ' \u26a0'}
                             </span>
                         );
                     })()}
@@ -289,7 +281,7 @@ function SessionCard({
 
 export function CurrentSession() {
     const { plan, settings } = useDayPlan();
-    const { currentSession } = useCurrentSession(settings.sessionSlots);
+    const { currentSession, remainingSessions } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
     const drag = useTaskDrag();
 
@@ -299,10 +291,32 @@ export function CurrentSession() {
     );
 
     if (!currentSession) {
+        const upcoming = remainingSessions[0];
+        if (!upcoming) {
+            return (
+                <Card>
+                    <p className="text-sm text-text-light">No more sessions today.</p>
+                </Card>
+            );
+        }
+        const upcomingTaskIds = plan.taskSessions[upcoming.id] ?? [];
         return (
-            <Card>
-                <p className="text-sm text-text-light">No active session right now.</p>
-            </Card>
+            <div className="space-y-2">
+                <p className="text-xs text-text-light px-1">
+                    No active session — next up at{' '}
+                    <span className="tabular-nums text-text font-medium">{upcoming.startTime}</span>
+                </p>
+                <SessionCard
+                    session={upcoming}
+                    isCurrent={false}
+                    isPast={false}
+                    taskIds={upcomingTaskIds}
+                    linkedTasks={plan.linkedTasks}
+                    taskMap={taskMap}
+                    intentions={intentionMap}
+                    drag={drag}
+                />
+            </div>
         );
     }
 

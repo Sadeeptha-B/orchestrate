@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { timeToMinutes } from '../../lib/time';
+import { getTaskTitle } from '../../lib/tasks';
 import type { LinkedTask, SessionSlot } from '../../types';
 
 function nowInMinutes(): number {
@@ -75,12 +76,7 @@ export function SessionTimelineBar({
         };
     };
 
-    const getTaskTitle = (todoistId: string) => {
-        const fromTodoist = taskMap.get(todoistId)?.content;
-        if (fromTodoist) return fromTodoist;
-        const lt = linkedTasks.find((t) => t.todoistId === todoistId);
-        return lt?.titleSnapshot ?? todoistId;
-    };
+    const titleFor = (todoistId: string) => getTaskTitle(todoistId, linkedTasks, taskMap);
 
     const isInteractive = onSelectSession !== undefined;
 
@@ -161,7 +157,7 @@ export function SessionTimelineBar({
                                         key={lt.todoistId}
                                         className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-accent/15 text-accent'}`}
                                     >
-                                        {lt.completed && '🎉 '}{getTaskTitle(lt.todoistId)}
+                                        {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionBg.map((lt) => (
@@ -169,7 +165,7 @@ export function SessionTimelineBar({
                                         key={lt.todoistId}
                                         className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
                                     >
-                                        {lt.completed ? '🎉 ' : lt.isHabit ? '🔄 ' : ''}{getTaskTitle(lt.todoistId)}
+                                        {lt.completed ? '🎉 ' : lt.isHabit ? '🔄 ' : ''}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionMain.length === 0 && sessionBg.length === 0 && (

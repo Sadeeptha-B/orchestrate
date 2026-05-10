@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
+import { findActiveSeason } from '../../lib/seasons';
 
 interface ActiveSeasonBadgeProps {
     className?: string;
@@ -8,7 +9,7 @@ interface ActiveSeasonBadgeProps {
 export function ActiveSeasonBadge({ className = '' }: ActiveSeasonBadgeProps) {
     const { life } = useDayPlan();
     const navigate = useNavigate();
-    const active = life.seasons.find((s) => s.id === life.activeSeasonId);
+    const active = findActiveSeason(life);
 
     if (!active) {
         return (

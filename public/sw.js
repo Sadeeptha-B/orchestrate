@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-const sw = self as unknown as ServiceWorkerGlobalScope;
+const sw = self;
 
 const CACHE_NAME = 'orchestrate-v1';
 
@@ -49,10 +49,13 @@ sw.addEventListener('fetch', (event) => {
                 return response;
             })
             .catch(() =>
-                // Offline: serve from cache, fall back to index.html for SPA routing
-                caches.match(event.request).then(
-                    (cached) => cached || caches.match('/orchestrate/index.html') as Promise<Response>,
-                ),
+                // Offline: serve from cache, fall back to index.html for SPA routing.
+                caches.match(event.request).then((cached) => {
+                    if (cached) return cached;
+                    return caches.match('/orchestrate/index.html').then(
+                        (fallback) => fallback || Response.error(),
+                    );
+                }),
             ),
     );
 });

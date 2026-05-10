@@ -1,11 +1,6 @@
 import { useContext } from 'react';
 import { TodoistDataContext, TodoistActionsContext, type TodoistDataValue, type TodoistActionsValue } from '../context/TodoistContext';
-
-// In development, route through Vite proxy to avoid potential CORS issues.
-// In production (GitHub Pages), call Todoist API directly (v1 supports CORS).
-const API_BASE = import.meta.env.DEV
-    ? '/api/todoist/api/v1'
-    : 'https://api.todoist.com/api/v1';
+import { API_BASE } from '../lib/todoistApi';
 
 export interface TodoistTask {
     id: string;
@@ -59,13 +54,6 @@ export function useTodoistActions(): TodoistActionsValue {
     const ctx = useContext(TodoistActionsContext);
     if (!ctx) throw new Error('useTodoistActions must be used within TodoistProvider');
     return ctx;
-}
-
-/** Convenience hook — combines data + actions for components that need both. */
-export function useTodoist() {
-    const data = useTodoistData();
-    const actions = useTodoistActions();
-    return { ...data, ...actions };
 }
 
 /** Validate a Todoist API token by hitting the projects endpoint. */

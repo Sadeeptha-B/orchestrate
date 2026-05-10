@@ -178,7 +178,6 @@ Manages all Todoist API data and mutations. Split into two contexts for render o
 **Consumer hooks** (`src/hooks/useTodoist.ts`):
 - `useTodoistData()` — for components that only read data (most wizard steps, SessionTimeline, CheckInModal).
 - `useTodoistActions()` — for components that mutate data (TodoistPanel).
-- `useTodoist()` — convenience combo for components that need both.
 
 ### 5.3 MusicContext — Playlist Selection
 
@@ -208,6 +207,9 @@ Located in `src/components/ui/`:
 | `ErrorBoundary` | React error boundary with fallback UI |
 | `EditableTaskList` | Reusable list with inline rename, drag-and-drop reorder, and remove — dispatches to `DayPlanContext` |
 | `SessionTimelineBar` | Visual timeline bar rendering sessions as positioned blocks with assigned task pills. Dual mode: interactive (clickable, used in Step 3) vs display (used in dashboard) |
+| `Logo` | App favicon `<img>` with overridable className. Sole owner of the `import.meta.env.BASE_URL + 'favicon.svg'` URL pattern |
+| `ThemeToggle` | Self-contained light/dark toggle button (consumes `useTheme`); `size: 'sm' \| 'md'` prop |
+| `formStyles` | Shared `inputClass` / `labelClass` Tailwind strings used by `HabitForm`, `SeasonForm` |
 
 ### 6.2 TodoistPanel
 
@@ -315,9 +317,9 @@ Orchestrate supports light and dark themes.
 | `useNotifications` | `hooks/useNotifications.ts` | Web Notifications API wrapper (`requestPermission`, `sendNotification`) |
 | `useResizablePanel` | `hooks/useResizablePanel.ts` | Drag-to-resize panel, clamped 220–480px |
 | `useTheme` | `hooks/useTheme.ts` | Light/dark toggle with `useSyncExternalStore` + localStorage |
+| `useDayPlan` | `hooks/useDayPlan.ts` | Consumer for `DayPlanContext` (lives in its own file so the context module can stay component-only for fast refresh) |
 | `useTodoistData` | `hooks/useTodoist.ts` | Read-only Todoist context consumer |
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
-| `useTodoist` | `hooks/useTodoist.ts` | Convenience combo of data + actions |
 
 ---
 
@@ -338,6 +340,7 @@ src/
 │
 ├── hooks/
 │   ├── useCurrentSession.ts    # Time-based session detection
+│   ├── useDayPlan.ts           # DayPlanContext consumer (kept separate so the context file stays component-only)
 │   ├── useHourlyCheckin.ts     # Hourly check-in trigger
 │   ├── useNotifications.ts     # Web Notifications wrapper
 │   ├── useResizablePanel.ts    # Drag-to-resize
@@ -346,8 +349,12 @@ src/
 │
 ├── lib/
 │   ├── crypto.ts               # AES-256-GCM encryption/decryption
-│   ├── time.ts                 # timeToMinutes utility
-│   └── habits.ts               # v5: habitMatchesDate(habit, dateISO)
+│   ├── time.ts                 # timeToMinutes, minutesToTime, addMinutesToTime, formatDuration, todayISO
+│   ├── habits.ts               # v5: habitMatchesDate(habit, dateISO)
+│   ├── seasons.ts              # v5: findActiveSeason, getSeasonProgress
+│   ├── tasks.ts                # getTaskTitle (Todoist content → titleSnapshot → ID), collectDescendantIds (cascade-delete BFS)
+│   ├── spotify.ts              # spotifyPlaylistId, isValidSpotifyUrl
+│   └── todoistApi.ts           # API_BASE constant (dev proxy vs prod direct)
 │
 ├── data/
 │   ├── sessions.ts             # Default session slot definitions
@@ -392,7 +399,10 @@ src/
 │       ├── ErrorBoundary.tsx
 │       ├── EditableTaskList.tsx
 │       ├── SessionTimelineBar.tsx
-│       └── AboutContent.tsx
+│       ├── AboutContent.tsx
+│       ├── Logo.tsx            # favicon img with overridable className
+│       ├── ThemeToggle.tsx     # light/dark toggle button (uses useTheme)
+│       └── formStyles.ts       # shared input/label Tailwind class strings
 │
 public/
 ├── sw.js                       # Service worker

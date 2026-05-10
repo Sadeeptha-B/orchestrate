@@ -1,5 +1,6 @@
 import { playlists } from '../../data/playlists';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
+import { spotifyPlaylistId, isValidSpotifyUrl } from '../../lib/spotify';
 import { useState, useCallback, createContext, useContext, type ReactNode } from 'react';
 
 const ACTIVE_PLAYLIST_KEY = 'orchestrate-active-playlist';
@@ -23,16 +24,6 @@ function loadCustomUrls(): Record<string, string> {
 
 function saveCustomUrls(urls: Record<string, string>) {
     try { localStorage.setItem(CUSTOM_URLS_KEY, JSON.stringify(urls)); } catch { /* ignore */ }
-}
-
-/** Extract the Spotify playlist ID from an open.spotify.com URL */
-function spotifyPlaylistId(url: string): string {
-    const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
-    return match?.[1] ?? '';
-}
-
-function isValidSpotifyUrl(url: string): boolean {
-    return /^https:\/\/open\.spotify\.com\/playlist\/[a-zA-Z0-9]+/.test(url.trim());
 }
 
 // Shared state context for playlist selection

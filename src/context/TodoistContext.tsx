@@ -1,13 +1,11 @@
 import { createContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { useDayPlan } from './DayPlanContext';
+import { useDayPlan } from '../hooks/useDayPlan';
 import { decryptToken } from '../lib/crypto';
+import { API_BASE } from '../lib/todoistApi';
+import { collectDescendantIds } from '../lib/tasks';
 import type { TodoistTask, TodoistProject, TodoistSection } from '../hooks/useTodoist';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-
-const API_BASE = import.meta.env.DEV
-    ? '/api/todoist/api/v1'
-    : 'https://api.todoist.com/api/v1';
 
 const TODOIST_CACHE_KEY = 'orchestrate-todoist-cache';
 const FOCUS_STALENESS_MS = 30_000;      // 30s — skip focus-refresh if data is this fresh
@@ -160,68 +158,87 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── Refresh functions with dedup + staleness ──
 
-    const refreshTasks = useCallback(async (opts?: RefreshOpts) => {
-        if (!opts?.force && Date.now() - lastFetchedRef.current.tasks < FOCUS_STALENESS_MS) return;
-        if (inflightRef.current.tasks) return inflightRef.current.tasks;
+    type ResourceKey = 'tasks' | 'projects' | 'sections';
 
-        const hasExistingData = tasks.length > 0 || (cache.current?.tasks.length ?? 0) > 0;
-        const promise = (async () => {
-            const token = await resolveToken();
-            if (!token) return;
-            // Only show loading spinner if no cached data available
-            if (!hasExistingData) { setLoading(true); }
-            setError(null);
-            try {
-                const allTasks = await fetchAllPages<TodoistTask>(token, '/tasks');
-                setTasks(allTasks);
-                lastFetchedRef.current.tasks = Date.now();
-            } catch (e) {
-                setError(e instanceof Error ? e.message : 'Failed to fetch tasks');
-            } finally {
-                if (!hasExistingData) { setLoading(false); }
-            }
-        })();
-        inflightRef.current.tasks = promise;
-        promise.finally(() => { inflightRef.current.tasks = null; });
-        return promise;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [resolveToken]);
+    /**
+     * Generic resource refresher: handles dedup, staleness check, fetch, and lastFetched bookkeeping.
+     * `onError` controls whether the failure surfaces in `error` state (tasks: yes, projects/sections: silent).
+     * `withLoadingSpinner` is only set for tasks — see `refreshTasks` wrapper.
+     */
+    const refreshResource = useCallback(
+        async <T,>(opts: {
+            kind: ResourceKey;
+            path: string;
+            setData: (data: T[]) => void;
+            force?: boolean;
+            withLoadingSpinner?: boolean;
+            errorMessage?: string;
+        }) => {
+            const { kind, path, setData, force, withLoadingSpinner, errorMessage } = opts;
+            if (!force && Date.now() - lastFetchedRef.current[kind] < FOCUS_STALENESS_MS) return;
+            if (inflightRef.current[kind]) return inflightRef.current[kind] ?? undefined;
 
-    const refreshProjects = useCallback(async (opts?: RefreshOpts) => {
-        if (!opts?.force && Date.now() - lastFetchedRef.current.projects < FOCUS_STALENESS_MS) return;
-        if (inflightRef.current.projects) return inflightRef.current.projects;
+            const promise = (async () => {
+                const token = await resolveToken();
+                if (!token) return;
+                if (withLoadingSpinner) setLoading(true);
+                if (errorMessage !== undefined) setError(null);
+                try {
+                    const data = await fetchAllPages<T>(token, path);
+                    setData(data);
+                    lastFetchedRef.current[kind] = Date.now();
+                } catch (e) {
+                    if (errorMessage !== undefined) {
+                        setError(e instanceof Error ? e.message : errorMessage);
+                    }
+                    // else: silent — projects/sections are optional UI enhancement
+                } finally {
+                    if (withLoadingSpinner) setLoading(false);
+                }
+            })();
+            inflightRef.current[kind] = promise;
+            promise.finally(() => { inflightRef.current[kind] = null; });
+            return promise;
+        },
+        [resolveToken],
+    );
 
-        const promise = (async () => {
-            const token = await resolveToken();
-            if (!token) return;
-            try {
-                const allProjects = await fetchAllPages<TodoistProject>(token, '/projects');
-                setProjects(allProjects);
-                lastFetchedRef.current.projects = Date.now();
-            } catch { /* silently fail — projects are optional UI enhancement */ }
-        })();
-        inflightRef.current.projects = promise;
-        promise.finally(() => { inflightRef.current.projects = null; });
-        return promise;
-    }, [resolveToken]);
+    const refreshTasks = useCallback(
+        (opts?: RefreshOpts) => {
+            const hasExistingData = tasks.length > 0 || (cache.current?.tasks.length ?? 0) > 0;
+            return refreshResource<TodoistTask>({
+                kind: 'tasks',
+                path: '/tasks',
+                setData: setTasks,
+                force: opts?.force,
+                withLoadingSpinner: !hasExistingData,
+                errorMessage: 'Failed to fetch tasks',
+            });
+        },
+        [refreshResource, tasks.length],
+    );
 
-    const refreshSections = useCallback(async (opts?: RefreshOpts) => {
-        if (!opts?.force && Date.now() - lastFetchedRef.current.sections < FOCUS_STALENESS_MS) return;
-        if (inflightRef.current.sections) return inflightRef.current.sections;
+    const refreshProjects = useCallback(
+        (opts?: RefreshOpts) =>
+            refreshResource<TodoistProject>({
+                kind: 'projects',
+                path: '/projects',
+                setData: setProjects,
+                force: opts?.force,
+            }),
+        [refreshResource],
+    );
 
-        const promise = (async () => {
-            const token = await resolveToken();
-            if (!token) return;
-            try {
-                const allSections = await fetchAllPages<TodoistSection>(token, '/sections');
-                setSections(allSections);
-                lastFetchedRef.current.sections = Date.now();
-            } catch { /* silently fail */ }
-        })();
-        inflightRef.current.sections = promise;
-        promise.finally(() => { inflightRef.current.sections = null; });
-        return promise;
-    }, [resolveToken]);
+    const refreshSections = useCallback(
+        (opts?: RefreshOpts) =>
+            refreshResource<TodoistSection>({
+                kind: 'sections',
+                path: '/sections',
+                setData: setSections,
+                force: opts?.force,
+            }),
+        [refreshResource],
+    );
 
     // ── Initial fetch (respects cache TTL) ──
     useEffect(() => {
@@ -358,17 +375,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         try {
             await apiFetch(token, `/tasks/${taskId}`, { method: 'DELETE' });
             setTasks((prev) => {
-                const removed = new Set<string>([taskId]);
-                let changed = true;
-                while (changed) {
-                    changed = false;
-                    for (const t of prev) {
-                        if (!removed.has(t.id) && t.parent_id && removed.has(t.parent_id)) {
-                            removed.add(t.id);
-                            changed = true;
-                        }
-                    }
-                }
+                const removed = collectDescendantIds(prev, [taskId], (t) => t.parent_id);
                 return prev.filter((t) => !removed.has(t.id));
             });
         } catch (e) {
@@ -395,26 +402,14 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         if (!token) return;
         try {
             await apiFetch(token, `/projects/${projectId}`, { method: 'DELETE' });
-            const removedProjects = new Set<string>([projectId]);
-            setProjects((prev) => {
-                let changed = true;
-                while (changed) {
-                    changed = false;
-                    for (const p of prev) {
-                        if (!removedProjects.has(p.id) && p.parent_id && removedProjects.has(p.parent_id)) {
-                            removedProjects.add(p.id);
-                            changed = true;
-                        }
-                    }
-                }
-                return prev.filter((p) => !removedProjects.has(p.id));
-            });
+            const removedProjects = collectDescendantIds(projects, [projectId], (p) => p.parent_id);
+            setProjects((prev) => prev.filter((p) => !removedProjects.has(p.id)));
             setTasks((prev) => prev.filter((t) => !removedProjects.has(t.project_id)));
             setSections((prev) => prev.filter((s) => !removedProjects.has(s.project_id)));
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to delete project');
         }
-    }, [resolveToken]);
+    }, [resolveToken, projects]);
 
     // ── Memoized task lookup map ──
     const taskMap = useMemo(

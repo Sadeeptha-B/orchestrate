@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { useDayPlan } from '../../context/DayPlanContext';
-import { useTheme } from '../../hooks/useTheme';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { SavedSessions } from '../dashboard/SavedSessions';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { AboutContent } from '../ui/AboutContent';
+import { Logo } from '../ui/Logo';
+import { ThemeToggle } from '../ui/ThemeToggle';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../../data/wizardSteps';
 
@@ -34,7 +35,6 @@ export function WizardLayout({
 }: WizardLayoutProps) {
     const { plan, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
-    const { theme, toggle: toggleTheme } = useTheme();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
     const showSidebar = !isEditing;
@@ -101,7 +101,7 @@ export function WizardLayout({
                     <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3 min-w-0">
                             <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                                <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
+                                <Logo />
                                 Orchestrate
                             </h1>
                             <ActiveSeasonBadge />
@@ -135,13 +135,7 @@ export function WizardLayout({
                             >
                                 ⚙
                             </button>
-                            <button
-                                onClick={toggleTheme}
-                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                                title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                            >
-                                {theme === 'dark' ? '☀️' : '🌙'}
-                            </button>
+                            <ThemeToggle />
                         </div>
                     </div>
                     <ProgressBar current={step} total={TOTAL_STEPS} />

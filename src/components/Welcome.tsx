@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { useDayPlan } from '../context/DayPlanContext';
-import { useTheme } from '../hooks/useTheme';
+import { useDayPlan } from '../hooks/useDayPlan';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Modal } from './ui/Modal';
 import { AboutContent } from './ui/AboutContent';
+import { Logo } from './ui/Logo';
+import { ThemeToggle } from './ui/ThemeToggle';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../data/wizardSteps';
+import { findActiveSeason } from '../lib/seasons';
+import { getActiveHabits, getAnchorHabits } from '../lib/habits';
 
 function getGreeting(): string {
     const hour = new Date().getHours();
@@ -19,15 +22,14 @@ function getGreeting(): string {
 export function Welcome() {
     const { plan, history, life } = useDayPlan();
     const navigate = useNavigate();
-    const { theme, toggle: toggleTheme } = useTheme();
     const [showAbout, setShowAbout] = useState(false);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
     const today = format(new Date(), 'EEEE, MMMM d');
 
-    const activeSeason = life.seasons.find((s) => s.id === life.activeSeasonId);
-    const anchorHabits = life.habits.filter((h) => h.active && h.isAnchor);
+    const activeSeason = findActiveSeason(life);
+    const anchorHabits = getAnchorHabits(getActiveHabits(life));
 
     const goPlan = () => navigate('/setup', { state: { fromWelcome: true } });
 
@@ -48,23 +50,13 @@ export function Welcome() {
                 >
                     ?
                 </button>
-                <button
-                    onClick={toggleTheme}
-                    className="p-2 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                    title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                >
-                    {theme === 'dark' ? '☀️' : '🌙'}
-                </button>
+                <ThemeToggle size="md" />
             </div>
 
             <div className="w-full max-w-2xl space-y-8">
                 {/* Logo & branding */}
                 <div className="space-y-3 text-center">
-                    <img
-                        src={import.meta.env.BASE_URL + 'favicon.svg'}
-                        alt=""
-                        className="w-14 h-14 mx-auto"
-                    />
+                    <Logo className="w-14 h-14 mx-auto" />
                     <h1 className="text-2xl font-semibold text-accent">Orchestrate</h1>
                     <div>
                         <p className="text-xl font-medium text-text">{getGreeting()}</p>

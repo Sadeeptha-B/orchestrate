@@ -1,8 +1,12 @@
 import type { LifeContext, Season } from '../types';
 
 export function findActiveSeason(life: LifeContext): Season | null {
-    if (!life.activeSeasonId) return null;
-    return life.seasons.find((s) => s.id === life.activeSeasonId) ?? null;
+    if (life.activeSeasonId) {
+        const selectedSeason = life.seasons.find((season) => season.id === life.activeSeasonId);
+        if (selectedSeason) return selectedSeason;
+    }
+
+    return life.seasons.find((season) => season.active) ?? null;
 }
 
 export interface SeasonProgress {

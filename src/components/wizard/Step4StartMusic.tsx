@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { WizardLayout } from './WizardLayout';
-import { useDayPlan } from '../../context/DayPlanContext';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import { playlists } from '../../data/playlists';
 
 /** Extract the Spotify playlist ID from an open.spotify.com URL */
