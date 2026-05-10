@@ -15,9 +15,6 @@ function AppRoutes() {
     const location = useLocation();
     const fromWelcome = (location.state as { fromWelcome?: boolean })?.fromWelcome === true;
 
-    const lifeGuard = (element: React.ReactNode) =>
-        plan.setupComplete ? element : <Navigate to="/" replace />;
-
     return (
         <Routes>
             <Route
@@ -32,10 +29,10 @@ function AppRoutes() {
                         : <Navigate to="/" replace />
                 }
             />
-            <Route path="/life" element={lifeGuard(<LifeView />)} />
-            <Route path="/season" element={lifeGuard(<SeasonsManager />)} />
-            <Route path="/season/:id" element={lifeGuard(<SeasonDetail />)} />
-            <Route path="/habits" element={lifeGuard(<HabitsLibrary />)} />
+            <Route path="/life" element={<LifeView />} />
+            <Route path="/season" element={<SeasonsManager />} />
+            <Route path="/season/:id" element={<SeasonDetail />} />
+            <Route path="/habits" element={<HabitsLibrary />} />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     );

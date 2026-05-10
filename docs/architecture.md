@@ -30,12 +30,16 @@ Every React component in the app sits inside a nested provider tree. The order m
 StrictMode
 └── BrowserRouter (basename: /orchestrate/)
     └── ErrorBoundary
-        └── DayPlanProvider          ← core app state (plan, settings, history)
+        └── DayPlanProvider          ← core app state (plan, settings, history, life)
             └── TodoistProvider      ← Todoist data + API actions
                 └── AppRoutes        ← router switch
-                    ├── Welcome      (when !setupComplete)
+                    ├── Welcome      (hub: when !setupComplete, at /)
                     ├── Wizard       (at /setup)
-                    └── Dashboard    (when setupComplete, at /)
+                    ├── Dashboard    (when setupComplete, at /)
+                    ├── LifeView     (at /life)
+                    ├── SeasonsManager (at /season)
+                    ├── SeasonDetail (at /season/:id)
+                    └── HabitsLibrary (at /habits)
 ```
 
 **Why this order?**
@@ -50,13 +54,15 @@ Orchestrate has three routes, all defined in the `AppRoutes` component inside `A
 
 | Path | Component | Guard |
 |---|---|---|
-| `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` |
+| `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` (hub) |
 | `/setup` | `Wizard` | Accessible when `setupComplete` is true (editing) or when navigated from Welcome (`location.state.fromWelcome`) |
-| `/life` | `LifeView` | Requires `setupComplete`. Hub showing active season + anchor habits + all active habits |
-| `/season` | `SeasonsManager` | Requires `setupComplete`. List + create + activate seasons |
-| `/season/:id` | `SeasonDetail` | Requires `setupComplete`. Single-season editor with member-habit list |
-| `/habits` | `HabitsLibrary` | Requires `setupComplete`. CRUD habits with anchor protection |
+| `/life` | `LifeView` | Always reachable. Hub showing active season + anchor habits + all active habits |
+| `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
+| `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
+| `/habits` | `HabitsLibrary` | Always reachable. CRUD habits with anchor protection |
 | `*` | Redirect to `/` | Catch-all |
+
+Life routes were previously gated on `plan.setupComplete`, but `setupComplete` is a *daily* flag while seasons and habits are *durable*. The gate caused habits to become unreachable on a fresh day until the wizard was completed; it has been removed.
 
 Navigation between screens is done via `react-router-dom`'s `useNavigate()`. The wizard-to-dashboard transition happens when `COMPLETE_SETUP` is dispatched.
 
@@ -72,14 +78,19 @@ Welcome → Wizard (4 steps) → Dashboard
              └────────────────────┘  (Edit Plan / Recontextualize)
 ```
 
-### 4.1 Welcome Screen
+### 4.1 Welcome (Home Hub)
 
-The landing page (`Welcome.tsx`) detects three states:
+Since v5, the landing page (`Welcome.tsx`) is a multi-purpose hub rather than a single "plan your day" CTA. It surfaces:
+
+- **Today card** — plan status (idle / resuming / first-time), primary CTA (`Plan Your Day` / `Resume Planning`) that navigates to `/setup` with `fromWelcome: true`, and the wizard step timeline (driven by `WIZARD_STEPS` in [src/data/wizardSteps.ts](../src/data/wizardSteps.ts)).
+- **Life card** — active season summary (linked to `/season/:id`), anchor habits as inline pills, and quick links to `/habits` and `/season`. Surfaces durable v5 state without forcing the user through the wizard first.
+
+Three plan-status modes are still detected (used to choose the status copy and primary CTA label):
 1. **First ever visit** — no history, no in-progress plan.
 2. **Resuming** — intentions exist or `wizardStep > 1`.
 3. **Returning** — history exists but today's plan is fresh.
 
-It renders a CTA that navigates to `/setup` with `fromWelcome: true` in router state.
+The hub appears at `/` whenever `plan.setupComplete === false`. Once setup is complete, `/` shows the Dashboard instead. The Life surfaces remain reachable from both.
 
 ### 4.2 Wizard Flow
 

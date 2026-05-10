@@ -1,7 +1,7 @@
 > **Start here.** This is the canonical context document for the current state of Orchestrate. Deeper references: [vision.md](./vision.md) (durable "why"), [architecture.md](./architecture.md), [data-model.md](./data-model.md), [backlog.md](./backlog.md) (forward-looking proposals). Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
 >
-> **Last updated:** 2026-05-07
-> **Reflects:** v5 (life scaffolding primitives — Seasons, first-class Habits, LifeContext slice, hierarchical planning routes). Iteration 6 (session capacity arithmetic) is **not yet implemented**; iterations 7–8 (modes/rituals/recovery, reviews/drift) are sketched in [history/plan_v5.md](./history/plan_v5.md).
+> **Last updated:** 2026-05-10
+> **Reflects:** v5 (life scaffolding primitives — Seasons, first-class Habits, LifeContext slice, hierarchical planning routes) + v5.1 (entry-flow refresh: Welcome rebuilt as a multi-purpose hub; Life routes ungated from `setupComplete`). Iteration 6 (session capacity arithmetic) is **not yet implemented**; iterations 7–8 (modes/rituals/recovery, reviews/drift) are sketched in [history/plan_v5.md](./history/plan_v5.md).
 
 # Orchestrate — Purpose & Current Feature Set
 
@@ -27,18 +27,18 @@ The app is **opinionated and personal** to the author's workflow: fixed default 
 The user's day flows through three primary surfaces, with a hierarchical-planning layer above them:
 
 ```
-Welcome  ─▶  Wizard (4 steps)  ─▶  Dashboard
-              ▲                       │
-              └───── Edit Plan / Recontextualize
-                                      │
-                            ┌─────────┴──────────┐
-                            ▼                    ▼
-                  /life  ─▶  /season  ─▶  /season/:id
-                            ▼
-                          /habits
+Welcome (hub)  ─▶  Wizard (4 steps)  ─▶  Dashboard
+   │  ▲                ▲                       │
+   │  └────────────────┴── Edit Plan / Recontextualize
+   │                                           │
+   └────────────┐                  ┌───────────┘
+                ▼                  ▼
+         /life  ─▶  /season  ─▶  /season/:id
+                ▼
+              /habits
 ```
 
-The `/life` family of routes is the scaffolding above the day: where Seasons, Habits, and (in v7+) Rituals and Reviews live.
+Welcome is a multi-purpose home hub (since v5.1): a "Today" card with the wizard CTA + step timeline, plus a "Life" card surfacing the active season and anchor habits with quick links into `/life` / `/habits` / `/season`. The `/life` family of routes is the scaffolding above the day — where Seasons, Habits, and (in v7+) Rituals and Reviews live. Life routes are reachable directly (no `setupComplete` requirement) so users can edit habits/seasons without first walking through the wizard.
 
 ### 2.1 Vocabulary
 
@@ -155,7 +155,7 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 ## 7. What's In Today (Feature Inventory)
 
 **Setup & onboarding**
-- Welcome screen with first-visit / resuming / returning detection
+- Welcome hub (v5.1): Today card (plan-status copy + primary CTA + wizard step timeline) and Life card (active season summary, anchor habits, quick links to `/habits` and `/season`). Detects first-visit / resuming / returning.
 - Todoist token setup (paste + encrypt) with validation
 - Multi-calendar Google Calendar configuration with colors and view mode
 

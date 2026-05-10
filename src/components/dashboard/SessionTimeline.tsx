@@ -1,10 +1,25 @@
 import { useState, useCallback, useMemo } from 'react';
+import { format } from 'date-fns';
 import { Card } from '../ui/Card';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoistData } from '../../hooks/useTodoist';
+import { useTodoistData, type TodoistTask } from '../../hooks/useTodoist';
 import type { LinkedTask, SessionSlot } from '../../types';
+
+/** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
+function getScheduledRange(task: TodoistTask | undefined): string | null {
+    if (!task?.due?.date) return null;
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    if (!task.due.date.startsWith(todayStr) || !task.due.date.includes('T')) return null;
+    const start = task.due.date.slice(11, 16);
+    const durationMinutes = task.duration?.unit === 'minute' ? task.duration.amount : null;
+    if (!durationMinutes) return start;
+    const [h, m] = start.split(':').map(Number);
+    const total = h * 60 + m + durationMinutes;
+    const end = `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    return `${start}–${end}`;
+}
 
 // ---- shared task row hooks (used by both CurrentSession and SessionTimeline) ----
 
@@ -68,9 +83,10 @@ interface TaskRowProps {
     isStale: boolean;
     sessionId: string;
     drag: ReturnType<typeof useTaskDrag>;
+    scheduledRange: string | null;
 }
 
-function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) {
+function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
     const { dispatch } = useDayPlan();
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
@@ -125,6 +141,12 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag }: TaskRowProps) 
                 {title}
             </span>
 
+            {scheduledRange && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent flex-shrink-0 tabular-nums">
+                    {scheduledRange}
+                </span>
+            )}
+
             {linkedTask.estimatedMinutes != null && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light flex-shrink-0 tabular-nums">
                     {linkedTask.estimatedMinutes}m
@@ -160,7 +182,7 @@ function SessionCard({
     isPast: boolean;
     taskIds: string[];
     linkedTasks: LinkedTask[];
-    taskMap: Map<string, { id: string; content: string }>;
+    taskMap: Map<string, TodoistTask>;
     intentions: Map<string, { id: string; title: string }>;
     drag: ReturnType<typeof useTaskDrag>;
 }) {
@@ -215,7 +237,7 @@ function SessionCard({
                         );
                     })()}
                     <span className="text-xs text-text-light">
-                        {session.startTime} \u2013 {session.endTime}
+                        {session.startTime}{' \u2013 '}{session.endTime}
                     </span>
                 </div>
             </div>
@@ -248,6 +270,7 @@ function SessionCard({
                                             isStale={isStale}
                                             sessionId={session.id}
                                             drag={drag}
+                                            scheduledRange={getScheduledRange(todoistTask)}
                                         />
                                     );
                                 })}

@@ -86,7 +86,7 @@ export function Dashboard() {
     return (
         <div className="min-h-screen flex flex-col">
             <header className="px-6 py-4 border-b border-border">
-                <div className="max-w-6xl mx-auto flex items-center justify-between">
+                <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
                     <div className="flex items-center gap-3 min-w-0">
                         <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
                             <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
@@ -94,7 +94,7 @@ export function Dashboard() {
                         </h1>
                         <ActiveSeasonBadge />
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center justify-end gap-y-2 gap-x-3">
                         <span className="text-xs text-text-light">
                             {completedCount}/{totalCount} done
                         </span>
@@ -285,7 +285,7 @@ export function Dashboard() {
                             autoFocus
                         />
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                         <Button variant="ghost" size="sm" onClick={() => setShowNewDayModal(false)}>
                             Cancel
                         </Button>
@@ -320,7 +320,7 @@ export function Dashboard() {
                             autoFocus
                         />
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                         <Button variant="ghost" size="sm" onClick={() => setShowSaveModal(false)}>
                             Cancel
                         </Button>

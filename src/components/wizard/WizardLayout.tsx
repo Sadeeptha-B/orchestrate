@@ -10,15 +10,7 @@ import { SavedSessions } from '../dashboard/SavedSessions';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { AboutContent } from '../ui/AboutContent';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
-
-const TOTAL_STEPS = 4;
-
-const STEP_LABELS = [
-    'Intentions',
-    'Refine',
-    'Schedule',
-    'Music',
-];
+import { WIZARD_STEPS, TOTAL_STEPS } from '../../data/wizardSteps';
 
 interface WizardLayoutProps {
     children: ReactNode;
@@ -155,8 +147,7 @@ export function WizardLayout({
                     <ProgressBar current={step} total={TOTAL_STEPS} />
                     {/* Step navigation pills — always visible */}
                     <div className="flex gap-1.5 mt-3 flex-wrap">
-                        {STEP_LABELS.map((label, i) => {
-                            const stepNum = i + 1;
+                        {WIZARD_STEPS.map(({ num: stepNum, label }) => {
                             const isCurrent = step === stepNum;
                             const isReachable = plan.setupComplete || stepNum <= step;
                             const canClick = plan.setupComplete

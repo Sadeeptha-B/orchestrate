@@ -28,16 +28,22 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
                 tabIndex={-1}
                 aria-label="Close modal"
             />
-            <div className="relative bg-card rounded-xl border border-border shadow-lg max-w-md w-full p-6 animate-in fade-in">
+            <div className="relative bg-card rounded-xl border border-border shadow-lg max-w-md w-full max-h-[calc(100vh-2rem)] flex flex-col animate-in fade-in">
                 <button
                     onClick={onClose}
-                    className="absolute top-3 right-3 text-text-light hover:text-text transition-colors cursor-pointer text-lg leading-none"
+                    className="absolute top-3 right-3 z-10 text-text-light hover:text-text transition-colors cursor-pointer text-lg leading-none"
                     aria-label="Close"
                 >
                     ✕
                 </button>
-                {title && <h3 className="text-lg font-semibold mb-4 pr-6">{title}</h3>}
-                {children}
+                {title && (
+                    <h3 className="text-lg font-semibold px-6 pt-6 pb-3 pr-12 flex-shrink-0">
+                        {title}
+                    </h3>
+                )}
+                <div className={`px-6 overflow-y-auto ${title ? 'pb-6' : 'py-6'}`}>
+                    {children}
+                </div>
             </div>
         </div>
     );
