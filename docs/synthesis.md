@@ -1,7 +1,7 @@
 > **Start here.** This is the canonical context document for the current state of Orchestrate. Deeper references: [vision.md](./vision.md) (durable "why"), [architecture.md](./architecture.md), [data-model.md](./data-model.md), [backlog.md](./backlog.md) (forward-looking proposals). Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
 >
 > **Last updated:** 2026-05-10
-> **Reflects:** v5 (life scaffolding primitives — Seasons, first-class Habits, LifeContext slice, hierarchical planning routes) + v5.1 (entry-flow refresh: Welcome rebuilt as a multi-purpose hub; Life routes ungated from `setupComplete`). Iteration 6 (session capacity arithmetic) is **not yet implemented**; iterations 7–8 (modes/rituals/recovery, reviews/drift) are sketched in [history/plan_v5.md](./history/plan_v5.md).
+> **Reflects:** v5 (life scaffolding primitives — Seasons, first-class Habits, LifeContext slice, hierarchical planning routes) + v5.1 (entry-flow refresh: Welcome rebuilt as a multi-purpose hub; Life routes ungated from `setupComplete`) + v5.2 (season surfacing pass: Dashboard Season card as right-rail companion to Timeline with inline goal expand/collapse; Wizard Step 1 season focus banner with goal-as-intention chips). Iteration 6 (session capacity arithmetic) is **not yet implemented**; iterations 7–8 (modes/rituals/recovery, reviews/drift) are sketched in [history/plan_v5.md](./history/plan_v5.md).
 
 # Orchestrate — Purpose & Current Feature Set
 
@@ -160,12 +160,13 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - Multi-calendar Google Calendar configuration with colors and view mode
 
 **Wizard**
-- Step 1: intention entry, sequential mapping to Todoist tasks, individual or wholesale remap, collapsible mapped-intention panels showing linked tasks
+- Step 1: intention entry, sequential mapping to Todoist tasks, individual or wholesale remap, collapsible mapped-intention panels showing linked tasks. **Season focus banner** at the top of Phase 1 surfaces the active season's name + theme and renders each `supportingGoal` as a clickable chip — clicking adds it as an intention via `ADD_INTENTION` (already-added goals render as disabled `✓` chips). Empty-state nudge with "Set up a season" link when no season is active.
 - Step 2: per-intention categorization + estimation, preset + custom estimate input, background 30min cap, >60min breakdown nudge with auto-opening task manager, horizontal task cards when panel collapsed
 - Step 3: two-phase scheduling — proportional timeline assignment + side-by-side Todoist/Calendar time scheduling with estimate-based end-time auto-fill, phase gating, completed-task short-circuit
 - Step 4: Spotify start-work playback + setup completion
 
 **Dashboard**
+- **Season context card** rendered as a right-rail companion to the Timeline section: active season name (links to `/season/:id`), primary theme, date range with "Week N of M" pill (when both dates set), first 3 supporting goals with inline "+N more" expand/"Show less" toggle, "Manage" button. Empty-state card prompts "Create a season" with a secondary "Why seasons?" link to `/life`.
 - Live current-session detection
 - Drag-to-reorder tasks within a session
 - Inline task completion with confetti

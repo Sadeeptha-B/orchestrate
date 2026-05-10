@@ -17,6 +17,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
+import { SeasonContextCard } from '../life/SeasonContextCard';
 
 export function Dashboard() {
     const { plan, settings, history, dispatch } = useDayPlan();
@@ -187,12 +188,17 @@ export function Dashboard() {
                             </div>
                         </MusicProvider>
 
-                        {/* All sessions timeline */}
-                        <div>
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
-                                Timeline
-                            </h3>
-                            <SessionTimeline />
+                        {/* Timeline + Season side rail */}
+                        <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+                            <div className="flex-1 min-w-0">
+                                <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
+                                    Timeline
+                                </h3>
+                                <SessionTimeline />
+                            </div>
+                            <aside className="lg:w-72 lg:flex-shrink-0">
+                                <SeasonContextCard />
+                            </aside>
                         </div>
 
                         {/* Current session */}

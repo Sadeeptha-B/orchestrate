@@ -7,6 +7,7 @@ import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
+import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import type { Intention, LinkedTask } from '../../types';
 
 const HABIT_BADGE_CLASS =
@@ -221,6 +222,8 @@ export function Step1Intentions() {
                                     accomplish today?
                                 </p>
                             </div>
+
+                            <SeasonFocusBanner />
 
                             <div className="flex gap-2">
                                 <input
