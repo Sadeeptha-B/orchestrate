@@ -215,6 +215,44 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
         return result;
     }, [tree]);
 
+    // Wrap complete/delete to also update the day plan
+    const handleCompleteTask = useCallback(
+        (taskId: string) => {
+            const linked = plan.linkedTasks.find((lt) => lt.todoistId === taskId);
+            if (linked && !linked.completed) {
+                // Snapshot the title before Todoist removes it from active tasks
+                const title = tasks.find((t) => t.id === taskId)?.content;
+                dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: taskId, titleSnapshot: title });
+            }
+            completeTask(taskId);
+        },
+        [completeTask, plan.linkedTasks, tasks, dispatch],
+    );
+
+    const handleDeleteTask = useCallback(
+        (taskId: string) => {
+            // Collect all descendant IDs that will be cascade-removed
+            const toRemove = new Set<string>([taskId]);
+            let changed = true;
+            while (changed) {
+                changed = false;
+                for (const t of tasks) {
+                    if (!toRemove.has(t.id) && t.parent_id && toRemove.has(t.parent_id)) {
+                        toRemove.add(t.id);
+                        changed = true;
+                    }
+                }
+            }
+            deleteTask(taskId);
+            for (const id of toRemove) {
+                if (plan.linkedTasks.some((lt) => lt.todoistId === id)) {
+                    dispatch({ type: 'UNLINK_TASK', todoistId: id });
+                }
+            }
+        },
+        [deleteTask, tasks, plan.linkedTasks, dispatch],
+    );
+
     if (!isConfigured) {
         return (
             <div className="flex flex-col items-center justify-center h-full py-8 text-center">
@@ -255,44 +293,6 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
     const handleDeleteProject = async (projectId: string) => {
         await deleteProject(projectId);
     };
-
-    // Wrap complete/delete to also update the day plan
-    const handleCompleteTask = useCallback(
-        (taskId: string) => {
-            const linked = plan.linkedTasks.find((lt) => lt.todoistId === taskId);
-            if (linked && !linked.completed) {
-                // Snapshot the title before Todoist removes it from active tasks
-                const title = tasks.find((t) => t.id === taskId)?.content;
-                dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: taskId, titleSnapshot: title });
-            }
-            completeTask(taskId);
-        },
-        [completeTask, plan.linkedTasks, tasks, dispatch],
-    );
-
-    const handleDeleteTask = useCallback(
-        (taskId: string) => {
-            // Collect all descendant IDs that will be cascade-removed
-            const toRemove = new Set<string>([taskId]);
-            let changed = true;
-            while (changed) {
-                changed = false;
-                for (const t of tasks) {
-                    if (!toRemove.has(t.id) && t.parent_id && toRemove.has(t.parent_id)) {
-                        toRemove.add(t.id);
-                        changed = true;
-                    }
-                }
-            }
-            deleteTask(taskId);
-            for (const id of toRemove) {
-                if (plan.linkedTasks.some((lt) => lt.todoistId === id)) {
-                    dispatch({ type: 'UNLINK_TASK', todoistId: id });
-                }
-            }
-        },
-        [deleteTask, tasks, plan.linkedTasks, dispatch],
-    );
 
     const handleSchedule = async (taskId: string, startTime: string, endTime: string) => {
         const today = format(new Date(), 'yyyy-MM-dd');

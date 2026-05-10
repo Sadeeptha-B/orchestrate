@@ -6,14 +6,27 @@ import {
     type ReactNode,
 } from 'react';
 import { format } from 'date-fns';
-import type { DayPlan, Intention, LinkedTask, CheckIn, AppSettings, SavedDayPlan } from '../types';
+import type {
+    DayPlan,
+    Intention,
+    LinkedTask,
+    CheckIn,
+    AppSettings,
+    SavedDayPlan,
+    LifeContext,
+    Season,
+    Habit,
+} from '../types';
 import { defaultSessionSlots } from '../data/sessions';
+import { habitMatchesDate } from '../lib/habits';
 
 // --------------- helpers ---------------
 
 const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
+const LIFE_KEY = 'orchestrate-life-context';
+const SCHEMA_VERSION = 5;
 
 function todayISO(): string {
     return format(new Date(), 'yyyy-MM-dd');
@@ -63,6 +76,8 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             completed: (i.completed as boolean) ?? false,
             brokenDown: (i.brokenDown as boolean) ?? false,
             isHabit: (i.isHabit as boolean) ?? false,
+            ...(i.sourceHabitId ? { sourceHabitId: i.sourceHabitId as string } : {}),
+            ...(i.skippedForToday ? { skippedForToday: i.skippedForToday as boolean } : {}),
         }));
         intentionSessions = (raw.intentionSessions ?? {}) as Record<string, string[]>;
     } else {
@@ -155,6 +170,70 @@ function loadHistory(): SavedDayPlan[] {
     }
 }
 
+function emptyLifeContext(): LifeContext {
+    return { seasons: [], habits: [], activeSeasonId: null };
+}
+
+function loadLifeContext(): LifeContext {
+    try {
+        const raw = localStorage.getItem(LIFE_KEY);
+        if (!raw) return emptyLifeContext();
+        const parsed = JSON.parse(raw) as Partial<LifeContext> & { _schemaVersion?: number };
+        return {
+            seasons: parsed.seasons ?? [],
+            habits: parsed.habits ?? [],
+            activeSeasonId: parsed.activeSeasonId ?? null,
+            backfilledFromIsHabit: parsed.backfilledFromIsHabit,
+        };
+    } catch {
+        return emptyLifeContext();
+    }
+}
+
+/**
+ * One-time backfill: if the user has any legacy intentions/tasks flagged as habits
+ * (via the deprecated `isHabit` flag), surface them as inactive Habit candidates so
+ * the user can promote them in the Habits Library. Idempotent — guarded by
+ * `LifeContext.backfilledFromIsHabit`.
+ */
+function backfillHabitsFromLegacy(life: LifeContext, plan: DayPlan, history: SavedDayPlan[]): LifeContext {
+    if (life.backfilledFromIsHabit) return life;
+
+    const seenNames = new Set(life.habits.map((h) => h.name.toLowerCase()));
+    const candidates: Habit[] = [];
+    const nowISO = new Date().toISOString();
+
+    const considerIntention = (i: Intention) => {
+        if (!i.isHabit) return;
+        const key = i.title.trim().toLowerCase();
+        if (!key || seenNames.has(key)) return;
+        seenNames.add(key);
+        candidates.push({
+            id: crypto.randomUUID(),
+            name: i.title.trim(),
+            recurrence: { kind: 'daily' },
+            minimumViable: '',
+            triggerCue: '',
+            completionRule: 'binary',
+            failureTolerance: 1,
+            isAnchor: false,
+            seasonIds: [],
+            active: false,
+            createdAt: nowISO,
+        });
+    };
+
+    plan.intentions.forEach(considerIntention);
+    history.forEach((h) => h.plan?.intentions?.forEach?.(considerIntention));
+
+    return {
+        ...life,
+        habits: [...life.habits, ...candidates],
+        backfilledFromIsHabit: true,
+    };
+}
+
+
 // --------------- actions ---------------
 
 type Action =
@@ -183,13 +262,26 @@ type Action =
     | { type: 'SAVE_DAY'; label: string }
     | { type: 'RESTORE_DAY'; savedAt: string }
     | { type: 'DELETE_SAVED_DAY'; savedAt: string }
-    | { type: 'IMPORT_SESSIONS'; sessions: SavedDayPlan[] };
+    | { type: 'IMPORT_SESSIONS'; sessions: SavedDayPlan[] }
+    // ---- v5: Life scaffolding ----
+    | { type: 'ADD_SEASON'; season: Omit<Season, 'id'> }
+    | { type: 'UPDATE_SEASON'; season: Season }
+    | { type: 'DELETE_SEASON'; seasonId: string }
+    | { type: 'ACTIVATE_SEASON'; seasonId: string | null }
+    | { type: 'ADD_HABIT'; habit: Omit<Habit, 'id' | 'createdAt'> }
+    | { type: 'UPDATE_HABIT'; habit: Habit }
+    | { type: 'DELETE_HABIT'; habitId: string }
+    | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
+    | { type: 'INJECT_HABIT_INTENTIONS' }
+    | { type: 'SKIP_HABIT_INTENTION'; intentionId: string }
+    | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] };
 
 interface State {
     plan: DayPlan;
     settings: AppSettings;
     editingStep: number | null; // non-null when revisiting a wizard step from dashboard
     history: SavedDayPlan[];
+    life: LifeContext;
 }
 
 function reducer(state: State, action: Action): State {
@@ -433,7 +525,7 @@ function reducer(state: State, action: Action): State {
 
         case 'SAVE_DAY': {
             const entry: SavedDayPlan = {
-                plan: { ...structuredClone(plan), _wizardSteps: 4 } as DayPlan,
+                plan: { ...structuredClone(plan), _wizardSteps: 4, _schemaVersion: SCHEMA_VERSION } as DayPlan,
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };
@@ -460,6 +552,153 @@ function reducer(state: State, action: Action): State {
             return { ...state, history: [...newEntries, ...state.history] };
         }
 
+        // ---- v5: Life scaffolding ----
+
+        case 'ADD_SEASON': {
+            const season: Season = { ...action.season, id: crypto.randomUUID() };
+            // If incoming is active, deactivate any existing active season
+            const seasons = season.active
+                ? state.life.seasons.map((s) => ({ ...s, active: false })).concat(season)
+                : [...state.life.seasons, season];
+            const activeSeasonId = season.active ? season.id : state.life.activeSeasonId;
+            return { ...state, life: { ...state.life, seasons, activeSeasonId } };
+        }
+
+        case 'UPDATE_SEASON': {
+            const seasons = state.life.seasons.map((s) =>
+                s.id === action.season.id ? action.season : s,
+            );
+            return { ...state, life: { ...state.life, seasons } };
+        }
+
+        case 'DELETE_SEASON': {
+            const seasons = state.life.seasons.filter((s) => s.id !== action.seasonId);
+            const activeSeasonId =
+                state.life.activeSeasonId === action.seasonId ? null : state.life.activeSeasonId;
+            // Drop the season from any habits' seasonIds
+            const habits = state.life.habits.map((h) =>
+                h.seasonIds.includes(action.seasonId)
+                    ? { ...h, seasonIds: h.seasonIds.filter((id) => id !== action.seasonId) }
+                    : h,
+            );
+            return { ...state, life: { ...state.life, seasons, habits, activeSeasonId } };
+        }
+
+        case 'ACTIVATE_SEASON': {
+            const { seasonId } = action;
+            const seasons = state.life.seasons.map((s) => ({
+                ...s,
+                active: s.id === seasonId,
+            }));
+            return { ...state, life: { ...state.life, seasons, activeSeasonId: seasonId } };
+        }
+
+        case 'ADD_HABIT': {
+            const habit: Habit = {
+                ...action.habit,
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+            };
+            return { ...state, life: { ...state.life, habits: [...state.life.habits, habit] } };
+        }
+
+        case 'UPDATE_HABIT': {
+            const habits = state.life.habits.map((h) =>
+                h.id === action.habit.id ? action.habit : h,
+            );
+            return { ...state, life: { ...state.life, habits } };
+        }
+
+        case 'DELETE_HABIT': {
+            const habit = state.life.habits.find((h) => h.id === action.habitId);
+            // Anchor habits cannot be deleted while active — caller must deactivate first.
+            if (habit?.isAnchor && habit.active) return state;
+            const habits = state.life.habits.filter((h) => h.id !== action.habitId);
+            // Also clear sourceHabitId from any intentions that referenced it
+            const intentions = plan.intentions.map((i) =>
+                i.sourceHabitId === action.habitId ? { ...i, sourceHabitId: undefined } : i,
+            );
+            return {
+                ...state,
+                life: { ...state.life, habits },
+                plan: { ...plan, intentions },
+            };
+        }
+
+        case 'TOGGLE_HABIT_ACTIVE': {
+            const habits = state.life.habits.map((h) =>
+                h.id === action.habitId ? { ...h, active: !h.active } : h,
+            );
+            return { ...state, life: { ...state.life, habits } };
+        }
+
+        case 'INJECT_HABIT_INTENTIONS': {
+            // Idempotent: skip habits that already have an intention today.
+            const existingHabitIds = new Set(
+                plan.intentions
+                    .map((i) => i.sourceHabitId)
+                    .filter((id): id is string => Boolean(id)),
+            );
+            const toInject = state.life.habits
+                .filter((h) => h.active)
+                .filter((h) => !existingHabitIds.has(h.id))
+                .filter((h) => habitMatchesDate(h, plan.date));
+            if (toInject.length === 0) return state;
+            const newIntentions: Intention[] = toInject.map((h) => ({
+                id: crypto.randomUUID(),
+                title: h.name,
+                linkedTaskIds: [],
+                completed: false,
+                brokenDown: false,
+                isHabit: false,
+                sourceHabitId: h.id,
+            }));
+            return {
+                ...state,
+                plan: { ...plan, intentions: [...newIntentions, ...plan.intentions] },
+            };
+        }
+
+        case 'SKIP_HABIT_INTENTION': {
+            const intentions = plan.intentions.map((i) =>
+                i.id === action.intentionId
+                    ? { ...i, completed: true, skippedForToday: true, brokenDown: true }
+                    : i,
+            );
+            return { ...state, plan: { ...plan, intentions } };
+        }
+
+        case 'IMPORT_BACKUP': {
+            const next: State = { ...state };
+            if (action.settings) next.settings = { ...state.settings, ...action.settings };
+            if (action.life) {
+                // Merge by id — never overwrite existing entries; append new ones.
+                const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
+                const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
+                next.life = {
+                    seasons: [
+                        ...state.life.seasons,
+                        ...action.life.seasons.filter((s) => !existingSeasonIds.has(s.id)),
+                    ],
+                    habits: [
+                        ...state.life.habits,
+                        ...action.life.habits.filter((h) => !existingHabitIds.has(h.id)),
+                    ],
+                    activeSeasonId: state.life.activeSeasonId ?? action.life.activeSeasonId,
+                    backfilledFromIsHabit:
+                        state.life.backfilledFromIsHabit || action.life.backfilledFromIsHabit,
+                };
+            }
+            if (action.history) {
+                const existing = new Set(state.history.map((h) => h.savedAt));
+                next.history = [
+                    ...state.history,
+                    ...action.history.filter((h) => !existing.has(h.savedAt)),
+                ];
+            }
+            return next;
+        }
+
         default:
             return state;
     }
@@ -472,31 +711,52 @@ interface DayPlanContextValue {
     settings: AppSettings;
     editingStep: number | null;
     history: SavedDayPlan[];
+    life: LifeContext;
     dispatch: React.Dispatch<Action>;
 }
 
 const DayPlanContext = createContext<DayPlanContextValue | null>(null);
 
 export function DayPlanProvider({ children }: { children: ReactNode }) {
-    const [state, dispatch] = useReducer(reducer, null, () => ({
-        plan: loadPlan(),
-        settings: loadSettings(),
-        editingStep: null,
-        history: loadHistory(),
-    }));
+    const [state, dispatch] = useReducer(reducer, null, () => {
+        const plan = loadPlan();
+        const history = loadHistory();
+        const rawLife = loadLifeContext();
+        const life = backfillHabitsFromLegacy(rawLife, plan, history);
+        return {
+            plan,
+            settings: loadSettings(),
+            editingStep: null,
+            history,
+            life,
+        };
+    });
 
-    // Persist on every state change (include _wizardSteps marker for migration detection)
+    // Persist on every state change (include schema markers for migration detection)
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state.plan, _wizardSteps: 4 }));
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({ ...state.plan, _wizardSteps: 4, _schemaVersion: SCHEMA_VERSION }),
+        );
     }, [state.plan]);
 
     useEffect(() => {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+        localStorage.setItem(
+            SETTINGS_KEY,
+            JSON.stringify({ ...state.settings, _schemaVersion: SCHEMA_VERSION }),
+        );
     }, [state.settings]);
 
     useEffect(() => {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
     }, [state.history]);
+
+    useEffect(() => {
+        localStorage.setItem(
+            LIFE_KEY,
+            JSON.stringify({ ...state.life, _schemaVersion: SCHEMA_VERSION }),
+        );
+    }, [state.life]);
 
     return (
         <DayPlanContext.Provider
@@ -505,6 +765,7 @@ export function DayPlanProvider({ children }: { children: ReactNode }) {
                 settings: state.settings,
                 editingStep: state.editingStep,
                 history: state.history,
+                life: state.life,
                 dispatch,
             }}
         >

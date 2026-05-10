@@ -6,25 +6,6 @@
 
 # Orchestrate — Backlog
 
-## First-class habits
-
-**Summary.** Replace the current "background task can be flagged as a habit" model with habits as a separate first-class entity that can be toggled active/inactive and auto-promoted into Step 1 intentions when active.
-
-**Original text** (Iteration 5, `requirement.md` pre-refactor, preserved verbatim):
-
-> Currently, the habit setup in Orchestrate is simplistic. If a task is a background task, the user can select it as a habit.
->
-> We should introduce functionality for the user to enter in habits in a separate setting. The earlier model of having background tasks as habits should be revised. Instead, the habits that the user enters in are considered intentions. For each habit, the user should be able to toggle the habit in and out of active state. If in active state, the habit is automatically added as an intention in the Step 1 Wizard, as long as it is in the active stay
->
-> Usually, these habit intentions map into a single task, so we can allow the user to map these habits into However, the habit task must always be a background task.
-
-**Open questions** (flagged ambiguities in the original — resolve before implementation):
-
-- *"…as long as it is in the active stay"* — almost certainly intended as **active state**. Confirm.
-- *"…we can allow the user to map these habits into However, the habit task must always be a background task."* — the first sentence appears truncated mid-thought. Likely intended along the lines of "…map these habits into a single Todoist task during Step 1 mapping, prefilled or auto-linked." Confirm intent.
-- Once habits are first-class, what happens on the *first day* a habit becomes active — does it create a fresh Todoist task, or does the user map it manually the first time and Orchestrate remembers the link?
-- Habits are user-defined recurring intentions. Do they replace the existing `isHabit` flag on `LinkedTask` entirely, or coexist?
-
 ## Session capacity arithmetic
 
 **Summary.** When the user assigns tasks to a session, sum their estimates and compare against the session's available time (minus a tunable buffer for inefficiencies). Warn when assignments exceed capacity. When the user is currently within a session, compute against *remaining* time, not total.
@@ -42,3 +23,26 @@
 - Default buffer is "1h". Where is the tunable stored — `AppSettings` (per-user persistent) or per-day on the plan?
 - Background tasks have estimates capped at 30 min and can be assigned to multiple sessions. Do they count once-per-session against capacity, or are they excluded from capacity arithmetic since they're nudges?
 - Is the over-capacity signal blocking (cannot advance) or advisory (warning banner, can proceed)? The Iteration 5 phrasing — *"the user is invited to go back"* — reads advisory.
+
+**Provisional positions** (from [history/plan_v5.md](./history/plan_v5.md), to be confirmed when v6 is planned):
+- Buffer in `AppSettings` (persistent default).
+- Background tasks count once-per-session.
+- Advisory only — never blocks the wizard.
+- Reuse `Season.capacityBudget.weeklyGrowthHours` (introduced in v5) as the soft weekly aggregator alongside per-session arithmetic.
+
+## Modes, rituals, recovery (sketched in plan_v5)
+
+Targeted for v7. See [history/plan_v5.md](./history/plan_v5.md) "v7 — Modes, Rituals, Recovery" for the sketch:
+- `DayPlan.mode: 'focus' | 'maintenance' | 'recovery' | 'shutdown' | 'review'`.
+- Mode switcher card on Dashboard (manual; signal-driven suggestions in v8).
+- `RitualPlayer` for state transitions, with seed templates (morning launch, shutdown, recovery reset, weekly review prep).
+- "Apply Minimum Viable Day" one-click reduced template.
+- v7 also fully removes the deprecated `Intention.isHabit` and `LinkedTask.isHabit` flags.
+
+## Reviews, drift detection, hierarchical views (sketched in plan_v5)
+
+Targeted for v8. See [history/plan_v5.md](./history/plan_v5.md) "v8 — Reviews, Drift Detection, Hierarchical Views":
+- `useDriftSignals()` hook aggregating missed check-ins, repeated reschedules, low completion, sleep deficit.
+- `/review` route with weekly + seasonal flows; persists to `LifeContext.reviews`.
+- `/week` cadence view drawing from `history`.
+- Expanded `/life` with current-week anchor cadence rollup.

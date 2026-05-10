@@ -24,6 +24,22 @@ export function Step2Refine() {
 
     const intentions = plan.intentions;
     const currentIntention = intentions[currentIntentionIndex];
+    const habitLockedIntentionIds = useMemo(
+        () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
+        [plan.intentions],
+    );
+
+    // Habit-derived linked tasks are locked to 'background'. Auto-categorize on entry
+    // so the user can proceed without needing to interact with the category toggle.
+    useEffect(() => {
+        for (const lt of plan.linkedTasks) {
+            if (lt.completed) continue;
+            if (!habitLockedIntentionIds.has(lt.intentionId)) continue;
+            if (lt.type !== 'background') {
+                dispatch({ type: 'CATEGORIZE_TASK', todoistId: lt.todoistId, taskType: 'background' });
+            }
+        }
+    }, [plan.linkedTasks, habitLockedIntentionIds, dispatch]);
 
     const intentionTitleMap = useMemo(
         () => Object.fromEntries(plan.intentions.map((i) => [i.id, i.title])),
@@ -141,6 +157,7 @@ export function Step2Refine() {
                                 linkedTask={lt}
                                 taskMap={taskMap}
                                 horizontal={!taskPanelOpen}
+                                lockedToBackground={habitLockedIntentionIds.has(lt.intentionId)}
                                 onCategorize={(taskType) =>
                                     dispatch({ type: 'CATEGORIZE_TASK', todoistId: lt.todoistId, taskType })
                                 }
@@ -247,6 +264,7 @@ function TaskCard({
     linkedTask: lt,
     taskMap,
     horizontal,
+    lockedToBackground,
     onCategorize,
     onToggleHabit,
     onSetEstimate,
@@ -256,6 +274,7 @@ function TaskCard({
     linkedTask: LinkedTask;
     taskMap: Map<string, { id: string; content: string }>;
     horizontal?: boolean;
+    lockedToBackground?: boolean;
     onCategorize: (taskType: LinkedTask['type']) => void;
     onToggleHabit: () => void;
     onSetEstimate: (minutes: number) => void;
@@ -307,7 +326,17 @@ function TaskCard({
 
     const isCustom = lt.estimatedMinutes !== null && !ESTIMATE_PRESETS.includes(lt.estimatedMinutes);
 
-    const categoryPills = (
+    const categoryPills = lockedToBackground ? (
+        <div className="flex items-center gap-1.5 flex-wrap">
+            <span
+                className="px-2.5 py-1 text-xs rounded-full bg-accent text-white border border-accent"
+                title="Habit-derived task — locked to background"
+            >
+                Background
+            </span>
+            <span className="text-[10px] text-text-light">🔁 Habit task — category locked</span>
+        </div>
+    ) : (
         <div className="flex items-center gap-1.5 flex-wrap">
             {TYPE_OPTIONS.map((opt) => (
                 <button

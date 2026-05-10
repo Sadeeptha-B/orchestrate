@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, type KeyboardEvent } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../context/DayPlanContext';
 import { useTodoistData } from '../../hooks/useTodoist';
@@ -7,11 +7,29 @@ import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
-import type { LinkedTask } from '../../types';
+import type { Intention, LinkedTask } from '../../types';
+
+const HABIT_BADGE_CLASS =
+    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-accent-subtle text-accent text-[10px] font-medium';
+
+function HabitBadge({ skipped }: { skipped?: boolean }) {
+    return (
+        <span className={HABIT_BADGE_CLASS} title="Auto-promoted from a habit">
+            <span aria-hidden>🔁</span>
+            <span>{skipped ? 'Habit (skipped)' : 'Habit'}</span>
+        </span>
+    );
+}
 
 export function Step1Intentions() {
-    const { plan, settings, dispatch } = useDayPlan();
+    const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
+
+    // Auto-inject habit-derived intentions on first entry. Reducer is idempotent.
+    useEffect(() => {
+        dispatch({ type: 'INJECT_HABIT_INTENTIONS' });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
@@ -127,6 +145,38 @@ export function Step1Intentions() {
         }
     };
 
+    const sourceHabitFor = useCallback(
+        (intention: Intention | undefined) =>
+            intention?.sourceHabitId
+                ? life.habits.find((h) => h.id === intention.sourceHabitId)
+                : undefined,
+        [life.habits],
+    );
+
+    const skipCurrentHabit = () => {
+        if (!currentMappingIntention) return;
+        dispatch({ type: 'SKIP_HABIT_INTENTION', intentionId: currentMappingIntention.id });
+    };
+
+    // Auto-link a habit's persistent Todoist task once when the current mapping intention
+    // is a habit and has nothing linked yet.
+    const autoLinkAttempted = useRef(new Set<string>());
+    useEffect(() => {
+        if (!currentMappingIntention) return;
+        if (currentMappingIntention.linkedTaskIds.length > 0) return;
+        const habit = sourceHabitFor(currentMappingIntention);
+        if (!habit?.autoLinkTodoistId) return;
+        if (autoLinkAttempted.current.has(currentMappingIntention.id)) return;
+        // Only auto-link if the Todoist task actually exists in current data
+        if (!taskMap.has(habit.autoLinkTodoistId)) return;
+        autoLinkAttempted.current.add(currentMappingIntention.id);
+        dispatch({
+            type: 'LINK_TASK',
+            intentionId: currentMappingIntention.id,
+            todoistId: habit.autoLinkTodoistId,
+        });
+    }, [currentMappingIntention, sourceHabitFor, taskMap, dispatch]);
+
     return (
         <WizardLayout canAdvance={plan.intentions.length > 0 && mappingStarted} onNext={handleNext} wide>
             {/* Onboarding banner when integrations are not configured */}
@@ -188,7 +238,12 @@ export function Step1Intentions() {
                             </div>
 
                             {plan.intentions.length > 0 && (
-                                <EditableTaskList tasks={plan.intentions} />
+                                <EditableTaskList
+                                    tasks={plan.intentions}
+                                    renderRight={(t) =>
+                                        t.sourceHabitId ? <HabitBadge skipped={t.skippedForToday} /> : null
+                                    }
+                                />
                             )}
 
                             {plan.intentions.length > 0 && (
@@ -365,9 +420,14 @@ export function Step1Intentions() {
                             {currentMappingIntention && (
                                 <div className="bg-card rounded-lg border-2 border-accent/30 p-5 space-y-3">
                                     <div>
-                                        <span className="text-xs font-medium text-accent uppercase tracking-wider">
-                                            Current
-                                        </span>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-xs font-medium text-accent uppercase tracking-wider">
+                                                Current
+                                            </span>
+                                            {currentMappingIntention.sourceHabitId && (
+                                                <HabitBadge />
+                                            )}
+                                        </div>
                                         {editingTitle ? (
                                             <input
                                                 ref={editRef}
@@ -451,9 +511,21 @@ export function Step1Intentions() {
                                         );
                                     })()}
 
-                                    <Button onClick={markCurrentBrokenDown} size="sm">
-                                        Done — {upcomingCount > 0 ? 'next' : 'finish'}
-                                    </Button>
+                                    <div className="flex items-center gap-2">
+                                        <Button onClick={markCurrentBrokenDown} size="sm">
+                                            Done — {upcomingCount > 0 ? 'next' : 'finish'}
+                                        </Button>
+                                        {currentMappingIntention.sourceHabitId && (
+                                            <Button
+                                                onClick={skipCurrentHabit}
+                                                size="sm"
+                                                variant="ghost"
+                                                title="Mark this habit skipped for today (keeps streak data honest)"
+                                            >
+                                                Skip for today
+                                            </Button>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 

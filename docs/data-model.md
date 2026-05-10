@@ -21,7 +21,10 @@ interface Intention {
     linkedTaskIds: string[]; // ordered list of Todoist task IDs linked to this intention
     completed: boolean;
     brokenDown: boolean;     // true once the user finishes mapping tasks to this intention (Step 1)
+    /** @deprecated v5: superseded by sourceHabitId. Removed in v7. */
     isHabit: boolean;
+    sourceHabitId?: string;  // v5: set when intention was auto-injected from a Habit
+    skippedForToday?: boolean; // v5: set when user skips a habit-derived intention without completing it
 }
 ```
 
@@ -38,6 +41,7 @@ interface LinkedTask {
     type: 'main' | 'background' | 'unclassified';        // set in Step 2
     assignedSessions: string[];                           // session slot IDs this task is assigned to
     completed: boolean;
+    /** @deprecated v5: superseded by Habit entity in LifeContext. Removed in v7. */
     isHabit: boolean;
     estimatedMinutes: number | null;                      // null = not yet estimated
     titleSnapshot?: string;                               // cached title for display when task is no longer in Todoist
@@ -182,6 +186,89 @@ interface Playlist {
 }
 ```
 
+### 1.11 Season (v5)
+
+A medium-horizon focus period.
+
+```ts
+interface Season {
+    id: string;
+    name: string;                        // e.g. "Stabilization", "Degree Push 2026"
+    startDate: string;                   // YYYY-MM-DD
+    endDate: string | null;              // null = open-ended
+    primaryTheme: string;                // one-line "what this season is about"
+    supportingGoals: string[];
+    nonGoals: string[];                  // explicit "not this season"
+    successCriteria: string;
+    capacityBudget: SeasonCapacity | null;
+    active: boolean;                     // exactly one season can be active at a time
+    archivedAt?: string;                 // ISO timestamp once retired
+}
+
+interface SeasonCapacity {
+    weeklyGrowthHours: number | null;    // soft cap on non-anchor growth blocks per week
+    maxConcurrentHabits: number | null;
+    notes: string;
+}
+```
+
+**Invariants:** activating a season auto-deactivates the previously active one. Deleting a season clears its id from any habit's `seasonIds`.
+
+### 1.12 Habit (v5)
+
+A first-class recurring stabilizer. Replaces the deprecated `LinkedTask.isHabit` flag.
+
+```ts
+type HabitRecurrenceKind = 'daily' | 'weekdays' | 'weekly' | 'custom';
+
+interface HabitRecurrence {
+    kind: HabitRecurrenceKind;
+    daysOfWeek?: number[];               // 0=Sun..6=Sat — used for 'weekly' and 'custom'
+    timesPerWeek?: number;               // soft target for 'weekly' when daysOfWeek is not set
+}
+
+type HabitCompletionRule = 'binary' | 'count' | 'duration';
+
+interface Habit {
+    id: string;
+    name: string;
+    recurrence: HabitRecurrence;
+    minimumViable: string;               // e.g. "5 min sit, no app required"
+    triggerCue: string;                  // e.g. "After waking, before phone"
+    completionRule: HabitCompletionRule;
+    failureTolerance: number;            // # of misses per week before nudge
+    isAnchor: boolean;                   // anchor habits are protected from accidental deletion
+    seasonIds: string[];                 // [] = always-on
+    active: boolean;
+    autoLinkTodoistId?: string;          // persistent Todoist task to auto-link in Step 1
+    createdAt: string;
+}
+```
+
+**Recurrence matching** (`src/lib/habits.ts → habitMatchesDate`):
+- `daily` → every day
+- `weekdays` → Mon–Fri
+- `weekly` / `custom` → only the listed `daysOfWeek` (`weekly` without `daysOfWeek` does not auto-inject)
+
+**Anchor protection:** anchor habits cannot be deleted while active — the reducer no-ops on `DELETE_HABIT` and the UI surfaces a "deactivate first" modal.
+
+**Auto-promotion to intentions:** on Step 1 entry, `INJECT_HABIT_INTENTIONS` is dispatched. The reducer creates fresh intentions with `sourceHabitId` set for every active habit whose recurrence matches today's date AND that doesn't already have an intention with matching `sourceHabitId` (idempotent).
+
+### 1.13 LifeContext (v5)
+
+The new top-level persistent state slice that holds multi-day entities.
+
+```ts
+interface LifeContext {
+    seasons: Season[];
+    habits: Habit[];
+    activeSeasonId: string | null;       // denormalized for fast lookup; mirrors seasons[].active
+    backfilledFromIsHabit?: boolean;     // one-time migration flag
+}
+```
+
+Persisted to `orchestrate-life-context` localStorage key with `_schemaVersion: 5`.
+
 ---
 
 ## 2. Todoist Data Types
@@ -287,10 +374,26 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 
 | Action | Payload | Effect |
 |---|---|---|
-| `SAVE_DAY` | `label: string` | Creates a `SavedDayPlan` snapshot with `_wizardSteps: 4` marker. Replaces any existing entry for the same date |
+| `SAVE_DAY` | `label: string` | Creates a `SavedDayPlan` snapshot with `_wizardSteps: 4` and `_schemaVersion: 5` markers. Replaces any existing entry for the same date |
 | `RESTORE_DAY` | `savedAt: string` | Finds the saved plan by `savedAt`, runs it through `migratePlan()`, sets date to today |
 | `DELETE_SAVED_DAY` | `savedAt: string` | Removes the entry from history |
 | `IMPORT_SESSIONS` | `sessions: SavedDayPlan[]` | Merges imported sessions, deduplicating by `savedAt` |
+
+### 3.5 Life Scaffolding Actions (v5)
+
+| Action | Payload | Effect |
+|---|---|---|
+| `ADD_SEASON` | `season: Omit<Season,'id'>` | Appends a new season; if `active: true`, deactivates any other active season |
+| `UPDATE_SEASON` | `season: Season` | Replaces the matching season in-place |
+| `DELETE_SEASON` | `seasonId: string` | Removes the season; clears `activeSeasonId` if it was active; clears the id from any habit's `seasonIds` |
+| `ACTIVATE_SEASON` | `seasonId: string \| null` | Sets exactly one season active (or none). Updates `activeSeasonId` |
+| `ADD_HABIT` | `habit: Omit<Habit,'id'\|'createdAt'>` | Creates a new habit with UUID and timestamp |
+| `UPDATE_HABIT` | `habit: Habit` | Replaces the matching habit in-place |
+| `DELETE_HABIT` | `habitId: string` | No-ops if the habit is anchor + active. Otherwise removes; clears `sourceHabitId` from any intentions referencing it |
+| `TOGGLE_HABIT_ACTIVE` | `habitId: string` | Flips the habit's `active` flag |
+| `INJECT_HABIT_INTENTIONS` | *(none)* | For every active habit whose recurrence matches today AND that has no existing intention with matching `sourceHabitId`, prepend a fresh intention. Idempotent |
+| `SKIP_HABIT_INTENTION` | `intentionId: string` | Marks the habit-derived intention `completed + skippedForToday + brokenDown` so it doesn't block progression |
+| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import: existing entries are never overwritten, new entries are appended. Honors the no-backend safety net |
 
 ---
 
@@ -309,6 +412,15 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
 ### v4 → v4.1: estimatedMinutes
 - **Trigger:** Plan has `linkedTasks` with missing `estimatedMinutes`.
 - **Transform:** Adds `estimatedMinutes: null` to any entry that lacks it.
+
+### v4.1 → v5: schema marker + LifeContext
+- **Trigger:** Saved payload missing `_schemaVersion: 5`.
+- **Transforms:**
+  - The plan shape itself is unchanged; existing `Intention.isHabit` and `LinkedTask.isHabit` flags are kept readable for backwards-compat (deprecated, removed in v7).
+  - On provider startup, `loadLifeContext()` returns `{ seasons: [], habits: [], activeSeasonId: null }` if the new `orchestrate-life-context` localStorage key is absent.
+  - `backfillHabitsFromLegacy()` runs **once** (gated by `LifeContext.backfilledFromIsHabit`): it scans the current plan's intentions and all `history[].plan.intentions` for entries with `isHabit: true` and surfaces them as inactive `Habit` candidates in the library so the user can promote them.
+  - Persistence stamps `_schemaVersion: 5` onto plan, settings, life-context, and saved-session payloads on every write.
+- **Note:** the existing `_wizardSteps` marker is unchanged; v5 introduces `_schemaVersion` as an explicit, additive marker that supersedes the implicit role `_wizardSteps` had been playing.
 
 ### Wizard step migration
 - **6-step → 5-step** (`_wizardSteps !== 5 && _wizardSteps !== 4`): Steps 2+ shift down by 1.
@@ -377,7 +489,46 @@ The `_wizardSteps` field is not part of the `DayPlan` type — it is injected du
 }
 ```
 
-### 5.5 Auxiliary Keys
+### 5.5 `orchestrate-life-context` (v5)
+
+```json
+{
+    "seasons": [
+        {
+            "id": "...",
+            "name": "Stabilization",
+            "startDate": "2026-05-01",
+            "endDate": null,
+            "primaryTheme": "Sleep, anchor habits, planning consistency",
+            "supportingGoals": ["..."],
+            "nonGoals": ["..."],
+            "successCriteria": "...",
+            "capacityBudget": null,
+            "active": true
+        }
+    ],
+    "habits": [
+        {
+            "id": "...",
+            "name": "Morning meditation",
+            "recurrence": { "kind": "daily" },
+            "minimumViable": "5 min sit",
+            "triggerCue": "After waking, before phone",
+            "completionRule": "binary",
+            "failureTolerance": 1,
+            "isAnchor": true,
+            "seasonIds": [],
+            "active": true,
+            "createdAt": "2026-05-07T08:00:00.000Z"
+        }
+    ],
+    "activeSeasonId": "...",
+    "backfilledFromIsHabit": true,
+    "_schemaVersion": 5
+}
+```
+
+### 5.6 Auxiliary Keys
 
 | Key | Shape | Written by |
 |---|---|---|

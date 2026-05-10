@@ -30,13 +30,18 @@ These are explicit opinions, not hedges. Proposals that violate them should be c
 
 These ideas have survived across iterations and shape future direction. They are part of the product, not an implementation detail.
 
-- **Intention** — a high-level goal for *today*. Today-scoped, not epic-scoped. Owned by Orchestrate.
+- **Intention** — a high-level goal for *today*. Today-scoped, not epic-scoped. Owned by Orchestrate. May be auto-injected from a Habit (carries `sourceHabitId`).
 - **Task** — a concrete unit of work, owned by Todoist. Linked to an intention inside Orchestrate.
+- **Season** — a medium-horizon focus period (typically 4–12 weeks) with a primary theme, supporting goals, explicit non-goals, success criteria, and an optional capacity budget. Exactly one season is active at a time. Added in v5 as the bridge between life direction and daily execution.
+- **Habit** — a first-class recurring stabilizer with its own recurrence rule, minimum-viable form, trigger cue, and anchor flag. Active habits become daily intentions automatically. Replaces the deprecated `LinkedTask.isHabit` flag. Habit-derived tasks are always background.
+- **Anchor** — a habit treated as load-bearing for the user's life (sleep, meditation, gym, shutdown, weekly review). Anchors are protected from accidental deletion and remain visible across modes.
 - **Session** — a fixed time block in the day. Defaults are early-morning (6–8), morning (9–13), afternoon (14:30–18:30), night (20:30–23); these are user-configurable. Tasks are assigned to sessions.
 - **Main vs background task** — *main* tasks are primary work threads, exclusive to one session. *Background* tasks are habit/nudge tasks that can recur across multiple sessions in a day.
 - **Music protocol** — a deliberate state machine of six curated playlists mapped to work types. Music is treated as a focus-state trigger, not ambience. See [music_routine.md](./music_routine.md).
 - **Hourly check-in** — a through-the-day prompt: how do you feel, what kind of work are you doing? Yields a playlist suggestion and an opportunity to recontextualize the plan.
+- **Mode** *(forward-looking, v7)* — the operating mode of the day: focus / maintenance / recovery / shutdown / review. Manually set by the user; v8 adds signal-driven suggestions but never auto-changes.
+- **Ritual** *(forward-looking, v7)* — a templated sequence of state-transition steps (e.g. morning launch, evening shutdown, recovery reset). Generalizes the start-work music cue into a broader life-transition framework.
 
 ## What the app does (in one sentence)
 
-Orchestrate walks the user from a fresh-day haze into a contextualized, scheduled, music-cued plan, then nudges hour-by-hour to keep that context from decaying.
+Orchestrate walks the user from a fresh-day haze into a contextualized, scheduled, music-cued plan, then nudges hour-by-hour to keep that context from decaying — sitting beneath a season-and-habit scaffolding layer that holds the *why* across days, weeks, and months.

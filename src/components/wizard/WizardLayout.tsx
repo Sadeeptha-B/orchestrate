@@ -9,6 +9,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { SavedSessions } from '../dashboard/SavedSessions';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { AboutContent } from '../ui/AboutContent';
+import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 
 const TOTAL_STEPS = 4;
 
@@ -106,10 +107,13 @@ export function WizardLayout({
             <div className="flex-1 flex flex-col min-w-0">
                 <header className={`px-6 pt-6 pb-4 mx-auto w-full ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                     <div className="flex items-center justify-between mb-4">
-                        <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                            <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
-                            Orchestrate
-                        </h1>
+                        <div className="flex items-center gap-3 min-w-0">
+                            <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
+                                <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
+                                Orchestrate
+                            </h1>
+                            <ActiveSeasonBadge />
+                        </div>
                         <div className="flex gap-2">
                             {showSidebar && !panelOpen && (
                                 <Button

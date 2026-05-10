@@ -16,6 +16,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 
 export function Dashboard() {
     const { plan, settings, history, dispatch } = useDayPlan();
@@ -86,10 +87,13 @@ export function Dashboard() {
         <div className="min-h-screen flex flex-col">
             <header className="px-6 py-4 border-b border-border">
                 <div className="max-w-6xl mx-auto flex items-center justify-between">
-                    <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                        <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
-                        Orchestrate
-                    </h1>
+                    <div className="flex items-center gap-3 min-w-0">
+                        <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
+                            <img src={import.meta.env.BASE_URL + 'favicon.svg'} alt="" className="w-6 h-6" />
+                            Orchestrate
+                        </h1>
+                        <ActiveSeasonBadge />
+                    </div>
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-text-light">
                             {completedCount}/{totalCount} done
@@ -102,6 +106,9 @@ export function Dashboard() {
                         </Button>
                         <Button variant="ghost" size="sm" onClick={handleNewDay}>
                             Start New Day
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/life')}>
+                            Life
                         </Button>
                         {hasSavedSessions && (
                             <Button

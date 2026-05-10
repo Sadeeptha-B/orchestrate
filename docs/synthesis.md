@@ -1,7 +1,7 @@
 > **Start here.** This is the canonical context document for the current state of Orchestrate. Deeper references: [vision.md](./vision.md) (durable "why"), [architecture.md](./architecture.md), [data-model.md](./data-model.md), [backlog.md](./backlog.md) (forward-looking proposals). Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
 >
 > **Last updated:** 2026-05-07
-> **Reflects:** v4.5 (Iteration 4 plus post-implementation refinements). Iteration 5 (first-class habits, session capacity arithmetic) is **not yet implemented**.
+> **Reflects:** v5 (life scaffolding primitives — Seasons, first-class Habits, LifeContext slice, hierarchical planning routes). Iteration 6 (session capacity arithmetic) is **not yet implemented**; iterations 7–8 (modes/rituals/recovery, reviews/drift) are sketched in [history/plan_v5.md](./history/plan_v5.md).
 
 # Orchestrate — Purpose & Current Feature Set
 
@@ -24,22 +24,33 @@ The app is **opinionated and personal** to the author's workflow: fixed default 
 
 ## 2. Operating Model
 
-The user's day flows through three surfaces:
+The user's day flows through three primary surfaces, with a hierarchical-planning layer above them:
 
 ```
 Welcome  ─▶  Wizard (4 steps)  ─▶  Dashboard
               ▲                       │
               └───── Edit Plan / Recontextualize
+                                      │
+                            ┌─────────┴──────────┐
+                            ▼                    ▼
+                  /life  ─▶  /season  ─▶  /season/:id
+                            ▼
+                          /habits
 ```
+
+The `/life` family of routes is the scaffolding above the day: where Seasons, Habits, and (in v7+) Rituals and Reviews live.
 
 ### 2.1 Vocabulary
 
 | Term | Meaning |
 |---|---|
-| **Intention** | A high-level goal for *today* (e.g. "Finish assignment 3"). Not a todo-list epic — a today-scoped focus area. Owned by Orchestrate. |
+| **Intention** | A high-level goal for *today* (e.g. "Finish assignment 3"). Not a todo-list epic — a today-scoped focus area. Owned by Orchestrate. May carry a `sourceHabitId` if auto-injected from a Habit. |
 | **LinkedTask** | A specific Todoist task that has been bound to an intention inside Orchestrate's plan. The unit that gets categorized and scheduled. |
 | **Main task** | A primary work thread. Exclusive to one session. |
 | **Background task** | A habit/nudge task. Can be assigned to multiple sessions in the same day. Capped at 30 min per estimate. |
+| **Season** | A medium-horizon focus period (typically 4–12 weeks) with a primary theme, supporting goals, non-goals, success criteria, and an optional capacity budget. Exactly one season is active at a time. |
+| **Habit** | A first-class recurring stabilizer (replaces the deprecated `LinkedTask.isHabit` flag). Owns its recurrence rule, minimum-viable form, trigger cue, anchor flag, and optional auto-link Todoist task. Active habits become daily intentions automatically. |
+| **Anchor habit** | A protected habit (sleep / meditation / gym / shutdown / weekly review). Cannot be deleted while active. |
 | **Session** | A configurable time block in the day (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
 | **Check-in** | An hourly prompt during active sessions asking how the user feels and what kind of work they're doing. Suggests a playlist. |
 
@@ -108,17 +119,19 @@ Important nuance: Orchestrate has **no backend**. All persistence is `localStora
 
 ## 5. Data Model — The Essentials
 
-Two interlocking ideas:
+Three interlocking ideas:
 
 **Intentions own LinkedTasks.** An intention has `linkedTaskIds: string[]` (ordered Todoist IDs). A `LinkedTask` has `intentionId` back-reference + `type` + `estimatedMinutes` + `assignedSessions[]` + `completed` + `titleSnapshot?`. The flat `linkedTasks` array on `DayPlan` is the denormalized list across all intentions.
 
 **Tasks (not intentions) are scheduled.** `DayPlan.taskSessions: Record<sessionId, todoistId[]>` is the source of truth for what runs in each session. `LinkedTask.assignedSessions` is a derived mirror kept in sync by the reducer.
 
+**LifeContext sits above the day.** A separate persistent state slice (`life: LifeContext` on the provider, persisted to `orchestrate-life-context`) holds `seasons[]`, `habits[]`, and `activeSeasonId`. When an intention has `sourceHabitId` set, it was auto-injected from a habit at Step 1 entry; the corresponding linked task's category is locked to `background` in Step 2.
+
 Consequence: **a single intention can have both main and background tasks.** This was the v4 fix — earlier versions categorized at the intention level, which didn't match real workflows.
 
 The plan auto-resets daily (`loadPlan()` checks `parsed.date !== todayISO()`). User preferences (Todoist token, session slots, calendar IDs) survive in `AppSettings`. Completed days can be saved to `history` and restored later.
 
-A migration chain (v1 → v2 → v3 → v4 → v4.1) handles old saved sessions on load. v3 → v4 cannot reconstruct task links (v3 stored none) so it shows a one-time notice prompting re-mapping.
+A migration chain (v1 → v2 → v3 → v4 → v4.1 → v5) handles old saved sessions on load. v3 → v4 cannot reconstruct task links (v3 stored none) so it shows a one-time notice prompting re-mapping. v5 stamps an explicit `_schemaVersion` marker on plan, settings, life, and saved-session payloads. A one-time backfill scans existing intentions/saved-sessions for legacy `isHabit: true` entries and surfaces them as inactive `Habit` candidates in the library.
 
 Stale task handling is well-developed: completed tasks stay visible (strikethrough + 🎉) using `titleSnapshot`; deleted tasks auto-unlink; externally-completed tasks are detected and marked complete (not unlinked) so session tracking is preserved.
 
@@ -168,10 +181,21 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - OS notification support (with user preference: in-app / browser / both)
 - Recontextualize jump back to Step 3 from check-in
 
+**Life scaffolding (v5)**
+- First-class `Season` entity: name, theme, supporting goals, non-goals, success criteria, optional capacity budget. Exactly one active.
+- First-class `Habit` entity: recurrence (daily/weekdays/weekly/custom), minimum-viable, trigger cue, completion rule, failure tolerance, anchor flag, optional persistent Todoist auto-link, season membership.
+- Anchor habits get protection from accidental deletion (must deactivate first).
+- Active habits auto-promoted as intentions in Step 1 (idempotent on re-entry); habit-derived intentions render with a 🔁 Habit badge and a "Skip for today" affordance.
+- Habit-derived linked tasks have category locked to `background` in Step 2.
+- New routes: `/life` (hub), `/season` (list), `/season/:id` (detail), `/habits` (library).
+- `ActiveSeasonBadge` in Dashboard + Wizard headers.
+- "Life" button in Dashboard header.
+
 **Persistence & history**
 - Auto-reset of plan when date changes
 - Save/restore named day-plans (`SavedDayPlan` history)
 - Import/export saved sessions with cross-version migration
+- **Full Backup** export/import bundles `{ settings, life, history }` to a single JSON file (merge-by-id on import) — the no-backend safety net for cross-device snapshotting.
 
 **Cross-cutting**
 - Light/dark theme with cross-tab sync
@@ -185,12 +209,13 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 
 ## 8. What's NOT In Today (Per User Direction)
 
-**The proposals in [backlog.md](./backlog.md) are NOT yet implemented.** Specifically, the following are out of scope for current state:
+**The remaining proposals in [backlog.md](./backlog.md) are NOT yet implemented.** Specifically, the following are out of scope for current state:
 
-- **First-class habits feature.** Today, "habit" is just a flag on a background `LinkedTask`. The proposed model — habits as a separate entity, toggleable active/inactive, auto-promoted to intentions in Step 1 — does not exist.
-- **Session capacity arithmetic.** No automatic computation of "assigned task estimates vs. session duration minus a tunable buffer", no over-capacity warnings prompting break-down or move, no remaining-time-aware computation when the user is mid-session.
+- **Session capacity arithmetic.** No automatic computation of "assigned task estimates vs. session duration minus a tunable buffer", no over-capacity warnings prompting break-down or move, no remaining-time-aware computation when the user is mid-session. (Targeted for v6 — see [history/plan_v5.md](./history/plan_v5.md) for the sketch.)
+- **Modes, rituals, recovery mode.** No `DayPlan.mode` field, no ritual templates / `RitualPlayer`, no Minimum Viable Day. (Targeted for v7.)
+- **Reviews and drift detection.** No `/review` route, no weekly/seasonal review flows, no drift-signal aggregation. (Targeted for v8.)
 
-Treat these as future work, not current behavior.
+Treat these as future work, not current behavior. **First-class habits and Seasons shipped in v5** (see [history/plan_v5.md](./history/plan_v5.md)).
 
 ---
 
