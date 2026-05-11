@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDayPlan } from '../../hooks/useDayPlan';
@@ -6,6 +6,8 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import { spotifyPlaylistId } from '../../lib/spotify';
+import { getLightPoolHabits } from '../../lib/habits';
+import { TrueRestCard } from '../dashboard/TrueRestCard';
 import type { WorkType, CheckIn } from '../../types';
 
 const FEELINGS = [
@@ -30,14 +32,28 @@ interface CheckInModalProps {
 }
 
 export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalProps) {
-    const { plan, settings, dispatch } = useDayPlan();
+    const { plan, life, settings, dispatch } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
     const [workType, setWorkType] = useState<WorkType | null>(null);
     const [notes, setNotes] = useState('');
+    const [avoidanceNote, setAvoidanceNote] = useState('');
 
     const suggestedPlaylist = workType ? getPlaylistForWorkType(workType) : undefined;
+
+    // v6: surface a Light Pool slice + a True Rest cue when the user is in a low-resource state.
+    const lowState =
+        feeling === 'struggling' || feeling === 'stuck' || workType === 'low-energy' || workType === 'restless';
+    const poolSlice = useMemo(
+        () => (lowState ? getLightPoolHabits(life, plan.date).slice(0, 2) : []),
+        [lowState, life, plan.date],
+    );
+    const inProgressByHabit = useMemo(() => {
+        const m = new Map<string, string>();
+        for (const e of plan.habitLog) if (!e.completedAt) m.set(e.habitId, e.id);
+        return m;
+    }, [plan.habitLog]);
 
     // Background nudges for the current session
     const bgNudges = currentSession
@@ -55,6 +71,7 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
             currentWorkType: workType,
             playlistSuggested: suggestedPlaylist?.id ?? playlists[0].id,
             notes,
+            ...(feeling === 'stuck' && avoidanceNote.trim() ? { avoidanceNote: avoidanceNote.trim() } : {}),
         };
     };
 
@@ -62,6 +79,7 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
         setFeeling(null);
         setWorkType(null);
         setNotes('');
+        setAvoidanceNote('');
     };
 
     const handleSubmit = () => {
@@ -150,6 +168,79 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                         >
                             Open
                         </a>
+                    </div>
+                )}
+
+                {/* v6: low-state companion surfaces — Light Pool + True Rest cue */}
+                {lowState && (poolSlice.length > 0 || true) && (
+                    <div className="space-y-2 pt-1 border-t border-border">
+                        <p className="text-[11px] uppercase tracking-wider text-text-light">
+                            Try a smaller move
+                        </p>
+                        <TrueRestCard variant="inline" heading="True Rest" />
+                        {poolSlice.length > 0 && (
+                            <ul className="space-y-1.5">
+                                {poolSlice.map((h) => {
+                                    const activeEntryId = inProgressByHabit.get(h.id);
+                                    return (
+                                        <li
+                                            key={h.id}
+                                            className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
+                                        >
+                                            <div className="min-w-0 flex-1">
+                                                <div className="text-sm truncate">{h.name}</div>
+                                                {h.minimumViable && (
+                                                    <div className="text-[11px] text-text-light truncate">
+                                                        {h.minimumViable}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {activeEntryId ? (
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() =>
+                                                        dispatch({ type: 'LOG_HABIT_COMPLETE', entryId: activeEntryId })
+                                                    }
+                                                >
+                                                    Done
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    onClick={() =>
+                                                        dispatch({
+                                                            type: 'LOG_HABIT_START',
+                                                            habitId: h.id,
+                                                            sessionId: currentSession?.id,
+                                                        })
+                                                    }
+                                                >
+                                                    Start
+                                                </Button>
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </div>
+                )}
+
+                {/* v6: avoidance prompt — only when feeling === 'stuck' */}
+                {feeling === 'stuck' && (
+                    <div>
+                        <label htmlFor="avoidance-note" className="text-sm text-text-light block mb-1.5">
+                            What exactly are you avoiding?
+                        </label>
+                        <input
+                            id="avoidance-note"
+                            type="text"
+                            value={avoidanceNote}
+                            onChange={(e) => setAvoidanceNote(e.target.value)}
+                            placeholder="One short sentence is enough"
+                            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                        />
                     </div>
                 )}
 

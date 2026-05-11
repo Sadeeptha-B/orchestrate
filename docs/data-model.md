@@ -21,12 +21,12 @@ interface Intention {
     linkedTaskIds: string[]; // ordered list of Todoist task IDs linked to this intention
     completed: boolean;
     brokenDown: boolean;     // true once the user finishes mapping tasks to this intention (Step 1)
-    /** @deprecated v5: superseded by sourceHabitId. Removed in v7. */
-    isHabit: boolean;
     sourceHabitId?: string;  // v5: set when intention was auto-injected from a Habit
     skippedForToday?: boolean; // v5: set when user skips a habit-derived intention without completing it
 }
 ```
+
+**v6:** the deprecated `isHabit: boolean` was removed from this interface (and from `LinkedTask`). The canonical "is this habit-derived?" check is `Boolean(intention.sourceHabitId)`. Old saved-session payloads with `isHabit` survive: `migratePlan` strips the field on read. The `TOGGLE_TASK_HABIT` action and the `backfillHabitsFromLegacy` function were removed in the same release.
 
 **Relationships:** An intention owns zero or more `LinkedTask` entries. The `linkedTaskIds` array maintains the display order. Toggling an intention's completion cascades to all its linked tasks.
 
@@ -41,8 +41,6 @@ interface LinkedTask {
     type: 'main' | 'background' | 'unclassified';        // set in Step 2
     assignedSessions: string[];                           // session slot IDs this task is assigned to
     completed: boolean;
-    /** @deprecated v5: superseded by Habit entity in LifeContext. Removed in v7. */
-    isHabit: boolean;
     estimatedMinutes: number | null;                      // null = not yet estimated
     titleSnapshot?: string;                               // cached title for display when task is no longer in Todoist
 }
@@ -50,7 +48,7 @@ interface LinkedTask {
 
 **Task types:**
 - **main** — Primary work thread. Exclusive to one session (assigning removes it from any previous session).
-- **background** — Habit or nudge task. Can be assigned to multiple sessions simultaneously. Capped at 30 minutes estimated.
+- **background** — Habit or nudge task. Can be assigned to multiple sessions simultaneously. **v6:** capped at the per-task duration resolved from `Habit.maxBlockMinutes` → `AppSettings.taskCapDefaults[habit.kind]` → `taskCapDefaults.manualBackground` (for manually-categorized backgrounds). Defaults are 30 / 20 / 30 respectively.
 - **unclassified** — Default state after linking. Must be categorized before the user can proceed past Step 2.
 
 **Title fallback chain:** When displaying a task title, components use: `taskMap.get(todoistId)?.content` → `linkedTask.titleSnapshot` → `todoistId` (raw ID as last resort).
@@ -68,6 +66,16 @@ interface DayPlan {
     wizardStep: number;                             // 1–4 (current wizard position)
     setupComplete: boolean;                         // true after Step 4 finish
     checkIns: CheckIn[];                            // hourly check-in records
+    habitLog: HabitLogEntry[];                      // v6: Light Pool log entries (today)
+}
+
+interface HabitLogEntry {                           // v6
+    id: string;
+    habitId: string;                                // references LifeContext.habits[].id
+    startedAt: string;                              // ISO
+    completedAt?: string;                           // ISO; absent while in-progress
+    durationMinutes?: number;                       // derived on complete or user-entered
+    sessionId?: string;                             // active session id when started, if any
 }
 ```
 
@@ -110,6 +118,7 @@ interface CheckIn {
     currentWorkType: WorkType;
     playlistSuggested: string;   // playlist ID derived from work type
     notes: string;
+    avoidanceNote?: string;      // v6: captured when feeling === 'stuck' ("What exactly are you avoiding?")
 }
 ```
 
@@ -145,6 +154,14 @@ interface AppSettings {
     todoistTokenKey?: string;                         // base64 exported CryptoKey
     googleCalendarIds?: GoogleCalendarEntry[];
     calendarViewMode?: CalendarViewMode;              // 'week' | 'month' | 'agenda'
+    taskCapDefaults?: TaskCapDefaults;                // v6: per-kind default duration caps
+    sessionBufferMinutes?: number;                    // v6: subtracted from session length for capacity (default 60)
+}
+
+interface TaskCapDefaults {                           // v6
+    stabilizer: number;                               // default 30
+    lightCoherent: number;                            // default 20
+    manualBackground: number;                         // default 30
 }
 ```
 
@@ -216,7 +233,7 @@ interface SeasonCapacity {
 
 ### 1.12 Habit (v5)
 
-A first-class recurring stabilizer. Replaces the deprecated `LinkedTask.isHabit` flag.
+A first-class recurring entity. v6 introduced the `kind` discriminator: `stabilizer` (auto-injected anchor-style rituals) vs `light-coherent` (logged-only micro-gap fillers).
 
 ```ts
 type HabitRecurrenceKind = 'daily' | 'weekdays' | 'weekly' | 'custom';
@@ -228,10 +245,12 @@ interface HabitRecurrence {
 }
 
 type HabitCompletionRule = 'binary' | 'count' | 'duration';
+type HabitKind = 'stabilizer' | 'light-coherent';  // v6
 
 interface Habit {
     id: string;
     name: string;
+    kind: HabitKind;                     // v6: required. Migration backfills 'stabilizer' for pre-v6 habits.
     recurrence: HabitRecurrence;
     minimumViable: string;               // e.g. "5 min sit, no app required"
     triggerCue: string;                  // e.g. "After waking, before phone"
@@ -241,18 +260,40 @@ interface Habit {
     seasonIds: string[];                 // [] = always-on
     active: boolean;
     autoLinkTodoistId?: string;          // persistent Todoist task to auto-link in Step 1
+    maxBlockMinutes?: number;            // v6: per-habit override of the per-kind cap
     createdAt: string;
 }
 ```
+
+**Kinds (v6):**
+- **stabilizer** — anchor-style ritual; auto-injects as an intention each day the recurrence matches; its linked task is locked to `background` at LINK_TASK time. This was the only behavior pre-v6.
+- **light-coherent** — micro-gap filler. Never auto-injects. Surfaces in the `LightPoolPanel` (Dashboard) and `LightPoolSection` (`/life`); Start/Complete writes a `HabitLogEntry` to `plan.habitLog`.
 
 **Recurrence matching** (`src/lib/habits.ts → habitMatchesDate`):
 - `daily` → every day
 - `weekdays` → Mon–Fri
 - `weekly` / `custom` → only the listed `daysOfWeek` (`weekly` without `daysOfWeek` does not auto-inject)
 
+**Light Pool filter** (v6, `src/lib/habits.ts → getLightPoolHabits`): `active && kind === 'light-coherent' && habitMatchesDate(today) && (seasonIds.length === 0 || seasonIds.includes(activeSeasonId))`.
+
 **Anchor protection:** anchor habits cannot be deleted while active — the reducer no-ops on `DELETE_HABIT` and the UI surfaces a "deactivate first" modal.
 
-**Auto-promotion to intentions:** on Step 1 entry, `INJECT_HABIT_INTENTIONS` is dispatched. The reducer creates fresh intentions with `sourceHabitId` set for every active habit whose recurrence matches today's date AND that doesn't already have an intention with matching `sourceHabitId` (idempotent).
+**Auto-promotion to intentions (stabilizer only):** on Step 1 entry, `INJECT_HABIT_INTENTIONS` is dispatched. The reducer creates fresh intentions with `sourceHabitId` set for every active habit where `kind === 'stabilizer'`, recurrence matches today, and no intention with matching `sourceHabitId` already exists (idempotent). Light-coherent habits are filtered out.
+
+### 1.14 RestCue (v6)
+
+Static catalog entry in `src/data/restCues.ts`. Surfaced by `TrueRestCard` in three forms (card / inline / banner).
+
+```ts
+interface RestCue {
+    id: string;
+    label: string;                       // e.g. "Walk 5 minutes — outside if possible"
+    durationHint: string;                // e.g. "5 min", "90 sec"
+    category: 'physical' | 'breath' | 'sensory';
+}
+```
+
+Not a Habit: no completion semantics, no logging, no streak. Pure prompt data.
 
 ### 1.13 LifeContext (v5)
 
@@ -263,11 +304,10 @@ interface LifeContext {
     seasons: Season[];
     habits: Habit[];
     activeSeasonId: string | null;       // denormalized for fast lookup; mirrors seasons[].active
-    backfilledFromIsHabit?: boolean;     // one-time migration flag
 }
 ```
 
-Persisted to `orchestrate-life-context` localStorage key with `_schemaVersion: 5`.
+Persisted to `orchestrate-life-context` localStorage key with `_schemaVersion: 6` (was `5` in v5; `backfilledFromIsHabit` was removed in v6 along with `backfillHabitsFromLegacy`).
 
 ---
 
@@ -391,9 +431,22 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 | `UPDATE_HABIT` | `habit: Habit` | Replaces the matching habit in-place |
 | `DELETE_HABIT` | `habitId: string` | No-ops if the habit is anchor + active. Otherwise removes; clears `sourceHabitId` from any intentions referencing it |
 | `TOGGLE_HABIT_ACTIVE` | `habitId: string` | Flips the habit's `active` flag |
-| `INJECT_HABIT_INTENTIONS` | *(none)* | For every active habit whose recurrence matches today AND that has no existing intention with matching `sourceHabitId`, prepend a fresh intention. Idempotent |
+| `INJECT_HABIT_INTENTIONS` | *(none)* | For every active habit with `kind === 'stabilizer'` whose recurrence matches today AND that has no existing intention with matching `sourceHabitId`, prepend a fresh intention. Idempotent. **v6:** light-coherent habits are filtered out (they live in the Light Pool instead). |
 | `SKIP_HABIT_INTENTION` | `intentionId: string` | Marks the habit-derived intention `completed + skippedForToday + brokenDown` so it doesn't block progression |
 | `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import: existing entries are never overwritten, new entries are appended. Honors the no-backend safety net |
+
+### 3.6 Light Pool Actions (v6)
+
+| Action | Payload | Effect |
+|---|---|---|
+| `LOG_HABIT_START` | `habitId: string; sessionId?: string` | Appends a `HabitLogEntry` to `plan.habitLog` with `startedAt = now`. `sessionId` defaults to the active session id. |
+| `LOG_HABIT_COMPLETE` | `entryId: string; durationMinutes?: number` | Sets `completedAt = now` on the matching entry. `durationMinutes` is supplied by the caller, or derived from `(now − startedAt)`. |
+| `DELETE_HABIT_LOG_ENTRY` | `entryId: string` | Removes the entry from `plan.habitLog`. |
+
+### 3.7 Removed in v6
+
+- `TOGGLE_TASK_HABIT` — toggled the deprecated `LinkedTask.isHabit`. Removed alongside the flag.
+- `backfillHabitsFromLegacy` function (not an action, but invoked from the provider initializer). Removed; v5 backfill has already run for existing users.
 
 ---
 
@@ -403,7 +456,7 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
 
 ### v1 → v2: Tasks to Intentions
 - **Trigger:** Plan has `tasks` array instead of `intentions`.
-- **Transform:** Each v1 `task` becomes an `Intention` with empty `linkedTaskIds`, `brokenDown: false`, `isHabit: false`.
+- **Transform:** Each v1 `task` becomes an `Intention` with empty `linkedTaskIds`, `brokenDown: false`. (Pre-v6 the migration also wrote `isHabit: false`; that field no longer exists in v6 and is dropped on read.)
 
 ### v2/v3 → v4: Intentions to LinkedTasks
 - **Trigger:** Plan has `intentions` but no `linkedTasks`/`taskSessions`.
@@ -416,11 +469,25 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
 ### v4.1 → v5: schema marker + LifeContext
 - **Trigger:** Saved payload missing `_schemaVersion: 5`.
 - **Transforms:**
-  - The plan shape itself is unchanged; existing `Intention.isHabit` and `LinkedTask.isHabit` flags are kept readable for backwards-compat (deprecated, removed in v7).
+  - The plan shape itself is unchanged; existing `Intention.isHabit` and `LinkedTask.isHabit` flags are kept readable for backwards-compat (deprecated in v5, **removed in v6**).
   - On provider startup, `loadLifeContext()` returns `{ seasons: [], habits: [], activeSeasonId: null }` if the new `orchestrate-life-context` localStorage key is absent.
-  - `backfillHabitsFromLegacy()` runs **once** (gated by `LifeContext.backfilledFromIsHabit`): it scans the current plan's intentions and all `history[].plan.intentions` for entries with `isHabit: true` and surfaces them as inactive `Habit` candidates in the library so the user can promote them.
+  - `backfillHabitsFromLegacy()` ran **once** (gated by `LifeContext.backfilledFromIsHabit`) on existing users: it scanned the current plan's intentions and all `history[].plan.intentions` for entries with `isHabit: true` and surfaced them as inactive `Habit` candidates. **Removed in v6.**
   - Persistence stamps `_schemaVersion: 5` onto plan, settings, life-context, and saved-session payloads on every write.
 - **Note:** the existing `_wizardSteps` marker is unchanged; v5 introduces `_schemaVersion` as an explicit, additive marker that supersedes the implicit role `_wizardSteps` had been playing.
+
+### v5 → v6: micro-gap refinement + capacity intelligence
+- **Trigger:** Saved payload missing `_schemaVersion: 6`.
+- **Plan transforms** (`migratePlan`):
+  - Strip the deprecated `isHabit` field from every entry in `intentions` and `linkedTasks` on read.
+  - Initialize `plan.habitLog` to `[]` if missing.
+- **LifeContext transforms** (`loadLifeContext`):
+  - For every habit, default `kind` to `'stabilizer'` if missing. This matches pre-v6 behavior (every habit auto-injected; none were light-coherent).
+  - Drop `backfilledFromIsHabit` — no longer a field.
+- **AppSettings transforms** (`loadSettings`):
+  - Inject `taskCapDefaults = { stabilizer: 30, lightCoherent: 20, manualBackground: 30 }` if missing.
+  - Inject `sessionBufferMinutes = 60` if missing.
+- **Removed**: `Intention.isHabit`, `LinkedTask.isHabit`, `LifeContext.backfilledFromIsHabit`, the `TOGGLE_TASK_HABIT` reducer action, the `backfillHabitsFromLegacy` function (and its call in the provider initializer).
+- **Persistence** stamps `_schemaVersion: 6` onto plan, settings, life-context, and saved-session payloads on every write.
 
 ### Wizard step migration
 - **6-step → 5-step** (`_wizardSteps !== 5 && _wizardSteps !== 4`): Steps 2+ shift down by 1.

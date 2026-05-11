@@ -39,7 +39,8 @@ StrictMode
                     ├── LifeView     (at /life)
                     ├── SeasonsManager (at /season)
                     ├── SeasonDetail (at /season/:id)
-                    └── HabitsLibrary (at /habits)
+                    ├── HabitsLibrary (at /habits)
+                    └── UserGuide    (at /guide)
 ```
 
 **Why this order?**
@@ -60,6 +61,7 @@ Orchestrate has three routes, all defined in the `AppRoutes` component inside `A
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits with anchor protection |
+| `/guide` | `UserGuide` | Always reachable. In-app rendering of the v6 user guide (mental model + how-to). Linked from the About modal across Welcome / Dashboard / Wizard. |
 | `*` | Redirect to `/` | Catch-all |
 
 Life routes were previously gated on `plan.setupComplete`, but `setupComplete` is a *daily* flag while seasons and habits are *durable*. The gate caused habits to become unreachable on a fresh day until the wizard was completed; it has been removed.
@@ -118,10 +120,12 @@ The dashboard (`Dashboard.tsx`) is the main operational view. It is organized in
 1. **Header** — Logo, completion counter, Save/Edit/New Day/Saved Sessions/Settings buttons, theme toggle.
 2. **Music row** — `PlaylistSelector` (6 work-type buttons) + `DigitalClock`.
 3. **Player row** — `SpotifyPlayer` (embedded iframe) + `TransitionTips` (static music protocol card).
-4. **Timeline** — `SessionTimeline` (visual bar of all sessions with assigned tasks).
-5. **Current Session** — `CurrentSession` card with drag-to-reorder tasks, completion checkboxes.
-6. **Task Manager** — Collapsible `TodoistPanel` in full mode.
-7. **Calendar** — Collapsible `GoogleCalendarEmbed`.
+4. **Timeline + side rail** — `SessionTimeline` (visual bar with assigned tasks). Side rail: `SeasonContextCard` + `TrueRestCard` (v6).
+5. **Between-session True Rest banner** (v6) — `TrueRestCard variant='banner'` when no session is active AND the next slot is within 60 min.
+6. **Current Session** — `CurrentSession` card with drag-to-reorder tasks, completion checkboxes, plus the v6 remaining-time `SessionCapacityBadge` and (if over-capacity) `SessionCapacityBanner`.
+7. **Light Pool (v6)** — collapsible `LightPoolPanel` listing today's light-coherent habits scoped to the active season; Start/Complete writes to `plan.habitLog`.
+8. **Task Manager** — Collapsible `TodoistPanel` in full mode.
+9. **Calendar** — Collapsible `GoogleCalendarEmbed`.
 
 The dashboard can return to the wizard at any time:
 - **Edit Plan** → goes to Step 1 with `editingStep = 1`.
@@ -148,14 +152,15 @@ This is the heart of the application. It manages:
 
 **Plan date freshness:** `loadPlan()` checks `parsed.date !== todayISO()`. If the stored plan is from a previous day, a fresh plan is returned. This means the plan auto-resets daily.
 
-**Migration chain:** Plans are stored with a `_wizardSteps` marker (legacy) and, since v5, an explicit `_schemaVersion: 5` marker. On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions) → v4.1 (estimatedMinutes) → v5 (no plan-shape change; `LifeContext` is loaded separately, with a one-time backfill that surfaces legacy `isHabit: true` entries as inactive `Habit` candidates). Schema v5 stamps `_schemaVersion: 5` onto plan, settings, life, and saved-session payloads on every persist.
+**Migration chain:** Plans are stored with a `_wizardSteps` marker (legacy) and, since v5, an explicit `_schemaVersion` marker (now `6`). On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions) → v4.1 (estimatedMinutes) → v5 (no plan-shape change; `LifeContext` is loaded separately) → **v6** (strips the deprecated `Intention.isHabit` / `LinkedTask.isHabit` flags on read; initializes `plan.habitLog: []` if missing; `loadLifeContext` defaults each habit's `kind` to `'stabilizer'` when missing; `loadSettings` injects `taskCapDefaults` and `sessionBufferMinutes` when absent). Schema v6 stamps `_schemaVersion: 6` onto plan, settings, life, and saved-session payloads on every persist. The v5 one-time `backfillHabitsFromLegacy` and the `LifeContext.backfilledFromIsHabit` flag were removed in v6.
 
-**Cross-slice invariants** the reducer enforces (v5):
+**Cross-slice invariants** the reducer enforces (v5 + v6):
 - Activating a season auto-deactivates the previously active one.
 - Deleting a season clears its id from any habit's `seasonIds`.
 - Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; the UI offers to deactivate first).
 - Deleting a habit clears `sourceHabitId` from any intentions still referencing it.
-- `INJECT_HABIT_INTENTIONS` is idempotent — it skips habits that already have an intention with the matching `sourceHabitId` for today.
+- `INJECT_HABIT_INTENTIONS` is idempotent — it skips habits that already have an intention with the matching `sourceHabitId` for today. **v6:** the action also filters to `kind === 'stabilizer'`; light-coherent habits never auto-inject.
+- Light-coherent habits surface only via the Light Pool, which writes to `plan.habitLog` and never touches `intentions`/`linkedTasks`/`taskSessions`.
 
 See the [Data Model](data-model.md) document for the full action catalog and type definitions.
 
@@ -244,6 +249,44 @@ The most complex component. Used in four places with different configurations:
 2. `CheckInModal` renders with feeling selector, work type picker, and playlist suggestion.
 3. On submit, dispatches `ADD_CHECKIN` with the check-in data. The suggested playlist ID feeds into `MusicContext.suggestedId`.
 4. A "Reschedule Sessions" button can send the user back to Step 3 via `onRecontextualize`.
+5. **v6:** when `feeling ∈ {struggling, stuck}` or `workType ∈ {low-energy, restless}`, the modal additionally surfaces 1–2 Light Pool rows (via `getLightPoolHabits`) and a single `TrueRestCard variant='inline'` between the playlist suggestion and the notes field. When `feeling === 'stuck'`, an extra one-line "What exactly are you avoiding?" input appears; its value is persisted as `CheckIn.avoidanceNote` in `buildCheckIn`.
+
+### 6.4 Light Pool (v6)
+
+**Files:** `src/components/dashboard/LightPoolPanel.tsx` (Dashboard surface), `src/components/life/LightPoolSection.tsx` (`/life` surface), `src/lib/habits.ts → getLightPoolHabits`.
+
+**Data flow:**
+- `getLightPoolHabits(life, dateISO)` filters `life.habits` to `{ active, kind === 'light-coherent', habitMatchesDate(today), seasonIds.length === 0 || seasonIds.includes(activeSeasonId) }`.
+- `LightPoolPanel` renders the filtered list with per-row Start / Done / Delete affordances dispatching the three new reducer actions: `LOG_HABIT_START`, `LOG_HABIT_COMPLETE`, `DELETE_HABIT_LOG_ENTRY`.
+- Log entries (`HabitLogEntry`) live on `plan.habitLog` and never touch `intentions` / `linkedTasks` / `taskSessions`. They are wiped daily with the rest of the plan.
+- `LightPoolSection` on `/life` shows today's roster plus a weekly cadence count per habit, computed from `plan.habitLog` + the last 7 days of `history[].plan.habitLog`. The soft target is `habit.recurrence.timesPerWeek` when set.
+
+### 6.5 True Rest (v6)
+
+**Files:** `src/data/restCues.ts` (static catalog + `pickRestCue`), `src/components/dashboard/TrueRestCard.tsx` (three variants).
+
+**Catalog:** ~8 cues across `physical | breath | sensory` categories. Pure data, no completion semantics.
+
+**Three surfaces:**
+- `variant='card'` — Dashboard side rail, rotates every 5 min. Always visible.
+- `variant='inline'` — embedded inside `CheckInModal` when the user signals a low-resource state.
+- `variant='banner'` — between-session prompt on the Dashboard. Gated by `useCurrentSession().nextSessionStartsWithin(60)` (extended in v6 to expose this helper).
+
+True Rest is intentionally not a Habit: no logging, no streak, no completion. It's a gentle prompt and nothing else.
+
+### 6.6 Session Capacity Arithmetic (v6)
+
+**Files:** `src/lib/capacity.ts`, `src/components/dashboard/SessionCapacityBadge.tsx`, `src/components/dashboard/SessionCapacityBanner.tsx`.
+
+**Computation:** `computeSessionCapacity(session, taskSessions, linkedTasks, settings, now?)` returns `{ totalMinutes, bufferMinutes, assignedMinutes, remainingMinutes, percentUsed, status, isCurrent }`. Status: `'ok'` at < 100%, `'tight'` at ≥ 100%, `'over'` at > 150%. Mid-session: `totalMinutes` shrinks to remaining wall-clock time and the buffer shrinks proportionally.
+
+**Settings:** `AppSettings.sessionBufferMinutes` (default 60). Editable in `SettingsModal` via `CapacitySettings.tsx`.
+
+**Surfaces:**
+- Step 3 Phase 1 (`SessionTimelineBar` with `capacities` prop): per-session `SessionCapacityBadge` inside each block. `SessionCapacityBanner` above the timeline if any session is `over`. Never blocks `canAdvance`.
+- Dashboard `CurrentSession`: remaining-time `SessionCapacityBadge` pill + banner when the active session is `over`. Calculation uses `now`, so the badge ticks down as the user works.
+
+Background tasks count once per assignment: a 20-min background task assigned to two sessions counts 20 min against each.
 
 ---
 
@@ -319,7 +362,7 @@ Orchestrate supports light and dark themes.
 
 | Hook | File | Purpose |
 |---|---|---|
-| `useCurrentSession` | `hooks/useCurrentSession.ts` | Polls every 60s. Returns `currentSession`, `remainingSessions`, `today` based on current time vs session slot times |
+| `useCurrentSession` | `hooks/useCurrentSession.ts` | Polls every 60s. Returns `currentSession`, `remainingSessions`, `nextSession`, and (v6) `nextSessionStartsWithin(minutes)` helper used to gate the True Rest between-session banner |
 | `useHourlyCheckin` | `hooks/useHourlyCheckin.ts` | Fires check-in prompt on each whole hour during active sessions |
 | `useNotifications` | `hooks/useNotifications.ts` | Web Notifications API wrapper (`requestPermission`, `sendNotification`) |
 | `useResizablePanel` | `hooks/useResizablePanel.ts` | Drag-to-resize panel, clamped 220–480px |
@@ -357,15 +400,17 @@ src/
 ├── lib/
 │   ├── crypto.ts               # AES-256-GCM encryption/decryption
 │   ├── time.ts                 # timeToMinutes, minutesToTime, addMinutesToTime, formatDuration, todayISO
-│   ├── habits.ts               # v5: habitMatchesDate(habit, dateISO)
+│   ├── habits.ts               # v5: habitMatchesDate; v6: getLightPoolHabits, getActiveHabits, getAnchorHabits
 │   ├── seasons.ts              # v5: findActiveSeason, getSeasonProgress
 │   ├── tasks.ts                # getTaskTitle (Todoist content → titleSnapshot → ID), collectDescendantIds (cascade-delete BFS)
+│   ├── capacity.ts             # v6: computeSessionCapacity / computeAllSessionCapacities
 │   ├── spotify.ts              # spotifyPlaylistId, isValidSpotifyUrl
 │   └── todoistApi.ts           # API_BASE constant (dev proxy vs prod direct)
 │
 ├── data/
 │   ├── sessions.ts             # Default session slot definitions
-│   └── playlists.ts            # Spotify playlist catalog + work-type lookup
+│   ├── playlists.ts            # Spotify playlist catalog + work-type lookup
+│   └── restCues.ts             # v6: True Rest catalog + pickRestCue
 │
 ├── components/
 │   ├── Welcome.tsx             # Landing page
@@ -378,11 +423,15 @@ src/
 │   │   └── Step4StartMusic.tsx # Spotify player + finish
 │   ├── dashboard/
 │   │   ├── Dashboard.tsx       # Main dashboard layout
-│   │   ├── SessionTimeline.tsx # Timeline bar + current session card
+│   │   ├── SessionTimeline.tsx # Timeline bar + current session card (v6: remaining-time capacity badge)
 │   │   ├── MusicPanel.tsx      # MusicProvider, PlaylistSelector, SpotifyPlayer
 │   │   ├── DigitalClock.tsx    # Live clock
 │   │   ├── TransitionTips.tsx  # Static music tips card
-│   │   └── SavedSessions.tsx   # Session history management
+│   │   ├── SavedSessions.tsx   # Session history management
+│   │   ├── LightPoolPanel.tsx       # v6: Light Pool surface on Dashboard
+│   │   ├── TrueRestCard.tsx         # v6: True Rest cue (card / inline / banner variants)
+│   │   ├── SessionCapacityBadge.tsx # v6: per-session "n/m min" pill
+│   │   └── SessionCapacityBanner.tsx# v6: advisory over-capacity banner
 │   ├── checkin/
 │   │   └── CheckInModal.tsx    # Hourly check-in dialog
 │   ├── todoist/
@@ -390,16 +439,20 @@ src/
 │   │   ├── TodoistSetup.tsx    # Token + Google Calendar config
 │   │   └── GoogleCalendarEmbed.tsx # Google Calendar iframe
 │   ├── settings/
-│   │   ├── SettingsModal.tsx   # Unified modal: Integrations + Data sections
+│   │   ├── SettingsModal.tsx   # Unified modal: Integrations + Capacity + Data sections
+│   │   ├── CapacitySettings.tsx# v6: session buffer + per-kind taskCapDefaults inputs
 │   │   └── DataManagement.tsx  # Import / Export / Full Backup / Import Backup
+│   ├── guide/                  # v6: in-app user guide
+│   │   └── UserGuide.tsx       # /guide — mental model + how-to (mirrors docs/user-guide.md)
 │   ├── life/                   # v5: hierarchical planning surfaces
 │   │   ├── LifeShell.tsx       # Shared layout for /life, /season, /habits
-│   │   ├── LifeView.tsx        # /life — hub
+│   │   ├── LifeView.tsx        # /life — hub (v6: hosts LightPoolSection)
 │   │   ├── SeasonsManager.tsx  # /season — list + create + activate
 │   │   ├── SeasonDetail.tsx    # /season/:id — single-season editor
 │   │   ├── SeasonForm.tsx      # Reusable create/edit form
 │   │   ├── HabitsLibrary.tsx   # /habits — CRUD with anchor protection
-│   │   ├── HabitForm.tsx       # Reusable create/edit form
+│   │   ├── HabitForm.tsx       # Reusable create/edit form (v6: kind + maxBlockMinutes inputs)
+│   │   ├── LightPoolSection.tsx# v6: /life section — today's pool + weekly cadence
 │   │   └── ActiveSeasonBadge.tsx # Badge in Dashboard + Wizard headers
 │   └── ui/
 │       ├── Button.tsx

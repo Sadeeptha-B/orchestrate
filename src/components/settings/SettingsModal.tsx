@@ -1,6 +1,7 @@
 import { Modal } from '../ui/Modal';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { DataManagement } from './DataManagement';
+import { CapacitySettings } from './CapacitySettings';
 
 interface SettingsModalProps {
     open: boolean;
@@ -18,6 +19,12 @@ export function SettingsModal({ open, onClose, onShowSavedSessions }: SettingsMo
                         Integrations
                     </h3>
                     <TodoistSetup />
+                </section>
+                <section className="space-y-3 pt-5 border-t border-border">
+                    <h3 className="text-sm font-semibold text-text uppercase tracking-wider">
+                        Capacity
+                    </h3>
+                    <CapacitySettings />
                 </section>
                 <section className="space-y-3 pt-5 border-t border-border">
                     <h3 className="text-sm font-semibold text-text uppercase tracking-wider">

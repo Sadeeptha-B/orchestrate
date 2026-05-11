@@ -1,7 +1,7 @@
-> **Start here.** This is the canonical context document for the current state of Orchestrate. Deeper references: [vision.md](./vision.md) (durable "why"), [architecture.md](./architecture.md), [data-model.md](./data-model.md), [backlog.md](./backlog.md) (forward-looking proposals). Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
+> **Start here.** This is the canonical context document for the current state of Orchestrate. Deeper references: [user-guide.md](./user-guide.md) (mental model & how to use the entities — habits, intentions, tasks, Light Pool, True Rest, capacity), [vision.md](./vision.md) (durable "why"), [architecture.md](./architecture.md), [data-model.md](./data-model.md), [backlog.md](./backlog.md) (forward-looking proposals). Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
 >
-> **Last updated:** 2026-05-10
-> **Reflects:** v5 (life scaffolding primitives — Seasons, first-class Habits, LifeContext slice, hierarchical planning routes) + v5.1 (entry-flow refresh: Welcome rebuilt as a multi-purpose hub; Life routes ungated from `setupComplete`) + v5.2 (season surfacing pass: Dashboard Season card as right-rail companion to Timeline with inline goal expand/collapse; Wizard Step 1 season focus banner with goal-as-intention chips). Iteration 6 (session capacity arithmetic) is **not yet implemented**; iterations 7–8 (modes/rituals/recovery, reviews/drift) are sketched in [history/plan_v5.md](./history/plan_v5.md).
+> **Last updated:** 2026-05-11
+> **Reflects:** v6 — **Micro-gap refinement + capacity intelligence**. Splits Habits into `stabilizer` and `light-coherent`; adds a logged-only Light Pool (Dashboard panel + `/life` section + check-in surfacing); introduces a static True Rest cue track (Dashboard side rail, low-energy check-in slot, between-session banner); replaces the hard 30-min background cap with per-kind defaults in AppSettings plus per-habit `maxBlockMinutes`; ships advisory session capacity arithmetic (banner only when load > 150%); drops the deprecated `isHabit` flags, `TOGGLE_TASK_HABIT` action, and `backfillHabitsFromLegacy`. Iteration 7 (modes/rituals/recovery) and iteration 8 (reviews/drift) remain sketched in [history/plan_v5.md](./history/plan_v5.md).
 
 # Orchestrate — Purpose & Current Feature Set
 
@@ -49,10 +49,15 @@ Welcome is a multi-purpose home hub (since v5.1): a "Today" card with the wizard
 | **Main task** | A primary work thread. Exclusive to one session. |
 | **Background task** | A habit/nudge task. Can be assigned to multiple sessions in the same day. Capped at 30 min per estimate. |
 | **Season** | A medium-horizon focus period (typically 4–12 weeks) with a primary theme, supporting goals, non-goals, success criteria, and an optional capacity budget. Exactly one season is active at a time. |
-| **Habit** | A first-class recurring stabilizer (replaces the deprecated `LinkedTask.isHabit` flag). Owns its recurrence rule, minimum-viable form, trigger cue, anchor flag, and optional auto-link Todoist task. Active habits become daily intentions automatically. |
-| **Anchor habit** | A protected habit (sleep / meditation / gym / shutdown / weekly review). Cannot be deleted while active. |
+| **Habit** | A first-class recurring entity. v6: discriminated by `kind` into **stabilizer** and **light-coherent**. Owns its recurrence rule, minimum-viable form, trigger cue, anchor flag, optional auto-link Todoist task, and optional per-habit `maxBlockMinutes`. |
+| **Stabilizer** | A `kind: 'stabilizer'` habit. Anchor-style ritual (sleep, meditation, gym, shutdown). Auto-injects as an intention each day it matches; its linked task is locked to `background` in Step 2. |
+| **Light-coherent** | A `kind: 'light-coherent'` habit. Small, resumable micro-gap filler (flashcards, short reading, idea capture). Never auto-injects as an intention — surfaces in the **Light Pool**, logged opportunistically via `plan.habitLog`. |
+| **Light Pool** | Dashboard panel + `/life` section listing today's active light-coherent habits scoped to the active season. Start/Complete writes a `HabitLogEntry`; never enters today's task plan. |
+| **True Rest** | A static catalog of non-task recovery cues (walk, breathe, look out window). Surfaced on the Dashboard side rail, inside the check-in modal for low-energy states, and between sessions when the next slot is within 60 min. |
+| **Anchor habit** | A habit flagged as foundational (`isAnchor: true`) — typically (but not necessarily) a stabilizer. Protected from accidental deletion while active; surfaced as the "protect these" set on `/life` and the Welcome Life card. `isAnchor` is **orthogonal to `kind`**: it answers "how protected?", not "what behavior?". See [user-guide.md](./user-guide.md) §6 for the full table. |
 | **Session** | A configurable time block in the day (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
-| **Check-in** | An hourly prompt during active sessions asking how the user feels and what kind of work they're doing. Suggests a playlist. |
+| **Session capacity** | v6 advisory arithmetic: `(session length − sessionBufferMinutes) − Σ estimatedMinutes` for assigned tasks. Background tasks count once per assignment. Status flips to `over` only at >150% load — a non-blocking banner appears, the wizard always advances. |
+| **Check-in** | An hourly prompt during active sessions asking how the user feels and what kind of work they're doing. Suggests a playlist. When feeling is `struggling`/`stuck` (or work is low-energy/restless), the modal also surfaces 1–2 Light Pool rows and a True Rest cue. `feeling === 'stuck'` adds an "avoidance note" capture. |
 
 ### 2.2 The Wizard (4 steps)
 
@@ -182,15 +187,22 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - OS notification support (with user preference: in-app / browser / both)
 - Recontextualize jump back to Step 3 from check-in
 
-**Life scaffolding (v5)**
+**Life scaffolding (v5–v6)**
 - First-class `Season` entity: name, theme, supporting goals, non-goals, success criteria, optional capacity budget. Exactly one active.
-- First-class `Habit` entity: recurrence (daily/weekdays/weekly/custom), minimum-viable, trigger cue, completion rule, failure tolerance, anchor flag, optional persistent Todoist auto-link, season membership.
+- First-class `Habit` entity (v6 discriminated): `kind: 'stabilizer' | 'light-coherent'`, recurrence, minimum-viable, trigger cue, completion rule, failure tolerance, anchor flag, optional persistent Todoist auto-link, season membership, optional `maxBlockMinutes` per-habit cap.
 - Anchor habits get protection from accidental deletion (must deactivate first).
-- Active habits auto-promoted as intentions in Step 1 (idempotent on re-entry); habit-derived intentions render with a 🔁 Habit badge and a "Skip for today" affordance.
-- Habit-derived linked tasks have category locked to `background` in Step 2.
-- New routes: `/life` (hub), `/season` (list), `/season/:id` (detail), `/habits` (library).
+- Stabilizer habits auto-promote as intentions in Step 1 (idempotent on re-entry); habit-derived intentions render with a 🔁 Habit badge and a "Skip for today" affordance. **Light-coherent habits never auto-inject** — they live in the Light Pool instead.
+- Habit-derived linked tasks have category locked to `background` in Step 2; the per-task cap resolves from `Habit.maxBlockMinutes` → kind default → `taskCapDefaults.manualBackground` for manually-categorized backgrounds.
+- New routes: `/life` (hub, now includes a Light Pool section with weekly cadence rollup), `/season` (list), `/season/:id` (detail), `/habits` (library).
 - `ActiveSeasonBadge` in Dashboard + Wizard headers.
 - "Life" button in Dashboard header.
+
+**Day-level intelligence (v6)**
+- **Light Pool panel** on the Dashboard (between Current Session and Task Manager) — per-row Start/Complete writes to `plan.habitLog`, never enters the task plan.
+- **True Rest card** on the Dashboard side rail (rotating cue) + inline cue in the check-in modal when feeling/work-type indicates low resources + a between-session banner when next slot is within 60 min.
+- **Session capacity arithmetic** in `src/lib/capacity.ts` — surfaces a per-session `SessionCapacityBadge` on the Step 3 timeline and the Dashboard Current Session card, plus a `SessionCapacityBanner` above the Step 3 timeline when any session is `over` (> 150%). Mid-session calc uses remaining minutes. Background tasks count once per assignment.
+- **Per-task duration caps** — `AppSettings.taskCapDefaults` (stabilizer 30 / lightCoherent 20 / manualBackground 30, all tunable in Settings) replace the old hard 30-min background clamp; `Habit.maxBlockMinutes` overrides per-habit.
+- **Check-in upgrades** — `feeling === 'stuck'` adds a "What exactly are you avoiding?" capture (persisted as `CheckIn.avoidanceNote`); low-resource states reveal 1–2 Light Pool rows + a True Rest cue.
 
 **Persistence & history**
 - Auto-reset of plan when date changes
@@ -205,6 +217,7 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - PWA install + offline-tolerant cache
 - Stale Todoist task handling: snapshot sync, deleted-task auto-unlink, externally-completed-task auto-mark, fallback display chain
 - Todoist data layer with request deduplication, 30s focus-refresh window, 5min cache TTL, stale-while-revalidate
+- **In-app user guide** at `/guide` — mirrors [user-guide.md](./user-guide.md); reachable from the About modal on Welcome, Dashboard, and every Wizard step.
 
 ---
 
@@ -212,11 +225,10 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 
 **The remaining proposals in [backlog.md](./backlog.md) are NOT yet implemented.** Specifically, the following are out of scope for current state:
 
-- **Session capacity arithmetic.** No automatic computation of "assigned task estimates vs. session duration minus a tunable buffer", no over-capacity warnings prompting break-down or move, no remaining-time-aware computation when the user is mid-session. (Targeted for v6 — see [history/plan_v5.md](./history/plan_v5.md) for the sketch.)
 - **Modes, rituals, recovery mode.** No `DayPlan.mode` field, no ritual templates / `RitualPlayer`, no Minimum Viable Day. (Targeted for v7.)
 - **Reviews and drift detection.** No `/review` route, no weekly/seasonal review flows, no drift-signal aggregation. (Targeted for v8.)
 
-Treat these as future work, not current behavior. **First-class habits and Seasons shipped in v5** (see [history/plan_v5.md](./history/plan_v5.md)).
+Treat these as future work, not current behavior. **First-class habits and Seasons shipped in v5; the Habit.kind split, Light Pool, True Rest, capacity arithmetic, and the legacy `isHabit` purge shipped in v6** (see [history/plan_v5.md](./history/plan_v5.md) and [history/plan_v6.md](./history/plan_v6.md)).
 
 ---
 

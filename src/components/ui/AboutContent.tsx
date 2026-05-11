@@ -1,4 +1,13 @@
-export function AboutContent() {
+interface AboutContentProps {
+    /**
+     * Called when the user clicks "Open user guide". The caller is expected to close
+     * the surrounding About modal and navigate to /guide. Kept as a prop so each
+     * surface (Dashboard / Welcome / Wizard) can clean up its own modal state.
+     */
+    onOpenGuide?: () => void;
+}
+
+export function AboutContent({ onOpenGuide }: AboutContentProps = {}) {
     return (
         <div className="space-y-3 text-sm text-text-light">
             <div className="rounded-lg bg-accent-subtle border-l-4 border-accent p-4">
@@ -21,15 +30,28 @@ export function AboutContent() {
                 the <em>why</em> across days, weeks, and months.{' '}
                 <strong className="text-text">Seasons</strong> are medium-horizon focus periods — a theme, supporting
                 goals, and an optional capacity budget that shape what you take on each day.{' '}
-                <strong className="text-text">Habits</strong> are recurring stabilizers (sleep, gym, deep work blocks)
-                that auto-inject into your daily intentions so the things that matter most are never crowded out by
-                the urgent.
+                <strong className="text-text">Habits</strong> come in two kinds — <em>stabilizers</em> (sleep, gym,
+                deep-work rituals) that auto-inject into your daily intentions, and <em>light-coherent</em> habits
+                that surface in the <strong className="text-text">Light Pool</strong> as resumable micro-gap fillers.
             </p>
             <p>
                 Together, they counter <strong className="text-text">task blindness and time blindness</strong>:{' '}
                 the tendency to open a todo list on a fresh day and feel lost, or to reach evening having been
                 busy but not purposeful.
             </p>
+            {onOpenGuide && (
+                <div className="pt-2 border-t border-border">
+                    <button
+                        onClick={onOpenGuide}
+                        className="text-accent hover:underline cursor-pointer text-sm"
+                    >
+                        Open user guide →
+                    </button>
+                    <p className="text-xs mt-1">
+                        Mental model + how-to for habits, intentions, Light Pool, True Rest, and capacity.
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

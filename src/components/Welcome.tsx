@@ -247,7 +247,7 @@ export function Welcome() {
 
             {/* About modal */}
             <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
-                <AboutContent />
+                <AboutContent onOpenGuide={() => { setShowAbout(false); navigate('/guide'); }} />
             </Modal>
 
             {/* Settings modal */}

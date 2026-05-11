@@ -3,6 +3,7 @@ import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { LifeShell } from './LifeShell';
+import { LightPoolSection } from './LightPoolSection';
 import { findActiveSeason } from '../../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../../lib/habits';
 
@@ -89,6 +90,10 @@ export function LifeView() {
                         </ul>
                     )}
                 </Card>
+
+                <div className="md:col-span-2">
+                    <LightPoolSection />
+                </div>
 
                 <Card className="md:col-span-2">
                     <div className="flex items-center justify-between mb-3">

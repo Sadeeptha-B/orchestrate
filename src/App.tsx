@@ -10,6 +10,7 @@ import { LifeView } from './components/life/LifeView';
 import { SeasonsManager } from './components/life/SeasonsManager';
 import { SeasonDetail } from './components/life/SeasonDetail';
 import { HabitsLibrary } from './components/life/HabitsLibrary';
+import { UserGuide } from './components/guide/UserGuide';
 
 function AppRoutes() {
     const { plan } = useDayPlan();
@@ -34,6 +35,7 @@ function AppRoutes() {
             <Route path="/season" element={<SeasonsManager />} />
             <Route path="/season/:id" element={<SeasonDetail />} />
             <Route path="/habits" element={<HabitsLibrary />} />
+            <Route path="/guide" element={<UserGuide />} />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     );

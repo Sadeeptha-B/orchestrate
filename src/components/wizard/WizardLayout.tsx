@@ -213,7 +213,7 @@ export function WizardLayout({
 
             {/* About modal */}
             <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
-                <AboutContent />
+                <AboutContent onOpenGuide={() => { setShowAbout(false); navigate('/guide'); }} />
                 <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
                     Connect Todoist and Google Calendar in{' '}
                     <button
