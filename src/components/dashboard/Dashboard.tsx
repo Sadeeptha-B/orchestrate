@@ -10,18 +10,19 @@ import { TransitionTips } from './TransitionTips';
 import { CheckInModal } from '../checkin/CheckInModal';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { TodoistSetup } from '../todoist/TodoistSetup';
+import { SettingsModal } from '../settings/SettingsModal';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Logo } from '../ui/Logo';
 import { ThemeToggle } from '../ui/ThemeToggle';
+import { AboutContent } from '../ui/AboutContent';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
 
 export function Dashboard() {
-    const { plan, settings, history, dispatch } = useDayPlan();
+    const { plan, settings, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const { showCheckin, dismiss } = useHourlyCheckin(
         settings.sessionSlots,
@@ -37,7 +38,7 @@ export function Dashboard() {
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const [calendarOpen, setCalendarOpen] = useState(false);
     const [showSettingsModal, setShowSettingsModal] = useState(false);
-    const hasSavedSessions = history.length > 0;
+    const [showAboutModal, setShowAboutModal] = useState(false);
 
     const { panelWidth, onMouseDown } = useResizablePanel();
 
@@ -111,18 +112,23 @@ export function Dashboard() {
                         <Button variant="ghost" size="sm" onClick={() => navigate('/life')}>
                             Life
                         </Button>
-                        {hasSavedSessions && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setPanelOpen(!panelOpen)}
-                            >
-                                {panelOpen ? 'Hide Saved' : 'Saved Sessions'}
-                            </Button>
-                        )}
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setPanelOpen(!panelOpen)}
+                        >
+                            {panelOpen ? 'Hide Saved' : 'Saved Sessions'}
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => setShowSettingsModal(true)}>
                             Settings
                         </Button>
+                        <button
+                            onClick={() => setShowAboutModal(true)}
+                            className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"
+                            title="About Orchestrate"
+                        >
+                            ?
+                        </button>
                         <ThemeToggle />
                     </div>
                 </div>
@@ -130,7 +136,7 @@ export function Dashboard() {
 
             <div className="flex-1 flex">
                 {/* Left side panel — saved sessions */}
-                {hasSavedSessions && panelOpen && (
+                {panelOpen && (
                     <aside
                         className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-y-auto relative"
                         style={{ width: panelWidth }}
@@ -331,12 +337,27 @@ export function Dashboard() {
                 </div>
             </Modal>
 
-            <Modal
+            <SettingsModal
                 open={showSettingsModal}
                 onClose={() => setShowSettingsModal(false)}
-                title="Integrations"
-            >
-                <TodoistSetup />
+                onShowSavedSessions={() => {
+                    setShowSettingsModal(false);
+                    setPanelOpen(true);
+                }}
+            />
+
+            <Modal open={showAboutModal} onClose={() => setShowAboutModal(false)} title="About Orchestrate">
+                <AboutContent />
+                <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
+                    Connect Todoist and Google Calendar in{' '}
+                    <button
+                        onClick={() => { setShowAboutModal(false); setShowSettingsModal(true); }}
+                        className="text-accent hover:underline cursor-pointer"
+                    >
+                        Settings
+                    </button>{' '}
+                    to get the most out of this app.
+                </p>
             </Modal>
         </div>
     );

@@ -1,12 +1,14 @@
 export function AboutContent() {
     return (
         <div className="space-y-3 text-sm text-text-light">
-            <p>
-                Orchestrate is a <strong className="text-text">daily contextualization companion</strong> — not a
-                replacement for your task manager or calendar, but a layer that sits alongside them. Its job is to
-                reduce the friction between "I have a list of things to do" and "I know exactly what I'm doing today
-                and why."
-            </p>
+            <div className="rounded-lg bg-accent-subtle border-l-4 border-accent p-4">
+                <p className="text-sm text-text leading-relaxed">
+                    Orchestrate is a <strong className="text-accent">daily contextualization companion</strong> — not a
+                    replacement for your task manager or calendar, but a layer that sits alongside them. Its job is to
+                    reduce the friction between "I have a list of things to do" and "I know exactly what I'm doing today
+                    and why."
+                </p>
+            </div>
             <p>
                 Each morning, a short wizard walks you through setting <strong className="text-text">intentions</strong>{' '}
                 (today-scoped focus areas), mapping them to specific tasks from Todoist, estimating and scheduling

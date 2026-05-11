@@ -1,17 +1,10 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import type { AppSettings, LifeContext, SavedDayPlan } from '../../types';
-
-interface FullBackup {
-    settings?: AppSettings;
-    life?: LifeContext;
-    history?: SavedDayPlan[];
-    _backupVersion?: number;
-}
+import type { SavedDayPlan } from '../../types';
 
 function downloadJSON(data: unknown, filename: string) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -27,85 +20,14 @@ function sanitizeFilename(name: string): string {
     return name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
 }
 
-function validateImport(data: unknown): SavedDayPlan[] | null {
-    const arr = Array.isArray(data) ? data : [data];
-    for (const item of arr) {
-        if (
-            !item ||
-            typeof item !== 'object' ||
-            typeof (item as SavedDayPlan).savedAt !== 'string' ||
-            typeof (item as SavedDayPlan).label !== 'string' ||
-            !(item as SavedDayPlan).plan ||
-            // Accept v1 (tasks), v2/v3 (intentions), and v4 (intentions + linkedTasks)
-            (!Array.isArray((item as SavedDayPlan).plan?.intentions) &&
-                !Array.isArray((item as unknown as { plan: { tasks: unknown[] } }).plan?.tasks))
-        ) {
-            return null;
-        }
-    }
-    return arr as SavedDayPlan[];
-}
-
 interface SavedSessionsProps {
-    compact?: boolean;
     hideHeading?: boolean;
 }
 
-export function SavedSessions({ compact = false, hideHeading = false }: SavedSessionsProps) {
-    const { settings, life, history, dispatch } = useDayPlan();
+export function SavedSessions({ hideHeading = false }: SavedSessionsProps) {
+    const { history, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
-    const [importError, setImportError] = useState<string | null>(null);
-    const [importInfo, setImportInfo] = useState<string | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
-    const backupInputRef = useRef<HTMLInputElement>(null);
-
-    const exportFullBackup = () => {
-        const payload: FullBackup = {
-            settings,
-            life,
-            history,
-            _backupVersion: 1,
-        };
-        const stamp = new Date().toISOString().slice(0, 10);
-        downloadJSON(payload, `orchestrate-backup-${stamp}.json`);
-    };
-
-    const handleBackupImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setImportError(null);
-        setImportInfo(null);
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            try {
-                const data = JSON.parse(reader.result as string) as FullBackup;
-                if (
-                    typeof data !== 'object' ||
-                    data === null ||
-                    (!data.settings && !data.life && !data.history)
-                ) {
-                    setImportError('File is not a recognised Orchestrate full backup.');
-                    return;
-                }
-                dispatch({
-                    type: 'IMPORT_BACKUP',
-                    settings: data.settings,
-                    life: data.life,
-                    history: data.history,
-                });
-                const parts: string[] = [];
-                if (data.settings) parts.push('settings');
-                if (data.life) parts.push('life');
-                if (data.history) parts.push(`${data.history.length} sessions`);
-                setImportInfo(`Imported: ${parts.join(', ')}`);
-            } catch {
-                setImportError('Could not parse the file as JSON.');
-            }
-        };
-        reader.readAsText(file);
-        e.target.value = '';
-    };
 
     const handleRestore = (savedAt: string) => {
         dispatch({ type: 'RESTORE_DAY', savedAt });
@@ -118,93 +40,12 @@ export function SavedSessions({ compact = false, hideHeading = false }: SavedSes
         downloadJSON(entry, filename);
     };
 
-    const exportAll = () => {
-        downloadJSON(history, `orchestrate-all-sessions.json`);
-    };
-
-    const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setImportError(null);
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = () => {
-            try {
-                const data = JSON.parse(reader.result as string);
-                const sessions = validateImport(data);
-                if (!sessions) {
-                    setImportError('Invalid session file format.');
-                    return;
-                }
-                dispatch({ type: 'IMPORT_SESSIONS', sessions });
-                setImportError(null);
-            } catch {
-                setImportError('Could not parse the file as JSON.');
-            }
-        };
-        reader.readAsText(file);
-        // Reset so the same file can be re-imported
-        e.target.value = '';
-    };
-
     return (
         <div className="space-y-3">
             {!hideHeading && (
                 <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                    {compact ? 'Restore from Saved' : 'Saved Sessions'}
+                    Saved Sessions
                 </h3>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-                {!compact && history.length > 0 && (
-                    <Button variant="secondary" size="sm" onClick={exportAll}>
-                        Export All
-                    </Button>
-                )}
-                <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
-                    Import
-                </Button>
-                {!compact && (
-                    <>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={exportFullBackup}
-                            title="Bundle settings + life + history into one JSON file"
-                        >
-                            Full Backup
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => backupInputRef.current?.click()}
-                            title="Restore from a Full Backup file (merges, never overwrites)"
-                        >
-                            Restore Backup
-                        </Button>
-                    </>
-                )}
-                <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".json"
-                    className="hidden"
-                    onChange={handleImport}
-                />
-                <input
-                    ref={backupInputRef}
-                    type="file"
-                    accept=".json"
-                    className="hidden"
-                    onChange={handleBackupImport}
-                />
-            </div>
-
-            {importError && (
-                <p className="text-xs text-red-500">{importError}</p>
-            )}
-            {importInfo && (
-                <p className="text-xs text-success">{importInfo}</p>
             )}
 
             {history.length === 0 && (
@@ -229,7 +70,6 @@ export function SavedSessions({ compact = false, hideHeading = false }: SavedSes
                                     <p className="text-sm font-medium truncate">{entry.label}</p>
                                     <p className="text-xs text-text-light">
                                         {entry.plan.date} &middot; {doneCount}/{itemCount} done
-                                        {!compact && ''}
                                     </p>
                                 </div>
                                 <div className="flex gap-2 flex-shrink-0">
@@ -240,27 +80,23 @@ export function SavedSessions({ compact = false, hideHeading = false }: SavedSes
                                     >
                                         Restore
                                     </Button>
-                                    {!compact && (
-                                        <>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => exportSession(entry)}
-                                                title="Export as JSON"
-                                            >
-                                                Export
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() =>
-                                                    dispatch({ type: 'DELETE_SAVED_DAY', savedAt: entry.savedAt })
-                                                }
-                                            >
-                                                Delete
-                                            </Button>
-                                        </>
-                                    )}
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => exportSession(entry)}
+                                        title="Export as JSON"
+                                    >
+                                        Export
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() =>
+                                            dispatch({ type: 'DELETE_SAVED_DAY', savedAt: entry.savedAt })
+                                        }
+                                    >
+                                        Delete
+                                    </Button>
                                 </div>
                             </div>
                         </Card>

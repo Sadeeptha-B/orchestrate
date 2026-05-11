@@ -6,7 +6,7 @@ import { Modal } from '../ui/Modal';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { SavedSessions } from '../dashboard/SavedSessions';
-import { TodoistSetup } from '../todoist/TodoistSetup';
+import { SettingsModal } from '../settings/SettingsModal';
 import { AboutContent } from '../ui/AboutContent';
 import { Logo } from '../ui/Logo';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -37,11 +37,10 @@ export function WizardLayout({
     const navigate = useNavigate();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
-    const showSidebar = !isEditing;
-    const [panelOpen, setPanelOpen] = useState(showSidebar);
-    const { panelWidth, onMouseDown } = useResizablePanel();
     const [showSettings, setShowSettings] = useState(false);
     const [showAbout, setShowAbout] = useState(false);
+    const [panelOpen, setPanelOpen] = useState(true);
+    const { panelWidth, onMouseDown } = useResizablePanel();
 
     const goBack = () => {
         if (step > 1) dispatch({ type: 'SET_WIZARD_STEP', step: step - 1 });
@@ -66,8 +65,8 @@ export function WizardLayout({
 
     return (
         <div className="min-h-screen flex">
-            {/* Left sidebar — saved sessions & import */}
-            {showSidebar && panelOpen && (
+            {/* Left sidebar — saved sessions */}
+            {panelOpen && (
                 <aside
                     className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-y-auto relative"
                     style={{ width: panelWidth }}
@@ -90,7 +89,7 @@ export function WizardLayout({
                                 &times;
                             </button>
                         </div>
-                        <SavedSessions compact hideHeading />
+                        <SavedSessions hideHeading />
                     </div>
                 </aside>
             )}
@@ -100,14 +99,20 @@ export function WizardLayout({
                 <header className={`px-6 pt-6 pb-4 mx-auto w-full ${wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
                     <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3 min-w-0">
-                            <h1 className="text-xl font-semibold text-accent flex items-center gap-2">
-                                <Logo />
-                                Orchestrate
+                            <h1 className="text-xl font-semibold text-accent">
+                                <button
+                                    onClick={() => navigate('/')}
+                                    className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+                                    title={plan.setupComplete ? 'Back to Dashboard' : 'Back to Welcome'}
+                                >
+                                    <Logo />
+                                    Orchestrate
+                                </button>
                             </h1>
                             <ActiveSeasonBadge />
                         </div>
                         <div className="flex gap-2">
-                            {showSidebar && !panelOpen && (
+                            {!panelOpen && (
                                 <Button
                                     variant="ghost"
                                     size="sm"
@@ -131,7 +136,7 @@ export function WizardLayout({
                             <button
                                 onClick={() => setShowSettings(true)}
                                 className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                                title="Integrations"
+                                title="Settings"
                             >
                                 ⚙
                             </button>
@@ -197,9 +202,14 @@ export function WizardLayout({
             </div>
 
             {/* Settings modal */}
-            <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Integrations">
-                <TodoistSetup />
-            </Modal>
+            <SettingsModal
+                open={showSettings}
+                onClose={() => setShowSettings(false)}
+                onShowSavedSessions={() => {
+                    setShowSettings(false);
+                    setPanelOpen(true);
+                }}
+            />
 
             {/* About modal */}
             <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
@@ -210,7 +220,7 @@ export function WizardLayout({
                         onClick={() => { setShowAbout(false); setShowSettings(true); }}
                         className="text-accent hover:underline cursor-pointer"
                     >
-                        Integrations
+                        Settings
                     </button>{' '}
                     to get the most out of this app.
                 </p>

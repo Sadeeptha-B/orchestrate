@@ -8,6 +8,7 @@ import { Modal } from './ui/Modal';
 import { AboutContent } from './ui/AboutContent';
 import { Logo } from './ui/Logo';
 import { ThemeToggle } from './ui/ThemeToggle';
+import { SettingsModal } from './settings/SettingsModal';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../data/wizardSteps';
 import { findActiveSeason } from '../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../lib/habits';
@@ -23,6 +24,7 @@ export function Welcome() {
     const { plan, history, life } = useDayPlan();
     const navigate = useNavigate();
     const [showAbout, setShowAbout] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
@@ -49,6 +51,13 @@ export function Welcome() {
                     title="About Orchestrate"
                 >
                     ?
+                </button>
+                <button
+                    onClick={() => setShowSettings(true)}
+                    className="p-2 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
+                    title="Settings"
+                >
+                    ⚙
                 </button>
                 <ThemeToggle size="md" />
             </div>
@@ -211,7 +220,7 @@ export function Welcome() {
                 </div>
 
                 {/* Footer */}
-                <div className="text-center">
+                <div className="text-center space-y-1.5">
                     {isFirstEver ? (
                         <p className="text-xs text-text-light">
                             New here?{' '}
@@ -227,6 +236,12 @@ export function Welcome() {
                             Counter task blindness. Stay connected to what matters.
                         </p>
                     )}
+                    <button
+                        onClick={() => setShowSettings(true)}
+                        className="text-xs text-accent/80 hover:text-accent hover:underline cursor-pointer"
+                    >
+                        Restore from a backup →
+                    </button>
                 </div>
             </div>
 
@@ -234,6 +249,16 @@ export function Welcome() {
             <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
                 <AboutContent />
             </Modal>
+
+            {/* Settings modal */}
+            <SettingsModal
+                open={showSettings}
+                onClose={() => setShowSettings(false)}
+                onShowSavedSessions={() => {
+                    setShowSettings(false);
+                    navigate('/setup', { state: { fromWelcome: true } });
+                }}
+            />
         </div>
     );
 }

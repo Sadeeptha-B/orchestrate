@@ -92,6 +92,8 @@ Three plan-status modes are still detected (used to choose the status copy and p
 
 The hub appears at `/` whenever `plan.setupComplete === false`. Once setup is complete, `/` shows the Dashboard instead. The Life surfaces remain reachable from both.
 
+The top-right fixed controls expose an about button, a settings gear (opens `SettingsModal`), and the theme toggle. When the user is first-ever (no history, no in-progress plan), an inline "Coming from another browser or device? Restore your data →" hint is shown beneath the "New here?" link; it opens `SettingsModal` directly for the cross-browser onboarding flow. The modal's "Open Saved Sessions →" hint, when shown on Welcome, navigates to `/setup` (where the sidebar lives) since Welcome itself has no sidebar.
+
 ### 4.2 Wizard Flow
 
 The wizard is a 4-step sequential flow. The current step is stored in `plan.wizardStep` (1-indexed) and persists across refreshes.
@@ -104,8 +106,8 @@ The wizard is a 4-step sequential flow. The current step is stored in `plan.wiza
 | 4 | `Step4StartMusic` | Play the "Start Work" playlist and transition to dashboard |
 
 **WizardLayout** wraps every step and provides:
-- A collapsible saved sessions sidebar (with drag-to-resize via `useResizablePanel`).
-- A header with logo, step progress bar, clickable step navigation pills, theme toggle, settings gear (opens `TodoistSetup` modal), and about modal.
+- A collapsible saved sessions sidebar (drag-to-resize via `useResizablePanel`, default open), always available — including while editing.
+- A header with a clickable logo (navigates to `/`, which resolves to Dashboard or Welcome based on `setupComplete`), step progress bar, clickable step navigation pills, theme toggle, settings gear (opens `SettingsModal`), and about modal.
 - Back/Next footer buttons with `canAdvance` gating.
 - An "editing" mode for when the user returns to the wizard from the dashboard.
 
@@ -285,7 +287,12 @@ All persistence is via `localStorage`. No backend or database is used.
 | `orchestrate-active-playlist` | Playlist ID string | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<string, string>` | `MusicProvider` |
 
-**Backup affordance (v5):** `SavedSessions` exposes a "Full Backup" export and "Restore Backup" import. The export bundles `{ settings, life, history, _backupVersion: 1 }` into a single JSON file. The import dispatches `IMPORT_BACKUP`, which merges by id — existing entries are never overwritten, new entries are appended. This is the user's safety net in lieu of a backend sync server.
+**Backup affordance (v5):** The data flow is split between two surfaces by intent — file I/O lives in `SettingsModal`, and restoring a saved session as today's plan lives in the `SavedSessions` sidebar.
+
+- **`SettingsModal` → "Data" section** (rendered by `DataManagement`): Full Backup, Import Backup, Import Sessions, Export All Sessions. The Full Backup export bundles `{ settings, life, history, _backupVersion: 1 }` into a single JSON file. Import Backup dispatches `IMPORT_BACKUP`, which merges by id — existing entries are never overwritten, new entries are appended. Import Sessions dispatches `IMPORT_SESSIONS` for a sessions-only file. After a successful import that brings in sessions, the modal shows a clickable "Open Saved Sessions →" hint that closes the modal and reveals the sidebar (or on Welcome, navigates to `/setup` where the sidebar lives).
+- **`SavedSessions` sidebar** (Dashboard + Wizard, always available, toggleable): per-row Restore / Export / Delete on each saved entry. Restore dispatches `RESTORE_DAY`, replacing the current plan and navigating to `/`.
+
+`SettingsModal` is reachable from the cog icon on Dashboard, Welcome, and every Wizard step. Together these are the user's safety net in lieu of a backend sync server.
 
 ---
 
@@ -382,6 +389,9 @@ src/
 │   │   ├── TodoistPanel.tsx    # Full Todoist task tree with CRUD
 │   │   ├── TodoistSetup.tsx    # Token + Google Calendar config
 │   │   └── GoogleCalendarEmbed.tsx # Google Calendar iframe
+│   ├── settings/
+│   │   ├── SettingsModal.tsx   # Unified modal: Integrations + Data sections
+│   │   └── DataManagement.tsx  # Import / Export / Full Backup / Import Backup
 │   ├── life/                   # v5: hierarchical planning surfaces
 │   │   ├── LifeShell.tsx       # Shared layout for /life, /season, /habits
 │   │   ├── LifeView.tsx        # /life — hub
