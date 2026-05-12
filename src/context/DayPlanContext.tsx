@@ -14,6 +14,8 @@ import type {
     LifeContext,
     Season,
     Habit,
+    HabitLogEntry,
+    TaskCapDefaults,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 import { habitMatchesDate } from '../lib/habits';
@@ -25,9 +27,17 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 /** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
 const WIZARD_STEPS_COUNT = 4;
+
+/** v6 defaults injected into AppSettings when absent. */
+const DEFAULT_TASK_CAPS: TaskCapDefaults = {
+    stabilizer: 30,
+    lightCoherent: 20,
+    manualBackground: 30,
+};
+const DEFAULT_SESSION_BUFFER_MINUTES = 60;
 
 function freshPlan(): DayPlan {
     return {
@@ -38,6 +48,7 @@ function freshPlan(): DayPlan {
         wizardStep: 1,
         setupComplete: false,
         checkIns: [],
+        habitLog: [],
     };
 }
 
@@ -65,14 +76,13 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
     let intentionSessions: Record<string, string[]>;
 
     if (Array.isArray(raw.intentions)) {
-        // Already v2+ shape — extract intentions
+        // Already v2+ shape — extract intentions. v5→v6: drop the deprecated `isHabit` flag.
         intentions = (raw.intentions as Array<Record<string, unknown>>).map((i) => ({
             id: i.id as string,
             title: i.title as string,
             linkedTaskIds: (i.linkedTaskIds as string[]) ?? [],
             completed: (i.completed as boolean) ?? false,
             brokenDown: (i.brokenDown as boolean) ?? false,
-            isHabit: (i.isHabit as boolean) ?? false,
             ...(i.sourceHabitId ? { sourceHabitId: i.sourceHabitId as string } : {}),
             ...(i.skippedForToday ? { skippedForToday: i.skippedForToday as boolean } : {}),
         }));
@@ -86,7 +96,6 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             linkedTaskIds: [],
             completed: (t.completed as boolean) ?? false,
             brokenDown: false,
-            isHabit: false,
         }));
         intentionSessions = (raw.taskSessions ?? {}) as Record<string, string[]>;
     }
@@ -106,6 +115,8 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
             setupComplete: (raw.setupComplete as boolean) ?? false,
             checkIns: (raw.checkIns ?? []) as CheckIn[],
+            // v5 → v6: initialize habitLog if missing.
+            habitLog: ((raw.habitLog as HabitLogEntry[] | undefined) ?? []),
         };
     }
 
@@ -121,6 +132,7 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
         checkIns: (raw.checkIns ?? []) as CheckIn[],
+        habitLog: [],
     };
 }
 
@@ -136,10 +148,18 @@ function loadPlan(): DayPlan {
     }
 }
 
+function withV6SettingsDefaults(s: AppSettings): AppSettings {
+    return {
+        ...s,
+        taskCapDefaults: s.taskCapDefaults ?? { ...DEFAULT_TASK_CAPS },
+        sessionBufferMinutes: s.sessionBufferMinutes ?? DEFAULT_SESSION_BUFFER_MINUTES,
+    };
+}
+
 function loadSettings(): AppSettings {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY);
-        if (!raw) return { notificationPreference: 'both', sessionSlots: defaultSessionSlots };
+        if (!raw) return withV6SettingsDefaults({ notificationPreference: 'both', sessionSlots: defaultSessionSlots });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const parsed = JSON.parse(raw) as AppSettings & { googleCalendarId?: string } & { googleCalendarIds?: any };
         // Migrate legacy single-string googleCalendarId → googleCalendarIds array
@@ -151,9 +171,9 @@ function loadSettings(): AppSettings {
         if (Array.isArray(parsed.googleCalendarIds) && parsed.googleCalendarIds.length > 0 && typeof parsed.googleCalendarIds[0] === 'string') {
             parsed.googleCalendarIds = (parsed.googleCalendarIds as unknown as string[]).map((id) => ({ id }));
         }
-        return parsed;
+        return withV6SettingsDefaults(parsed);
     } catch {
-        return { notificationPreference: 'both', sessionSlots: defaultSessionSlots };
+        return withV6SettingsDefaults({ notificationPreference: 'both', sessionSlots: defaultSessionSlots });
     }
 }
 
@@ -176,60 +196,24 @@ function loadLifeContext(): LifeContext {
         const raw = localStorage.getItem(LIFE_KEY);
         if (!raw) return emptyLifeContext();
         const parsed = JSON.parse(raw) as Partial<LifeContext> & { _schemaVersion?: number };
+        const habits = (parsed.habits ?? []).map((h) => ({
+            ...h,
+            // v5 → v6: every habit gets a kind. Existing habits default to 'stabilizer'
+            // because that matches their current behavior (auto-injected, locked to background).
+            kind: h.kind ?? 'stabilizer',
+        }));
         return {
             seasons: parsed.seasons ?? [],
-            habits: parsed.habits ?? [],
+            habits,
             activeSeasonId: parsed.activeSeasonId ?? null,
-            backfilledFromIsHabit: parsed.backfilledFromIsHabit,
         };
     } catch {
         return emptyLifeContext();
     }
 }
 
-/**
- * One-time backfill: if the user has any legacy intentions/tasks flagged as habits
- * (via the deprecated `isHabit` flag), surface them as inactive Habit candidates so
- * the user can promote them in the Habits Library. Idempotent — guarded by
- * `LifeContext.backfilledFromIsHabit`.
- */
-function backfillHabitsFromLegacy(life: LifeContext, plan: DayPlan, history: SavedDayPlan[]): LifeContext {
-    if (life.backfilledFromIsHabit) return life;
-
-    const seenNames = new Set(life.habits.map((h) => h.name.toLowerCase()));
-    const candidates: Habit[] = [];
-    const nowISO = new Date().toISOString();
-
-    const considerIntention = (i: Intention) => {
-        if (!i.isHabit) return;
-        const key = i.title.trim().toLowerCase();
-        if (!key || seenNames.has(key)) return;
-        seenNames.add(key);
-        candidates.push({
-            id: crypto.randomUUID(),
-            name: i.title.trim(),
-            recurrence: { kind: 'daily' },
-            minimumViable: '',
-            triggerCue: '',
-            completionRule: 'binary',
-            failureTolerance: 1,
-            isAnchor: false,
-            seasonIds: [],
-            active: false,
-            createdAt: nowISO,
-        });
-    };
-
-    plan.intentions.forEach(considerIntention);
-    history.forEach((h) => h.plan?.intentions?.forEach?.(considerIntention));
-
-    return {
-        ...life,
-        habits: [...life.habits, ...candidates],
-        backfilledFromIsHabit: true,
-    };
-}
-
+// v6: `backfillHabitsFromLegacy` was removed — the deprecated `isHabit` flag is no longer
+// readable from the type system. Any legacy data was already surfaced during v5.
 
 // --------------- actions ---------------
 
@@ -244,7 +228,6 @@ type Action =
     | { type: 'UNLINK_TASK'; todoistId: string }
     | { type: 'CATEGORIZE_TASK'; todoistId: string; taskType: LinkedTask['type'] }
     | { type: 'SET_TASK_ESTIMATE'; todoistId: string; minutes: number }
-    | { type: 'TOGGLE_TASK_HABIT'; todoistId: string }
     | { type: 'ASSIGN_TASK'; todoistId: string; sessionId: string }
     | { type: 'UNASSIGN_TASK'; todoistId: string; sessionId: string }
     | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string; titleSnapshot?: string }
@@ -271,7 +254,11 @@ type Action =
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
     | { type: 'INJECT_HABIT_INTENTIONS' }
     | { type: 'SKIP_HABIT_INTENTION'; intentionId: string }
-    | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] };
+    | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
+    // ---- v6: Light Pool log actions ----
+    | { type: 'LOG_HABIT_START'; habitId: string; sessionId?: string }
+    | { type: 'LOG_HABIT_COMPLETE'; entryId: string; durationMinutes?: number }
+    | { type: 'DELETE_HABIT_LOG_ENTRY'; entryId: string };
 
 interface State {
     plan: DayPlan;
@@ -292,7 +279,6 @@ function reducer(state: State, action: Action): State {
                 linkedTaskIds: [],
                 completed: false,
                 brokenDown: false,
-                isHabit: false,
             };
             return { ...state, plan: { ...plan, intentions: [...plan.intentions, intention] } };
         }
@@ -382,7 +368,6 @@ function reducer(state: State, action: Action): State {
                     type: lockToBackground ? 'background' : 'unclassified',
                     assignedSessions: [],
                     completed: false,
-                    isHabit: false,
                     estimatedMinutes: null,
                 }];
             }
@@ -413,13 +398,6 @@ function reducer(state: State, action: Action): State {
         case 'SET_TASK_ESTIMATE': {
             const linkedTasks = plan.linkedTasks.map((lt) =>
                 lt.todoistId === action.todoistId ? { ...lt, estimatedMinutes: action.minutes } : lt,
-            );
-            return { ...state, plan: { ...plan, linkedTasks } };
-        }
-
-        case 'TOGGLE_TASK_HABIT': {
-            const linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === action.todoistId ? { ...lt, isHabit: !lt.isHabit } : lt,
             );
             return { ...state, plan: { ...plan, linkedTasks } };
         }
@@ -654,6 +632,10 @@ function reducer(state: State, action: Action): State {
             );
             const toInject = state.life.habits
                 .filter((h) => h.active)
+                // v6: only stabilizer habits auto-inject as intentions. Light-coherent habits
+                // are pulled opportunistically from the Light Pool and never become intentions.
+                // (Missing `kind` defaults to 'stabilizer' via the loadLifeContext backfill.)
+                .filter((h) => (h.kind ?? 'stabilizer') === 'stabilizer')
                 .filter((h) => !existingHabitIds.has(h.id))
                 .filter((h) => habitMatchesDate(h, plan.date));
             if (toInject.length === 0) return state;
@@ -663,7 +645,6 @@ function reducer(state: State, action: Action): State {
                 linkedTaskIds: [],
                 completed: false,
                 brokenDown: false,
-                isHabit: false,
                 sourceHabitId: h.id,
             }));
             return {
@@ -679,6 +660,41 @@ function reducer(state: State, action: Action): State {
                     : i,
             );
             return { ...state, plan: { ...plan, intentions } };
+        }
+
+        // ---- v6: Light Pool log actions ----
+
+        case 'LOG_HABIT_START': {
+            const entry: HabitLogEntry = {
+                id: crypto.randomUUID(),
+                habitId: action.habitId,
+                startedAt: new Date().toISOString(),
+                ...(action.sessionId ? { sessionId: action.sessionId } : {}),
+            };
+            return { ...state, plan: { ...plan, habitLog: [...plan.habitLog, entry] } };
+        }
+
+        case 'LOG_HABIT_COMPLETE': {
+            const nowISO = new Date().toISOString();
+            const habitLog = plan.habitLog.map((e) => {
+                if (e.id !== action.entryId) return e;
+                // If durationMinutes wasn't supplied, derive from start → now.
+                const derivedMinutes = action.durationMinutes
+                    ?? Math.max(0, Math.round((Date.parse(nowISO) - Date.parse(e.startedAt)) / 60000));
+                return {
+                    ...e,
+                    completedAt: nowISO,
+                    durationMinutes: derivedMinutes,
+                };
+            });
+            return { ...state, plan: { ...plan, habitLog } };
+        }
+
+        case 'DELETE_HABIT_LOG_ENTRY': {
+            return {
+                ...state,
+                plan: { ...plan, habitLog: plan.habitLog.filter((e) => e.id !== action.entryId) },
+            };
         }
 
         case 'IMPORT_BACKUP': {
@@ -698,8 +714,6 @@ function reducer(state: State, action: Action): State {
                         ...action.life.habits.filter((h) => !existingHabitIds.has(h.id)),
                     ],
                     activeSeasonId: state.life.activeSeasonId ?? action.life.activeSeasonId,
-                    backfilledFromIsHabit:
-                        state.life.backfilledFromIsHabit || action.life.backfilledFromIsHabit,
                 };
             }
             if (action.history) {
@@ -733,16 +747,12 @@ export { DayPlanContext };
 
 export function DayPlanProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, null, () => {
-        const plan = loadPlan();
-        const history = loadHistory();
-        const rawLife = loadLifeContext();
-        const life = backfillHabitsFromLegacy(rawLife, plan, history);
         return {
-            plan,
+            plan: loadPlan(),
             settings: loadSettings(),
             editingStep: null,
-            history,
-            life,
+            history: loadHistory(),
+            life: loadLifeContext(),
         };
     });
 

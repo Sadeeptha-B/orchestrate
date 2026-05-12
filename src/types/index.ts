@@ -4,10 +4,8 @@ export interface Intention {
     linkedTaskIds: string[];   // ordered Todoist task IDs linked to this intention
     completed: boolean;
     brokenDown: boolean;
-    /** @deprecated v5: superseded by sourceHabitId. Retained for one iteration for backwards-compat. */
-    isHabit: boolean;
-    sourceHabitId?: string;    // set when intention was auto-injected from a Habit
-    skippedForToday?: boolean; // set when user skips a habit-derived intention without completing
+    sourceHabitId?: string;    // v5: set when intention was auto-injected from a Habit
+    skippedForToday?: boolean; // v5: set when user skips a habit-derived intention without completing
 }
 
 /** A Todoist task linked to an intention within Orchestrate's data model. */
@@ -17,8 +15,6 @@ export interface LinkedTask {
     type: 'main' | 'background' | 'unclassified';        // categorization
     assignedSessions: string[];                           // session slot IDs
     completed: boolean;
-    /** @deprecated v5: superseded by Habit entity in LifeContext. Retained for one iteration. */
-    isHabit: boolean;
     estimatedMinutes: number | null;                      // null = not yet estimated
     titleSnapshot?: string;                               // cached title for completed tasks no longer in Todoist
 }
@@ -37,6 +33,7 @@ export interface CheckIn {
     currentWorkType: WorkType;
     playlistSuggested: string; // playlist id
     notes: string;
+    avoidanceNote?: string;    // v6: captured when feeling === 'stuck'
 }
 
 export type WorkType =
@@ -56,6 +53,16 @@ export interface Playlist {
     workTypes: WorkType[];
 }
 
+/** v6: a logged "pull" from the Light Pool. Never becomes an intention or LinkedTask. */
+export interface HabitLogEntry {
+    id: string;
+    habitId: string;
+    startedAt: string;            // ISO
+    completedAt?: string;         // ISO; absent while in-progress
+    durationMinutes?: number;     // derived or user-entered on complete
+    sessionId?: string;           // active session when started, if any
+}
+
 export interface DayPlan {
     date: string; // ISO date string (YYYY-MM-DD)
     intentions: Intention[];
@@ -64,6 +71,7 @@ export interface DayPlan {
     wizardStep: number; // 1–5
     setupComplete: boolean;
     checkIns: CheckIn[];
+    habitLog: HabitLogEntry[];                            // v6: Light Pool log entries for today
 }
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';
@@ -82,6 +90,13 @@ export interface GoogleCalendarEntry {
     color?: string; // hex color for the embed, e.g. "#009688"
 }
 
+/** v6: per-kind defaults for the per-task duration cap. Habit-derived tasks may override via Habit.maxBlockMinutes. */
+export interface TaskCapDefaults {
+    stabilizer: number;       // applied to stabilizer-habit-derived tasks
+    lightCoherent: number;    // applied to light-coherent-habit-derived tasks
+    manualBackground: number; // applied to manually-categorized 'background' tasks
+}
+
 export interface AppSettings {
     notificationPreference: NotificationPreference;
     sessionSlots: SessionSlot[];
@@ -90,6 +105,8 @@ export interface AppSettings {
     todoistTokenKey?: string;
     googleCalendarIds?: GoogleCalendarEntry[];
     calendarViewMode?: CalendarViewMode;
+    taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
+    sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────
@@ -124,9 +141,17 @@ export interface HabitRecurrence {
 
 export type HabitCompletionRule = 'binary' | 'count' | 'duration';
 
+/**
+ * v6: discriminator splitting durable recurring entities into:
+ *  - 'stabilizer'      → anchor-style rituals (sleep, meditation, gym); auto-injected as intentions in Step 1, locked to background in Step 2.
+ *  - 'light-coherent'  → small resumable micro-gap fillers; never become intentions; surfaced via the Light Pool and logged-only.
+ */
+export type HabitKind = 'stabilizer' | 'light-coherent';
+
 export interface Habit {
     id: string;
     name: string;                        // e.g. "Morning meditation"
+    kind: HabitKind;                     // v6: 'stabilizer' for anchor-style rituals, 'light-coherent' for micro-gap fillers
     recurrence: HabitRecurrence;
     minimumViable: string;               // e.g. "5 min sit, no app required"
     triggerCue: string;                  // e.g. "After waking, before phone"
@@ -136,12 +161,24 @@ export interface Habit {
     seasonIds: string[];                 // which seasons this habit belongs to ([] = always-on)
     active: boolean;                     // user-toggle to pause without deleting
     autoLinkTodoistId?: string;          // persistent Todoist task to auto-link in Step 1
+    maxBlockMinutes?: number;            // v6: per-habit override; falls back to AppSettings.taskCapDefaults[kind]
     createdAt: string;                   // ISO timestamp
+}
+
+/**
+ * v6: True Rest cues — non-task recovery prompts surfaced contextually
+ * (Dashboard side rail, check-in modal for low-energy states, between-session banner).
+ * Static catalog only — no completion semantics, never a Habit.
+ */
+export interface RestCue {
+    id: string;
+    label: string;
+    durationHint: string;                                  // e.g. "5 min", "90 sec"
+    category: 'physical' | 'breath' | 'sensory';
 }
 
 export interface LifeContext {
     seasons: Season[];
     habits: Habit[];
     activeSeasonId: string | null;       // denormalized for fast lookup; mirrors seasons[].active
-    backfilledFromIsHabit?: boolean;     // one-time migration flag
 }

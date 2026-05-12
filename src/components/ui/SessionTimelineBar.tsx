@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { timeToMinutes } from '../../lib/time';
 import { getTaskTitle } from '../../lib/tasks';
 import type { LinkedTask, SessionSlot } from '../../types';
+import type { SessionCapacity } from '../../lib/capacity';
+import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
 
 function nowInMinutes(): number {
     const d = new Date();
@@ -32,6 +34,10 @@ interface SessionTimelineBarProps {
     onSelectSession?: (sessionId: string) => void;
     /** Dashboard mode: ID of the currently active session (shows pulse indicator). */
     currentSessionId?: string | null;
+    /** v6: optional per-session capacity data. When provided, each block shows a capacity badge. */
+    capacities?: Record<string, SessionCapacity>;
+    /** v6: intention ids whose tasks should render with the 🔁 habit emoji (parent intention has sourceHabitId). */
+    habitDerivedIntentionIds?: Set<string>;
 }
 
 export function SessionTimelineBar({
@@ -42,6 +48,8 @@ export function SessionTimelineBar({
     selectedSessionId,
     onSelectSession,
     currentSessionId,
+    capacities,
+    habitDerivedIntentionIds,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -151,6 +159,11 @@ export function SessionTimelineBar({
                                     {session.startTime}–{session.endTime}
                                 </span>
                             </div>
+                            {capacities?.[session.id] && (
+                                <div className="mb-1.5">
+                                    <SessionCapacityBadge capacity={capacities[session.id]} />
+                                </div>
+                            )}
                             <div className="flex flex-wrap gap-1">
                                 {sessionMain.map((lt) => (
                                     <span
@@ -160,14 +173,17 @@ export function SessionTimelineBar({
                                         {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
-                                {sessionBg.map((lt) => (
-                                    <span
-                                        key={lt.todoistId}
-                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
-                                    >
-                                        {lt.completed ? '🎉 ' : lt.isHabit ? '🔄 ' : ''}{titleFor(lt.todoistId)}
-                                    </span>
-                                ))}
+                                {sessionBg.map((lt) => {
+                                    const isHabitDerived = habitDerivedIntentionIds?.has(lt.intentionId) ?? false;
+                                    return (
+                                        <span
+                                            key={lt.todoistId}
+                                            className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
+                                        >
+                                            {lt.completed ? '🎉 ' : isHabitDerived ? '🔄 ' : ''}{titleFor(lt.todoistId)}
+                                        </span>
+                                    );
+                                })}
                                 {sessionMain.length === 0 && sessionBg.length === 0 && (
                                     <span className="text-[9px] text-text-light">Empty</span>
                                 )}

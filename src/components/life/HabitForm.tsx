@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { inputClass, labelClass } from '../ui/formStyles';
-import type { Habit, HabitRecurrence, HabitRecurrenceKind, Season } from '../../types';
+import type { Habit, HabitKind, HabitRecurrence, HabitRecurrenceKind, Season } from '../../types';
 
 export type HabitDraft = Omit<Habit, 'id' | 'createdAt'>;
 
@@ -23,8 +23,12 @@ export function HabitForm({
     onCancel,
 }: HabitFormProps) {
     const [name, setName] = useState(initial?.name ?? '');
+    const [kind, setKind] = useState<HabitKind>(initial?.kind ?? 'stabilizer');
     const [recurrenceKind, setRecurrenceKind] = useState<HabitRecurrenceKind>(
         initial?.recurrence?.kind ?? 'daily',
+    );
+    const [maxBlockMinutes, setMaxBlockMinutes] = useState<string>(
+        initial?.maxBlockMinutes !== undefined ? String(initial.maxBlockMinutes) : '',
     );
     const [daysOfWeek, setDaysOfWeek] = useState<number[]>(
         initial?.recurrence?.daysOfWeek ?? [],
@@ -59,8 +63,10 @@ export function HabitForm({
             kind: recurrenceKind,
             ...(showDayPicker ? { daysOfWeek } : {}),
         };
+        const parsedMax = Number(maxBlockMinutes);
         onSubmit({
             name: name.trim(),
+            kind,
             recurrence,
             minimumViable: minimumViable.trim(),
             triggerCue: triggerCue.trim(),
@@ -71,6 +77,9 @@ export function HabitForm({
             active,
             ...(autoLinkTodoistId.trim()
                 ? { autoLinkTodoistId: autoLinkTodoistId.trim() }
+                : {}),
+            ...(maxBlockMinutes.trim() && Number.isFinite(parsedMax) && parsedMax > 0
+                ? { maxBlockMinutes: Math.round(parsedMax) }
                 : {}),
         });
     };
@@ -85,6 +94,46 @@ export function HabitForm({
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Morning meditation, Gym, Evening shutdown"
                 />
+            </div>
+
+            <div>
+                <label className={labelClass}>Kind</label>
+                <div className="flex gap-1 flex-wrap">
+                    {(['stabilizer', 'light-coherent'] as HabitKind[]).map((k) => (
+                        <button
+                            key={k}
+                            type="button"
+                            onClick={() => setKind(k)}
+                            className={`px-3 py-1.5 text-xs rounded-lg border transition-colors cursor-pointer ${
+                                kind === k
+                                    ? 'bg-accent-subtle border-accent/30 text-accent'
+                                    : 'border-border hover:bg-surface-dark/50'
+                            }`}
+                        >
+                            {k === 'stabilizer' ? 'Stabilizer' : 'Light-coherent'}
+                        </button>
+                    ))}
+                </div>
+                <p className="text-[11px] text-text-light mt-1">
+                    {kind === 'stabilizer'
+                        ? 'Anchor-style ritual — auto-injects as an intention each day and locks its task to background.'
+                        : 'Micro-gap filler — surfaces in the Light Pool and is logged opportunistically. Never enters the day plan.'}
+                </p>
+            </div>
+
+            <div>
+                <label className={labelClass}>Max block (minutes, optional)</label>
+                <input
+                    type="number"
+                    min={1}
+                    className={inputClass}
+                    value={maxBlockMinutes}
+                    onChange={(e) => setMaxBlockMinutes(e.target.value)}
+                    placeholder="Leave blank to use the per-kind default in Settings"
+                />
+                <p className="text-[11px] text-text-light mt-1">
+                    Overrides the per-task duration cap in Step 2 for this habit's tasks.
+                </p>
             </div>
 
             <div>

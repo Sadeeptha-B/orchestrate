@@ -2,12 +2,14 @@ import { useState, useMemo } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
+import { SessionCapacityBanner } from '../dashboard/SessionCapacityBanner';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { formatDuration, timeToMinutes } from '../../lib/time';
+import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
 import type { LinkedTask } from '../../types';
 
@@ -26,6 +28,15 @@ export function Step3Schedule() {
 
     const intentionMap = useMemo(
         () => new Map(plan.intentions.map((i) => [i.id, i])),
+        [plan.intentions],
+    );
+
+    /** v6: replaces the old `lt.isHabit` read — a task is "habit-derived" when its parent intention came from a Habit. */
+    const isHabitDerived = (lt: LinkedTask) =>
+        Boolean(intentionMap.get(lt.intentionId)?.sourceHabitId);
+
+    const habitDerivedIntentionIds = useMemo(
+        () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
         [plan.intentions],
     );
 
@@ -57,6 +68,12 @@ export function Step3Schedule() {
         }, 0);
         return { totalMinutes, estimatedTotal };
     };
+
+    // v6: per-session capacity for the timeline (advisory; banner only triggers when over 150%).
+    const capacities = useMemo(
+        () => computeAllSessionCapacities(remainingSessions, plan.taskSessions, plan.linkedTasks, settings),
+        [remainingSessions, plan.taskSessions, plan.linkedTasks, settings],
+    );
 
     const hasAnyAssignment = Object.values(plan.taskSessions).some((ids) => ids.length > 0);
     const allTasksCompleted = plan.linkedTasks.length > 0 && plan.linkedTasks.every((lt) => lt.completed);
@@ -129,7 +146,7 @@ export function Step3Schedule() {
                                         className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
                                         title={intentionMap.get(lt.intentionId)?.title}
                                     >
-                                        {lt.isHabit && '🔄 '}{getTaskLabel(lt)}
+                                        {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)}
                                         {lt.assignedSessions.length > 0 && (
                                             <span className="ml-1 text-accent">
                                                 ({lt.assignedSessions.length} session{lt.assignedSessions.length !== 1 ? 's' : ''})
@@ -142,6 +159,7 @@ export function Step3Schedule() {
                     )}
 
                     {/* ── Timeline ── */}
+                    <SessionCapacityBanner sessions={remainingSessions} capacities={capacities} />
                     <SessionTimelineBar
                         sessions={remainingSessions}
                         taskSessions={plan.taskSessions}
@@ -149,6 +167,8 @@ export function Step3Schedule() {
                         taskMap={taskMap}
                         selectedSessionId={selectedSessionId}
                         onSelectSession={setSelectedSessionId}
+                        capacities={capacities}
+                        habitDerivedIntentionIds={habitDerivedIntentionIds}
                     />
 
                     {/* ── Selected session detail panel ── */}
@@ -235,7 +255,7 @@ export function Step3Schedule() {
                                                 className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
                                                 title="Click to remove from this session"
                                             >
-                                                {lt.isHabit && '🔄 '}{getTaskLabel(lt)} ×
+                                                {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)} ×
                                             </button>
                                         ))}
                                     </div>
@@ -299,7 +319,7 @@ export function Step3Schedule() {
                                                     }
                                                     className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                 >
-                                                    + {lt.isHabit && '🔄 '}{getTaskLabel(lt)}
+                                                    + {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)}
                                                 </button>
                                             ))}
                                         </div>
@@ -377,7 +397,7 @@ export function Step3Schedule() {
                                                 key={lt.todoistId}
                                                 className="px-2 py-0.5 text-[10px] rounded-full bg-surface-dark text-text-light"
                                             >
-                                                {lt.isHabit && '🔄 '}{getTaskLabel(lt)}
+                                                {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)}
                                             </span>
                                         ))}
                                         {sessionMain.length === 0 && sessionBg.length === 0 && (

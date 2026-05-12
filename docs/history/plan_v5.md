@@ -1,6 +1,8 @@
 # Plan v5 — Life Scaffolding Primitives
 
 > Frozen post-implementation plan. The living docs ([synthesis.md](../synthesis.md), [data-model.md](../data-model.md), [architecture.md](../architecture.md)) reflect the result. This document preserves the *narrative* of how v5 was designed and what tradeoffs were made.
+>
+> **Iteration numbering note (added post-v6):** the "Deferred to later iterations" section below assigned v6 to *Capacity Intelligence* and pushed the `isHabit` flag removal to v7. In practice v6 became **"Micro-gap refinement + capacity intelligence"** — it combined the capacity arithmetic sketched here with a new `Habit.kind` split (stabilizer / light-coherent), the Light Pool, the True Rest cue track, and the legacy `isHabit` purge (pulled forward from v7). See [plan_v6.md](./plan_v6.md) for what actually shipped. Modes/Rituals are now v7; Reviews/Drift are now v8.
 
 ## Context
 

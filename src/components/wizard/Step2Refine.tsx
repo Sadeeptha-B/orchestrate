@@ -20,10 +20,10 @@ const TYPE_OPTIONS: { value: LinkedTask['type']; label: string; description: str
 ];
 
 const ESTIMATE_PRESETS = [15, 30, 45, 60];
-const BACKGROUND_MAX_MINUTES = 30;
+const FALLBACK_CAPS = { stabilizer: 30, lightCoherent: 20, manualBackground: 30 };
 
 export function Step2Refine() {
-    const { plan, dispatch } = useDayPlan();
+    const { plan, life, settings, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const [currentIntentionIndex, setCurrentIntentionIndex] = useState(0);
     const [showSetup, setShowSetup] = useState(false);
@@ -36,6 +36,32 @@ export function Step2Refine() {
     const habitLockedIntentionIds = useMemo(
         () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
         [plan.intentions],
+    );
+
+    // v6: per-task background cap. Habit-derived → habit.maxBlockMinutes ?? per-kind default.
+    // Manually-categorized background → taskCapDefaults.manualBackground.
+    const habitById = useMemo(
+        () => new Map(life.habits.map((h) => [h.id, h])),
+        [life.habits],
+    );
+    const intentionById = useMemo(
+        () => new Map(plan.intentions.map((i) => [i.id, i])),
+        [plan.intentions],
+    );
+    const resolveBackgroundCap = useCallback(
+        (lt: LinkedTask): number => {
+            const caps = settings.taskCapDefaults ?? FALLBACK_CAPS;
+            const intention = intentionById.get(lt.intentionId);
+            const habit = intention?.sourceHabitId ? habitById.get(intention.sourceHabitId) : undefined;
+            if (habit?.maxBlockMinutes !== undefined) return habit.maxBlockMinutes;
+            if (habit) {
+                return (habit.kind ?? 'stabilizer') === 'stabilizer'
+                    ? caps.stabilizer
+                    : caps.lightCoherent;
+            }
+            return caps.manualBackground;
+        },
+        [settings.taskCapDefaults, intentionById, habitById],
     );
 
     const intentionTitleMap = useMemo(
@@ -133,7 +159,7 @@ export function Step2Refine() {
                     <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                         <p className="text-xs text-blue-900 dark:text-blue-200">
                             <strong>💡 Tip:</strong> Main tasks are primary work threads (30+ min).
-                            Background tasks are habits/nudges (≤30 min each, can be scheduled multiple times).
+                            Background tasks are habits/nudges with a short cap (per-kind default, override per habit) — they can be scheduled multiple times.
                         </p>
                     </div>
 
@@ -155,11 +181,9 @@ export function Step2Refine() {
                                 taskMap={taskMap}
                                 horizontal={!taskPanelOpen}
                                 lockedToBackground={habitLockedIntentionIds.has(lt.intentionId)}
+                                backgroundCap={resolveBackgroundCap(lt)}
                                 onCategorize={(taskType) =>
                                     dispatch({ type: 'CATEGORIZE_TASK', todoistId: lt.todoistId, taskType })
-                                }
-                                onToggleHabit={() =>
-                                    dispatch({ type: 'TOGGLE_TASK_HABIT', todoistId: lt.todoistId })
                                 }
                                 onSetEstimate={(minutes) =>
                                     dispatch({ type: 'SET_TASK_ESTIMATE', todoistId: lt.todoistId, minutes })
@@ -262,8 +286,8 @@ function TaskCard({
     taskMap,
     horizontal,
     lockedToBackground,
+    backgroundCap,
     onCategorize,
-    onToggleHabit,
     onSetEstimate,
     onUnlink,
     onOpenTaskPanel,
@@ -272,8 +296,8 @@ function TaskCard({
     taskMap: Map<string, { id: string; content: string }>;
     horizontal?: boolean;
     lockedToBackground?: boolean;
+    backgroundCap: number;
     onCategorize: (taskType: LinkedTask['type']) => void;
-    onToggleHabit: () => void;
     onSetEstimate: (minutes: number) => void;
     onUnlink: () => void;
     onOpenTaskPanel: () => void;
@@ -304,7 +328,7 @@ function TaskCard({
     const handleCustomEstimate = (value: string) => {
         const num = parseInt(value, 10);
         if (!isNaN(num) && num > 0) {
-            const clamped = isBackground ? Math.min(num, BACKGROUND_MAX_MINUTES) : num;
+            const clamped = isBackground ? Math.min(num, backgroundCap) : num;
             setCustomInput(String(clamped));
             onSetEstimate(clamped);
         } else {
@@ -313,7 +337,7 @@ function TaskCard({
     };
 
     const handlePreset = (minutes: number) => {
-        if (isBackground && minutes > BACKGROUND_MAX_MINUTES) return;
+        if (isBackground && minutes > backgroundCap) return;
         setCustomInput('');
         onSetEstimate(minutes);
     };
@@ -348,18 +372,6 @@ function TaskCard({
                     {opt.label}
                 </button>
             ))}
-            {isBackground && (
-                <button
-                    onClick={onToggleHabit}
-                    className={`px-2 py-1 text-xs rounded-full border transition-colors cursor-pointer ${lt.isHabit
-                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700'
-                        : 'border-border text-text-light hover:border-amber-400 hover:text-amber-600'
-                        }`}
-                    title={lt.isHabit ? 'Marked as habit — click to unmark' : 'Mark as recurring habit'}
-                >
-                    🔄 Habit
-                </button>
-            )}
         </div>
     );
 
@@ -377,7 +389,7 @@ function TaskCard({
                     </span>
                 )}
                 {ESTIMATE_PRESETS.map((minutes) => {
-                    const disabled = isBackground && minutes > BACKGROUND_MAX_MINUTES;
+                    const disabled = isBackground && minutes > backgroundCap;
                     return (
                         <button
                             key={minutes}
@@ -397,7 +409,7 @@ function TaskCard({
                 <input
                     type="number"
                     min={1}
-                    max={isBackground ? BACKGROUND_MAX_MINUTES : undefined}
+                    max={isBackground ? backgroundCap : undefined}
                     placeholder="min"
                     value={isCustom && customInput === '' ? lt.estimatedMinutes ?? '' : customInput}
                     onChange={(e) => handleCustomEstimate(e.target.value)}
@@ -411,7 +423,7 @@ function TaskCard({
             {/* Background cap message */}
             {isBackground && (
                 <p className="text-[10px] text-text-light">
-                    Capped at 30 min per scheduling (can be scheduled multiple times/day)
+                    Capped at {backgroundCap} min per scheduling (can be scheduled multiple times/day)
                 </p>
             )}
 

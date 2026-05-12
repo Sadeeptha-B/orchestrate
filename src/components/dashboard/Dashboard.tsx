@@ -20,6 +20,9 @@ import { ThemeToggle } from '../ui/ThemeToggle';
 import { AboutContent } from '../ui/AboutContent';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
+import { LightPoolPanel } from './LightPoolPanel';
+import { TrueRestCard } from './TrueRestCard';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 
 export function Dashboard() {
     const { plan, settings, dispatch } = useDayPlan();
@@ -29,6 +32,7 @@ export function Dashboard() {
         plan.setupComplete,
         settings.notificationPreference,
     );
+    const { nextSessionStartsWithin } = useCurrentSession(settings.sessionSlots);
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
@@ -196,10 +200,14 @@ export function Dashboard() {
                                 </h3>
                                 <SessionTimeline />
                             </div>
-                            <aside className="lg:w-72 lg:flex-shrink-0">
+                            <aside className="lg:w-72 lg:flex-shrink-0 space-y-3">
                                 <SeasonContextCard />
+                                <TrueRestCard variant="card" />
                             </aside>
                         </div>
+
+                        {/* Between-session True Rest cue (v6) — only when no active session and next within 60 min */}
+                        {nextSessionStartsWithin(60) && <TrueRestCard variant="banner" />}
 
                         {/* Current session */}
                         <div className="space-y-2">
@@ -208,6 +216,9 @@ export function Dashboard() {
                             </h3>
                             <CurrentSession />
                         </div>
+
+                        {/* Light Pool — micro-gap fillers (v6) */}
+                        <LightPoolPanel />
 
                         {/* Task Manager (Todoist) — collapsible */}
                         <div>
@@ -347,7 +358,7 @@ export function Dashboard() {
             />
 
             <Modal open={showAboutModal} onClose={() => setShowAboutModal(false)} title="About Orchestrate">
-                <AboutContent />
+                <AboutContent onOpenGuide={() => { setShowAboutModal(false); navigate('/guide'); }} />
                 <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
                     Connect Todoist and Google Calendar in{' '}
                     <button

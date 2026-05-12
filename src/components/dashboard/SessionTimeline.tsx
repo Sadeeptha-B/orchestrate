@@ -1,10 +1,13 @@
 import { useState, useCallback, useMemo } from 'react';
 import { Card } from '../ui/Card';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
+import { SessionCapacityBadge } from './SessionCapacityBadge';
+import { SessionCapacityBanner } from './SessionCapacityBanner';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, type TodoistTask } from '../../hooks/useTodoist';
 import { addMinutesToTime, formatDuration, timeToMinutes, todayISO } from '../../lib/time';
+import { computeSessionCapacity } from '../../lib/capacity';
 import type { LinkedTask, SessionSlot } from '../../types';
 
 /** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
@@ -81,9 +84,10 @@ interface TaskRowProps {
     sessionId: string;
     drag: ReturnType<typeof useTaskDrag>;
     scheduledRange: string | null;
+    isHabitDerived: boolean;
 }
 
-function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
+function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, isHabitDerived }: TaskRowProps) {
     const { dispatch } = useDayPlan();
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
@@ -134,7 +138,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
             <span className={`flex-1 text-sm ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
                 {linkedTask.completed && <span className="mr-1">🎉</span>}
                 {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
-                {linkedTask.isHabit && !linkedTask.completed && <span className="mr-1">🔄</span>}
+                {isHabitDerived && !linkedTask.completed && <span className="mr-1">🔄</span>}
                 {title}
             </span>
 
@@ -180,7 +184,7 @@ function SessionCard({
     taskIds: string[];
     linkedTasks: LinkedTask[];
     taskMap: Map<string, TodoistTask>;
-    intentions: Map<string, { id: string; title: string }>;
+    intentions: Map<string, { id: string; title: string; sourceHabitId?: string }>;
     drag: ReturnType<typeof useTaskDrag>;
 }) {
     const tasksInSession = taskIds
@@ -254,6 +258,7 @@ function SessionCard({
                                     const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
                                     // Only truly stale if not in Todoist AND not completed (completed tasks are expected to be absent)
                                     const isStale = !todoistTask && !lt.completed;
+                                    const intent = intentions.get(lt.intentionId);
                                     return (
                                         <TaskRow
                                             key={lt.todoistId}
@@ -263,6 +268,7 @@ function SessionCard({
                                             sessionId={session.id}
                                             drag={drag}
                                             scheduledRange={getScheduledRange(todoistTask)}
+                                            isHabitDerived={Boolean(intent?.sourceHabitId)}
                                         />
                                     );
                                 })}
@@ -289,6 +295,17 @@ export function CurrentSession() {
         () => new Map(plan.intentions.map((i) => [i.id, i])),
         [plan.intentions],
     );
+
+    // v6: live remaining-time capacity for the active session (advisory; banner only on > 150%).
+    const activeCapacity = useMemo(() => {
+        if (!currentSession) return null;
+        return computeSessionCapacity(
+            currentSession,
+            plan.taskSessions,
+            plan.linkedTasks,
+            settings,
+        );
+    }, [currentSession, plan.taskSessions, plan.linkedTasks, settings]);
 
     if (!currentSession) {
         const upcoming = remainingSessions[0];
@@ -323,16 +340,29 @@ export function CurrentSession() {
     const taskIds = plan.taskSessions[currentSession.id] ?? [];
 
     return (
-        <SessionCard
-            session={currentSession}
-            isCurrent
-            isPast={false}
-            taskIds={taskIds}
-            linkedTasks={plan.linkedTasks}
-            taskMap={taskMap}
-            intentions={intentionMap}
-            drag={drag}
-        />
+        <div className="space-y-2">
+            {activeCapacity && (
+                <div className="flex items-center justify-between gap-3 px-1">
+                    <span className="text-xs text-text-light">
+                        Remaining capacity this session
+                    </span>
+                    <SessionCapacityBadge capacity={activeCapacity} />
+                </div>
+            )}
+            {activeCapacity?.status === 'over' && (
+                <SessionCapacityBanner sessions={[currentSession]} capacities={{ [currentSession.id]: activeCapacity }} />
+            )}
+            <SessionCard
+                session={currentSession}
+                isCurrent
+                isPast={false}
+                taskIds={taskIds}
+                linkedTasks={plan.linkedTasks}
+                taskMap={taskMap}
+                intentions={intentionMap}
+                drag={drag}
+            />
+        </div>
     );
 }
 
@@ -342,6 +372,10 @@ export function SessionTimeline() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
+    const habitDerivedIntentionIds = useMemo(
+        () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
+        [plan.intentions],
+    );
 
     return (
         <SessionTimelineBar
@@ -350,6 +384,7 @@ export function SessionTimeline() {
             linkedTasks={plan.linkedTasks}
             taskMap={taskMap}
             currentSessionId={currentSession?.id}
+            habitDerivedIntentionIds={habitDerivedIntentionIds}
         />
     );
 }
