@@ -9,14 +9,16 @@ export function useResizablePanel() {
     const dragging = useRef(false);
     const startX = useRef(0);
     const startWidth = useRef(PANEL_DEFAULT);
+    const currentWidth = useRef(PANEL_DEFAULT);
+    useEffect(() => { currentWidth.current = panelWidth; }, [panelWidth]);
 
     const onMouseDown = useCallback((e: React.MouseEvent) => {
         dragging.current = true;
         startX.current = e.clientX;
-        startWidth.current = panelWidth;
+        startWidth.current = currentWidth.current;
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
-    }, [panelWidth]);
+    }, []);
 
     useEffect(() => {
         const onMouseMove = (e: MouseEvent) => {

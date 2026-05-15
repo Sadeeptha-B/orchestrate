@@ -3,14 +3,16 @@ import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { SessionCapacityBanner } from '../dashboard/SessionCapacityBanner';
+import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { formatDuration, timeToMinutes } from '../../lib/time';
+import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
+import { getHabitDerivedIntentionIds } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 export function Step3Schedule() {
@@ -31,14 +33,13 @@ export function Step3Schedule() {
         [plan.intentions],
     );
 
-    /** v6: replaces the old `lt.isHabit` read — a task is "habit-derived" when its parent intention came from a Habit. */
-    const isHabitDerived = (lt: LinkedTask) =>
-        Boolean(intentionMap.get(lt.intentionId)?.sourceHabitId);
-
     const habitDerivedIntentionIds = useMemo(
-        () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
+        () => getHabitDerivedIntentionIds(plan.intentions),
         [plan.intentions],
     );
+
+    /** v6: replaces the old `lt.isHabit` read — a task is "habit-derived" when its parent intention came from a Habit. */
+    const isHabitDerived = (lt: LinkedTask) => habitDerivedIntentionIds.has(lt.intentionId);
 
     const mainTasksByIntention = useMemo(() => {
         const groups = new Map<string, LinkedTask[]>();
@@ -55,18 +56,6 @@ export function Step3Schedule() {
     const getTaskLabel = (lt: LinkedTask) => {
         const title = titleFor(lt.todoistId);
         return lt.estimatedMinutes ? `${title} — ${formatDuration(lt.estimatedMinutes)}` : title;
-    };
-
-    const getSessionCapacity = (sessionId: string) => {
-        const session = remainingSessions.find((s) => s.id === sessionId);
-        if (!session) return null;
-        const totalMinutes = timeToMinutes(session.endTime) - timeToMinutes(session.startTime);
-        const assignedIds = plan.taskSessions[sessionId] ?? [];
-        const estimatedTotal = assignedIds.reduce((sum, id) => {
-            const lt = plan.linkedTasks.find((t) => t.todoistId === id);
-            return sum + (lt?.estimatedMinutes ?? 0);
-        }, 0);
-        return { totalMinutes, estimatedTotal };
     };
 
     // v6: per-session capacity for the timeline (advisory; banner only triggers when over 150%).
@@ -93,7 +82,7 @@ export function Step3Schedule() {
                         <h2 className="text-2xl font-semibold mb-2">Schedule tasks</h2>
                         <p className="text-text-light text-sm">
                             Assign tasks to sessions. Main tasks are exclusive to one session.
-                            Nudges &amp; habits can appear in multiple sessions.
+                            Background tasks can appear in multiple sessions.
                         </p>
                     </div>
 
@@ -138,7 +127,7 @@ export function Step3Schedule() {
                     {/* Background tasks overview */}
                     {backgroundTasks.length > 0 && (
                         <div>
-                            <h3 className="text-sm font-medium text-text-light mb-2">Your nudges</h3>
+                            <h3 className="text-sm font-medium text-text-light mb-2">Background tasks</h3>
                             <div className="flex flex-wrap gap-2">
                                 {backgroundTasks.map((lt) => (
                                     <span
@@ -146,7 +135,7 @@ export function Step3Schedule() {
                                         className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
                                         title={intentionMap.get(lt.intentionId)?.title}
                                     >
-                                        {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)}
+                                        {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
                                         {lt.assignedSessions.length > 0 && (
                                             <span className="ml-1 text-accent">
                                                 ({lt.assignedSessions.length} session{lt.assignedSessions.length !== 1 ? 's' : ''})
@@ -188,24 +177,16 @@ export function Step3Schedule() {
 
                         return (
                             <div className="rounded-lg border border-accent/30 bg-accent/[0.02] p-4 space-y-3">
-                                <div className="flex items-baseline justify-between">
+                                <div className="flex items-baseline justify-between gap-3">
                                     <h3 className="font-medium text-sm">
                                         {selectedSession.name}
                                         <span className="ml-2 text-xs font-normal text-text-light">
                                             {selectedSession.startTime} – {selectedSession.endTime}
                                         </span>
                                     </h3>
-                                    {(() => {
-                                        const cap = getSessionCapacity(selectedSession.id);
-                                        if (!cap || cap.estimatedTotal === 0) return null;
-                                        const over = cap.estimatedTotal > cap.totalMinutes;
-                                        return (
-                                            <span className={`text-xs tabular-nums ${over ? 'text-amber-600 dark:text-amber-400' : 'text-text-light'}`}>
-                                                {formatDuration(cap.estimatedTotal)} / {formatDuration(cap.totalMinutes)} scheduled
-                                                {over && ' ⚠'}
-                                            </span>
-                                        );
-                                    })()}
+                                    {capacities[selectedSession.id]?.assignedMinutes ? (
+                                        <SessionCapacityBadge capacity={capacities[selectedSession.id]} />
+                                    ) : null}
                                 </div>
 
                                 {/* Assigned main tasks grouped by intention */}
@@ -255,7 +236,7 @@ export function Step3Schedule() {
                                                 className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
                                                 title="Click to remove from this session"
                                             >
-                                                {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)} ×
+                                                {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)} ×
                                             </button>
                                         ))}
                                     </div>
@@ -304,7 +285,7 @@ export function Step3Schedule() {
                                 {unassignedBg.length > 0 && (
                                     <div className="space-y-2 border-t border-border/50 pt-3">
                                         <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
-                                            Add nudges
+                                            Add background tasks
                                         </span>
                                         <div className="flex flex-wrap gap-1.5">
                                             {unassignedBg.map((lt) => (
@@ -319,7 +300,7 @@ export function Step3Schedule() {
                                                     }
                                                     className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                 >
-                                                    + {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)}
+                                                    + {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
                                                 </button>
                                             ))}
                                         </div>
@@ -397,7 +378,7 @@ export function Step3Schedule() {
                                                 key={lt.todoistId}
                                                 className="px-2 py-0.5 text-[10px] rounded-full bg-surface-dark text-text-light"
                                             >
-                                                {isHabitDerived(lt) && '🔄 '}{getTaskLabel(lt)}
+                                                {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
                                             </span>
                                         ))}
                                         {sessionMain.length === 0 && sessionBg.length === 0 && (

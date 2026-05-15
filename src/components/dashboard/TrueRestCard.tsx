@@ -4,6 +4,9 @@ import type { RestCue } from '../../types';
 
 type Variant = 'card' | 'inline' | 'banner';
 
+/** Default rotation interval (5 minutes) for the True Rest cue on the Dashboard side rail. */
+const DEFAULT_ROTATE_MS = 5 * 60 * 1000;
+
 interface TrueRestCardProps {
     variant?: Variant;
     /** Optional pre-picked cue (used by callers that want a stable cue for the render). */
@@ -24,20 +27,18 @@ interface TrueRestCardProps {
 export function TrueRestCard({
     variant = 'card',
     cue: cueProp,
-    rotateMs = 5 * 60 * 1000,
+    rotateMs = DEFAULT_ROTATE_MS,
     heading,
 }: TrueRestCardProps) {
-    const [cue, setCue] = useState<RestCue>(() => cueProp ?? pickRestCue());
+    const [rotatingCue, setRotatingCue] = useState<RestCue>(pickRestCue);
 
     useEffect(() => {
-        if (cueProp) {
-            setCue(cueProp);
-            return;
-        }
-        if (rotateMs <= 0) return;
-        const id = setInterval(() => setCue(pickRestCue()), rotateMs);
+        if (cueProp || rotateMs <= 0) return;
+        const id = setInterval(() => setRotatingCue(pickRestCue()), rotateMs);
         return () => clearInterval(id);
     }, [cueProp, rotateMs]);
+
+    const cue = cueProp ?? rotatingCue;
 
     const eyebrow = heading ?? (variant === 'banner' ? 'Between sessions' : 'True Rest');
 

@@ -6,9 +6,10 @@ import { SessionCapacityBanner } from './SessionCapacityBanner';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, type TodoistTask } from '../../hooks/useTodoist';
-import { addMinutesToTime, formatDuration, timeToMinutes, todayISO } from '../../lib/time';
+import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
-import type { LinkedTask, SessionSlot } from '../../types';
+import { getHabitDerivedIntentionIds } from '../../lib/habits';
+import type { Intention, LinkedTask, SessionSlot } from '../../types';
 
 /** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
 function getScheduledRange(task: TodoistTask | undefined): string | null {
@@ -138,7 +139,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, 
             <span className={`flex-1 text-sm ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
                 {linkedTask.completed && <span className="mr-1">🎉</span>}
                 {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
-                {isHabitDerived && !linkedTask.completed && <span className="mr-1">🔄</span>}
+                {isHabitDerived && !linkedTask.completed && <span className="mr-1">🔁</span>}
                 {title}
             </span>
 
@@ -184,7 +185,7 @@ function SessionCard({
     taskIds: string[];
     linkedTasks: LinkedTask[];
     taskMap: Map<string, TodoistTask>;
-    intentions: Map<string, { id: string; title: string; sourceHabitId?: string }>;
+    intentions: Map<string, Intention>;
     drag: ReturnType<typeof useTaskDrag>;
 }) {
     const tasksInSession = taskIds
@@ -220,22 +221,9 @@ function SessionCard({
                     )}
                     <h4 className="font-medium text-sm">{session.name}</h4>
                 </div>
-                <div className="flex items-center gap-2">
-                    {(() => {
-                        const totalMin = timeToMinutes(session.endTime) - timeToMinutes(session.startTime);
-                        const estTotal = tasksInSession.reduce((s, lt) => s + (lt.estimatedMinutes ?? 0), 0);
-                        if (estTotal === 0) return null;
-                        const over = estTotal > totalMin;
-                        return (
-                            <span className={`text-[10px] tabular-nums ${over ? 'text-amber-600 dark:text-amber-400' : 'text-text-light'}`}>
-                                {formatDuration(estTotal)} est.{over && ' \u26a0'}
-                            </span>
-                        );
-                    })()}
-                    <span className="text-xs text-text-light">
-                        {session.startTime}{' \u2013 '}{session.endTime}
-                    </span>
-                </div>
+                <span className="text-xs text-text-light">
+                    {session.startTime}{' \u2013 '}{session.endTime}
+                </span>
             </div>
 
             {/* Background nudge banner */}
@@ -373,7 +361,7 @@ export function SessionTimeline() {
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
     const habitDerivedIntentionIds = useMemo(
-        () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
+        () => getHabitDerivedIntentionIds(plan.intentions),
         [plan.intentions],
     );
 

@@ -36,7 +36,7 @@ interface SessionTimelineBarProps {
     currentSessionId?: string | null;
     /** v6: optional per-session capacity data. When provided, each block shows a capacity badge. */
     capacities?: Record<string, SessionCapacity>;
-    /** v6: intention ids whose tasks should render with the 🔁 habit emoji (parent intention has sourceHabitId). */
+    /** v6: intention ids whose tasks render with the 🔁 habit emoji (parent intention has sourceHabitId). */
     habitDerivedIntentionIds?: Set<string>;
 }
 
@@ -180,7 +180,7 @@ export function SessionTimelineBar({
                                             key={lt.todoistId}
                                             className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
                                         >
-                                            {lt.completed ? '🎉 ' : isHabitDerived ? '🔄 ' : ''}{titleFor(lt.todoistId)}
+                                            {lt.completed ? '🎉 ' : isHabitDerived ? '🔁 ' : ''}{titleFor(lt.todoistId)}
                                         </span>
                                     );
                                 })}

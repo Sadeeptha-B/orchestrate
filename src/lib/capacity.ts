@@ -1,8 +1,18 @@
-import type { AppSettings, LinkedTask, SessionSlot } from '../types';
+import type { AppSettings, LinkedTask, SessionSlot, TaskCapDefaults } from '../types';
 import { timeToMinutes } from './time';
 
 /** Default session buffer (subtracted from a session's wall-clock length) when AppSettings doesn't set one. */
 export const DEFAULT_SESSION_BUFFER_MINUTES = 60;
+
+/**
+ * v6 per-kind task-cap defaults injected by `loadSettings` when absent.
+ * Single source of truth — Step2Refine, CapacitySettings, and the reducer all read this.
+ */
+export const DEFAULT_TASK_CAPS: TaskCapDefaults = {
+    stabilizer: 30,
+    lightCoherent: 20,
+    manualBackground: 30,
+};
 
 export type CapacityStatus = 'ok' | 'tight' | 'over';
 

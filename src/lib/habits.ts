@@ -1,4 +1,4 @@
-import type { Habit, LifeContext } from '../types';
+import type { Habit, Intention, LifeContext } from '../types';
 
 export function getActiveHabits(life: LifeContext): Habit[] {
     return life.habits.filter((habit) => habit.active);
@@ -6,6 +6,11 @@ export function getActiveHabits(life: LifeContext): Habit[] {
 
 export function getAnchorHabits(habits: Habit[]): Habit[] {
     return habits.filter((habit) => habit.isAnchor);
+}
+
+/** Return the set of intention IDs whose parent intention was auto-injected from a Habit. */
+export function getHabitDerivedIntentionIds(intentions: Intention[]): Set<string> {
+    return new Set(intentions.filter((i) => i.sourceHabitId).map((i) => i.id));
 }
 
 /**

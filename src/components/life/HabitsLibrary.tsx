@@ -48,7 +48,7 @@ export function HabitsLibrary() {
     return (
         <LifeShell
             title="Habits"
-            subtitle="First-class recurring stabilizers. Active habits become daily intentions automatically."
+            subtitle="Stabilizers auto-inject as daily intentions; light-coherent habits surface in the Light Pool for opportunistic pulls."
         >
             <div className="flex items-center justify-between mb-4">
                 <p className="text-sm text-text-light">
@@ -69,6 +69,18 @@ export function HabitsLibrary() {
                             <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap mb-1">
                                     <h3 className="font-medium">{h.name}</h3>
+                                    <span
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                            h.kind === 'stabilizer'
+                                                ? 'bg-accent-subtle text-accent'
+                                                : 'bg-surface-dark text-text-light'
+                                        }`}
+                                        title={h.kind === 'stabilizer'
+                                            ? 'Auto-injects as a daily intention'
+                                            : 'Surfaces in the Light Pool; never enters the day plan'}
+                                    >
+                                        {h.kind === 'stabilizer' ? 'STABILIZER' : 'LIGHT'}
+                                    </span>
                                     {h.isAnchor && (
                                         <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent text-white">
                                             ANCHOR
