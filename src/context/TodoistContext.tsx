@@ -128,6 +128,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const [error, setError] = useState<string | null>(null);
 
     const tokenRef = useRef<string | null>(null);
+    const hasDataRef = useRef((cache.current?.tasks.length ?? 0) > 0);
 
     const isConfigured = Boolean(
         settings.todoistToken && settings.todoistTokenIV && settings.todoistTokenKey,
@@ -205,17 +206,16 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     const refreshTasks = useCallback(
         (opts?: RefreshOpts) => {
-            const hasExistingData = tasks.length > 0 || (cache.current?.tasks.length ?? 0) > 0;
             return refreshResource<TodoistTask>({
                 kind: 'tasks',
                 path: '/tasks',
-                setData: setTasks,
+                setData: (data) => { setTasks(data); hasDataRef.current = data.length > 0; },
                 force: opts?.force,
-                withLoadingSpinner: !hasExistingData,
+                withLoadingSpinner: !hasDataRef.current,
                 errorMessage: 'Failed to fetch tasks',
             });
         },
-        [refreshResource, tasks.length],
+        [refreshResource],
     );
 
     const refreshProjects = useCallback(

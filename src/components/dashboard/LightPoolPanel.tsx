@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { getLightPoolHabits } from '../../lib/habits';
-import { Button } from '../ui/Button';
+import { LightPoolRow } from './LightPoolRow';
 
 /**
  * v6 Light Pool — surfaces today's light-coherent habits (filtered to the active season)
@@ -16,24 +16,20 @@ export function LightPoolPanel() {
 
     const pool = useMemo(() => getLightPoolHabits(life, plan.date), [life, plan.date]);
 
-    if (pool.length === 0) return null;
-
-    const habitById = new Map(life.habits.map((h) => [h.id, h]));
+    const habitById = useMemo(
+        () => new Map(life.habits.map((h) => [h.id, h])),
+        [life.habits],
+    );
     const todayLog = plan.habitLog;
-    const inProgress = new Map<string, string>(); // habitId → entryId
-    for (const e of todayLog) {
-        if (!e.completedAt) inProgress.set(e.habitId, e.id);
-    }
+    const inProgress = useMemo(() => {
+        const m = new Map<string, string>(); // habitId → entryId
+        for (const e of todayLog) {
+            if (!e.completedAt) m.set(e.habitId, e.id);
+        }
+        return m;
+    }, [todayLog]);
 
-    const start = (habitId: string) => {
-        dispatch({ type: 'LOG_HABIT_START', habitId, sessionId: currentSession?.id });
-    };
-    const complete = (entryId: string) => {
-        dispatch({ type: 'LOG_HABIT_COMPLETE', entryId });
-    };
-    const remove = (entryId: string) => {
-        dispatch({ type: 'DELETE_HABIT_LOG_ENTRY', entryId });
-    };
+    if (pool.length === 0) return null;
 
     return (
         <div>
@@ -63,33 +59,14 @@ export function LightPoolPanel() {
                     </p>
 
                     <ul className="space-y-2">
-                        {pool.map((h) => {
-                            const activeEntryId = inProgress.get(h.id);
-                            return (
-                                <li
-                                    key={h.id}
-                                    className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
-                                >
-                                    <div className="min-w-0 flex-1">
-                                        <div className="text-sm truncate">{h.name}</div>
-                                        {h.minimumViable && (
-                                            <div className="text-[11px] text-text-light truncate">
-                                                {h.minimumViable}
-                                            </div>
-                                        )}
-                                    </div>
-                                    {activeEntryId ? (
-                                        <Button size="sm" onClick={() => complete(activeEntryId)}>
-                                            Done
-                                        </Button>
-                                    ) : (
-                                        <Button variant="secondary" size="sm" onClick={() => start(h.id)}>
-                                            Start
-                                        </Button>
-                                    )}
-                                </li>
-                            );
-                        })}
+                        {pool.map((h) => (
+                            <LightPoolRow
+                                key={h.id}
+                                habit={h}
+                                activeEntryId={inProgress.get(h.id)}
+                                sessionId={currentSession?.id}
+                            />
+                        ))}
                     </ul>
 
                     {todayLog.length > 0 && (
@@ -116,7 +93,7 @@ export function LightPoolPanel() {
                                                 )}
                                             </span>
                                             <button
-                                                onClick={() => remove(e.id)}
+                                                onClick={() => dispatch({ type: 'DELETE_HABIT_LOG_ENTRY', entryId: e.id })}
                                                 className="text-text-light hover:text-text transition-colors cursor-pointer"
                                                 title="Delete entry"
                                             >

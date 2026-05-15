@@ -2,17 +2,12 @@ import { useNavigate } from 'react-router-dom';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { playlists } from '../../data/playlists';
-
-/** Extract the Spotify playlist ID from an open.spotify.com URL */
-function spotifyPlaylistId(url: string): string {
-    const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
-    return match?.[1] ?? '';
-}
+import { spotifyPlaylistId } from '../../lib/spotify';
 
 export function Step4StartMusic() {
     const { plan, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
-    const startPlaylist = playlists.find((p) => p.id === 'start-work')!;
+    const startPlaylist = playlists.find((p) => p.id === 'start-work') ?? playlists[0];
     const spId = spotifyPlaylistId(startPlaylist.spotifyUrl);
     const canSkip = editingStep !== null || plan.setupComplete;
 

@@ -4,17 +4,8 @@ import { useDayPlan } from '../../hooks/useDayPlan';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { downloadJSON } from '../../lib/download';
 import type { SavedDayPlan } from '../../types';
-
-function downloadJSON(data: unknown, filename: string) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-}
 
 function sanitizeFilename(name: string): string {
     return name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
@@ -54,9 +45,9 @@ export function SavedSessions({ hideHeading = false }: SavedSessionsProps) {
 
             <div className="space-y-2">
                 {history.map((entry) => {
-                    const items = entry.plan.intentions ?? (entry.plan as unknown as { tasks: typeof entry.plan.intentions }).tasks ?? [];
-                    const linkedTasks = (entry.plan as { linkedTasks?: { completed: boolean }[] }).linkedTasks;
-                    // v4: count linked tasks; fallback: count intentions/tasks
+                    const items = entry.plan.intentions ?? [];
+                    const linkedTasks = entry.plan.linkedTasks;
+                    // v4+: count linked tasks; fallback: count intentions
                     const itemCount = linkedTasks ? linkedTasks.length : items.length;
                     const doneCount = linkedTasks
                         ? linkedTasks.filter((lt) => lt.completed).length

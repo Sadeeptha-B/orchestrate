@@ -5,6 +5,8 @@ import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { Modal } from '../ui/Modal';
+import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
+import { getHabitDerivedIntentionIds } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 /**
@@ -20,7 +22,9 @@ const TYPE_OPTIONS: { value: LinkedTask['type']; label: string; description: str
 ];
 
 const ESTIMATE_PRESETS = [15, 30, 45, 60];
-const FALLBACK_CAPS = { stabilizer: 30, lightCoherent: 20, manualBackground: 30 };
+
+/** Threshold (minutes) above which a non-background task triggers the "consider breaking down" nudge. */
+const LONG_TASK_THRESHOLD = 60;
 
 export function Step2Refine() {
     const { plan, life, settings, dispatch } = useDayPlan();
@@ -34,7 +38,7 @@ export function Step2Refine() {
     // Habit-derived linked tasks are locked to 'background' at LINK_TASK time;
     // this set drives the UI affordance only.
     const habitLockedIntentionIds = useMemo(
-        () => new Set(plan.intentions.filter((i) => i.sourceHabitId).map((i) => i.id)),
+        () => getHabitDerivedIntentionIds(plan.intentions),
         [plan.intentions],
     );
 
@@ -50,14 +54,12 @@ export function Step2Refine() {
     );
     const resolveBackgroundCap = useCallback(
         (lt: LinkedTask): number => {
-            const caps = settings.taskCapDefaults ?? FALLBACK_CAPS;
+            const caps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
             const intention = intentionById.get(lt.intentionId);
             const habit = intention?.sourceHabitId ? habitById.get(intention.sourceHabitId) : undefined;
             if (habit?.maxBlockMinutes !== undefined) return habit.maxBlockMinutes;
             if (habit) {
-                return (habit.kind ?? 'stabilizer') === 'stabilizer'
-                    ? caps.stabilizer
-                    : caps.lightCoherent;
+                return habit.kind === 'stabilizer' ? caps.stabilizer : caps.lightCoherent;
             }
             return caps.manualBackground;
         },
@@ -84,7 +86,7 @@ export function Step2Refine() {
     // Auto-open task panel when any non-background task in current intention exceeds 1hr,
     // unless the user has explicitly opened or closed it.
     const hasLongTask = currentLinkedTasks.some(
-        (lt) => !lt.completed && lt.type !== 'background' && lt.estimatedMinutes !== null && lt.estimatedMinutes > 60,
+        (lt) => !lt.completed && lt.type !== 'background' && lt.estimatedMinutes !== null && lt.estimatedMinutes > LONG_TASK_THRESHOLD,
     );
     const taskPanelOpen = panelIntent === 'open' || (panelIntent === 'auto' && hasLongTask);
 
@@ -428,7 +430,7 @@ function TaskCard({
             )}
 
             {/* Over 1hr nudge */}
-            {lt.estimatedMinutes !== null && lt.estimatedMinutes > 60 && !isBackground && (
+            {lt.estimatedMinutes !== null && lt.estimatedMinutes > LONG_TASK_THRESHOLD && !isBackground && (
                 <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 mt-1">
                     <p className="text-xs text-amber-800 dark:text-amber-300">
                         This task is over an hour. Create a new task for the overflow.{' '}

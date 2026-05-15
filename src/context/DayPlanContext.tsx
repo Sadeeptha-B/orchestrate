@@ -15,11 +15,11 @@ import type {
     Season,
     Habit,
     HabitLogEntry,
-    TaskCapDefaults,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 import { habitMatchesDate } from '../lib/habits';
 import { todayISO } from '../lib/time';
+import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../lib/capacity';
 
 // --------------- helpers ---------------
 
@@ -30,14 +30,6 @@ const LIFE_KEY = 'orchestrate-life-context';
 const SCHEMA_VERSION = 6;
 /** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
 const WIZARD_STEPS_COUNT = 4;
-
-/** v6 defaults injected into AppSettings when absent. */
-const DEFAULT_TASK_CAPS: TaskCapDefaults = {
-    stabilizer: 30,
-    lightCoherent: 20,
-    manualBackground: 30,
-};
-const DEFAULT_SESSION_BUFFER_MINUTES = 60;
 
 function freshPlan(): DayPlan {
     return {
@@ -634,8 +626,7 @@ function reducer(state: State, action: Action): State {
                 .filter((h) => h.active)
                 // v6: only stabilizer habits auto-inject as intentions. Light-coherent habits
                 // are pulled opportunistically from the Light Pool and never become intentions.
-                // (Missing `kind` defaults to 'stabilizer' via the loadLifeContext backfill.)
-                .filter((h) => (h.kind ?? 'stabilizer') === 'stabilizer')
+                .filter((h) => h.kind === 'stabilizer')
                 .filter((h) => !existingHabitIds.has(h.id))
                 .filter((h) => habitMatchesDate(h, plan.date));
             if (toInject.length === 0) return state;

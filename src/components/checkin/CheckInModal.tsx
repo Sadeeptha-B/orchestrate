@@ -8,7 +8,8 @@ import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import { spotifyPlaylistId } from '../../lib/spotify';
 import { getLightPoolHabits } from '../../lib/habits';
 import { TrueRestCard } from '../dashboard/TrueRestCard';
-import type { WorkType, CheckIn } from '../../types';
+import { LightPoolRow } from '../dashboard/LightPoolRow';
+import type { WorkType, CheckIn, LinkedTask } from '../../types';
 
 const FEELINGS = [
     { value: 'great', label: 'Great', emoji: '\u{1F31F}' },
@@ -59,7 +60,7 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
     const bgNudges = currentSession
         ? (plan.taskSessions[currentSession.id] ?? [])
             .map((id) => plan.linkedTasks.find((lt) => lt.todoistId === id))
-            .filter((lt) => lt && lt.type === 'background' && !lt.completed)
+            .filter((lt): lt is LinkedTask => lt !== undefined && lt.type === 'background' && !lt.completed)
         : [];
 
     const buildCheckIn = (): CheckIn | null => {
@@ -126,8 +127,8 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                 {/* Background nudges for current session */}
                 {bgNudges.length > 0 && (
                     <div className="px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
-                        <span className="font-medium">Background intentions for this session:</span>{' '}
-                        {bgNudges.map((lt) => taskMap.get(lt!.todoistId)?.content ?? lt!.titleSnapshot ?? lt!.todoistId).join(', ')}
+                        <span className="font-medium">Background tasks for this session:</span>{' '}
+                        {bgNudges.map((lt) => taskMap.get(lt.todoistId)?.content ?? lt.titleSnapshot ?? lt.todoistId).join(', ')}
                     </div>
                 )}
 
@@ -171,8 +172,8 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                     </div>
                 )}
 
-                {/* v6: low-state companion surfaces — Light Pool + True Rest cue */}
-                {lowState && (poolSlice.length > 0 || true) && (
+                {/* v6: low-state companion surfaces — True Rest cue always, Light Pool rows when non-empty */}
+                {lowState && (
                     <div className="space-y-2 pt-1 border-t border-border">
                         <p className="text-[11px] uppercase tracking-wider text-text-light">
                             Try a smaller move
@@ -180,48 +181,14 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                         <TrueRestCard variant="inline" heading="True Rest" />
                         {poolSlice.length > 0 && (
                             <ul className="space-y-1.5">
-                                {poolSlice.map((h) => {
-                                    const activeEntryId = inProgressByHabit.get(h.id);
-                                    return (
-                                        <li
-                                            key={h.id}
-                                            className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
-                                        >
-                                            <div className="min-w-0 flex-1">
-                                                <div className="text-sm truncate">{h.name}</div>
-                                                {h.minimumViable && (
-                                                    <div className="text-[11px] text-text-light truncate">
-                                                        {h.minimumViable}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            {activeEntryId ? (
-                                                <Button
-                                                    size="sm"
-                                                    onClick={() =>
-                                                        dispatch({ type: 'LOG_HABIT_COMPLETE', entryId: activeEntryId })
-                                                    }
-                                                >
-                                                    Done
-                                                </Button>
-                                            ) : (
-                                                <Button
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    onClick={() =>
-                                                        dispatch({
-                                                            type: 'LOG_HABIT_START',
-                                                            habitId: h.id,
-                                                            sessionId: currentSession?.id,
-                                                        })
-                                                    }
-                                                >
-                                                    Start
-                                                </Button>
-                                            )}
-                                        </li>
-                                    );
-                                })}
+                                {poolSlice.map((h) => (
+                                    <LightPoolRow
+                                        key={h.id}
+                                        habit={h}
+                                        activeEntryId={inProgressByHabit.get(h.id)}
+                                        sessionId={currentSession?.id}
+                                    />
+                                ))}
                             </ul>
                         )}
                     </div>

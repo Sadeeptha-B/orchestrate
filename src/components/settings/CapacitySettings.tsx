@@ -1,5 +1,6 @@
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { inputClass, labelClass } from '../ui/formStyles';
+import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../../lib/capacity';
 
 /**
  * v6: Session buffer + per-kind task-cap defaults. All advisory — values control
@@ -7,8 +8,8 @@ import { inputClass, labelClass } from '../ui/formStyles';
  */
 export function CapacitySettings() {
     const { settings, dispatch } = useDayPlan();
-    const caps = settings.taskCapDefaults ?? { stabilizer: 30, lightCoherent: 20, manualBackground: 30 };
-    const buffer = settings.sessionBufferMinutes ?? 60;
+    const caps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
+    const buffer = settings.sessionBufferMinutes ?? DEFAULT_SESSION_BUFFER_MINUTES;
 
     const updateBuffer = (raw: string) => {
         const n = Math.max(0, Math.round(Number(raw) || 0));

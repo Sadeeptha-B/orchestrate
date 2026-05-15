@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
+import { downloadJSON } from '../../lib/download';
 import type { AppSettings, LifeContext, SavedDayPlan } from '../../types';
 
 interface FullBackup {
@@ -8,16 +9,6 @@ interface FullBackup {
     life?: LifeContext;
     history?: SavedDayPlan[];
     _backupVersion?: number;
-}
-
-function downloadJSON(data: unknown, filename: string) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
 }
 
 function validateSessions(data: unknown): SavedDayPlan[] | null {

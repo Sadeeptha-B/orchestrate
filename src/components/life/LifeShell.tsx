@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Logo } from '../ui/Logo';
-import { ThemeToggle } from '../ui/ThemeToggle';
+import { HeaderControls } from '../ui/HeaderControls';
 
 interface Crumb {
     label: string;
@@ -50,7 +50,7 @@ export function LifeShell({ title, subtitle, crumbs = [], children }: LifeShellP
                         >
                             Back to Dashboard
                         </button>
-                        <ThemeToggle />
+                        <HeaderControls />
                     </div>
                 </div>
             </header>
