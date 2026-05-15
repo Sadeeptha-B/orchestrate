@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -15,6 +15,7 @@ import type { Habit, HabitLogEntry, SavedDayPlan } from '../../types';
  */
 export function LightPoolSection() {
     const { plan, life, history } = useDayPlan();
+    const navigate = useNavigate();
 
     const lightHabits = useMemo(
         () => life.habits.filter((h) => h.active && h.kind === 'light-coherent'),
@@ -35,8 +36,11 @@ export function LightPoolSection() {
                     short reading, idea capture. They never enter the day's task plan; they
                     just get logged.
                 </p>
-                <Button size="sm">
-                    <Link to="/habits">Create a light-coherent habit</Link>
+                <Button
+                    size="sm"
+                    onClick={() => navigate('/habits', { state: { createHabitKind: 'light-coherent' } })}
+                >
+                    Create a light-coherent habit
                 </Button>
             </Card>
         );

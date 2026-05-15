@@ -122,7 +122,7 @@ export function Step2Refine() {
         <WizardLayout canAdvance={canAdvanceStep} onNext={handleNext} wide hideNext>
             <div className="flex flex-col lg:flex-row gap-6 mt-4" style={{ minHeight: '60vh' }}>
                 {/* Left panel: categorization + estimation */}
-                <div className={`flex-shrink-0 space-y-5 overflow-y-auto transition-all ${taskPanelOpen ? 'lg:w-[40%]' : 'w-full max-w-3xl'}`}>
+                <div className={`flex-shrink-0 space-y-5 overflow-y-auto scrollbar-subtle transition-all ${taskPanelOpen ? 'lg:w-[40%]' : 'w-full max-w-3xl'}`}>
                     {/* Header */}
                     <div>
                         <h2 className="text-2xl font-semibold mb-1">Categorize &amp; estimate</h2>

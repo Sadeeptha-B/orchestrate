@@ -563,18 +563,18 @@ function Intro() {
 }
 
 const TOC_ENTRIES: { id: string; label: string }[] = [
-    { id: 'big-picture',             label: '1. How Orchestrate sees your day' },
-    { id: 'layers',                  label: '2. Where your data lives' },
-    { id: 'habit-entity',            label: '3. Habits: the recurring backbone' },
-    { id: 'pathways',                label: '4. The three work pathways' },
-    { id: 'true-rest',               label: '5. True Rest' },
-    { id: 'stabilizer-vs-anchor',    label: '6. Stabilizer vs Anchor' },
+    { id: 'big-picture', label: '1. How Orchestrate sees your day' },
+    { id: 'layers', label: '2. Where your data lives' },
+    { id: 'habit-entity', label: '3. Habits: the recurring backbone' },
+    { id: 'pathways', label: '4. The three work pathways' },
+    { id: 'true-rest', label: '5. True Rest' },
+    { id: 'stabilizer-vs-anchor', label: '6. Stabilizer vs Anchor' },
     { id: 'anchor-stabilizer-seasons', label: '7. Habits, Seasons, Anchors' },
-    { id: 'capacity',                label: '8. Session capacity' },
-    { id: 'check-in',               label: '9. The hourly check-in' },
-    { id: 'decision-tree',           label: '10. Decision tree' },
-    { id: 'typical-day',             label: '11. A typical day' },
-    { id: 'quick-reference',         label: '12. Quick reference' },
+    { id: 'capacity', label: '8. Session capacity' },
+    { id: 'check-in', label: '9. The hourly check-in' },
+    { id: 'decision-tree', label: '10. Decision tree' },
+    { id: 'typical-day', label: '11. A typical day' },
+    { id: 'quick-reference', label: '12. Quick reference' },
 ];
 
 function TableOfContents() {
@@ -613,7 +613,7 @@ function SubHeading({ id, children }: { id?: string; children: ReactNode }) {
 
 function Flow({ children }: { children: string }) {
     return (
-        <pre className="bg-surface-dark border border-border rounded-lg p-4 text-[12px] leading-snug overflow-x-auto whitespace-pre font-mono text-text">
+        <pre className="bg-surface-dark border border-border rounded-lg p-4 text-[12px] leading-snug overflow-x-auto scrollbar-subtle whitespace-pre font-mono text-text">
             {children}
         </pre>
     );

@@ -358,7 +358,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
             )}
 
             {/* Project tree */}
-            <div className="flex-1 overflow-y-auto py-1">
+            <div className="flex-1 overflow-y-auto scrollbar-subtle py-1">
                 {tree.length === 0 && !loading && (
                     <p className="text-xs text-text-light py-4 text-center">No projects</p>
                 )}

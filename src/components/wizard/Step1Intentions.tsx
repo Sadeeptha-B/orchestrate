@@ -208,7 +208,7 @@ export function Step1Intentions() {
 
             <div className="flex flex-col lg:flex-row gap-6 mt-4" style={{ minHeight: '60vh' }}>
                 {/* Left panel */}
-                <div className="lg:w-[40%] flex-shrink-0 space-y-5 overflow-y-auto">
+                <div className="lg:w-[40%] flex-shrink-0 space-y-5 overflow-y-auto scrollbar-subtle">
                     {!mappingStarted ? (
                         /* ── Phase 1: Set intentions ── */
                         <>

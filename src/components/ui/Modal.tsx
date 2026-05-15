@@ -41,7 +41,7 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
                         {title}
                     </h3>
                 )}
-                <div className={`px-6 overflow-y-auto ${title ? 'pb-6' : 'py-6'}`}>
+                <div className={`px-6 overflow-y-auto scrollbar-subtle ${title ? 'pb-6' : 'py-6'}`}>
                     {children}
                 </div>
             </div>

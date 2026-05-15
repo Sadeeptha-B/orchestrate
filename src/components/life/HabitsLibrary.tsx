@@ -1,12 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
-import { HabitForm } from './HabitForm';
+import { HabitForm, type HabitDraft } from './HabitForm';
 import { getActiveHabits } from '../../lib/habits';
 import type { Habit } from '../../types';
+
+interface HabitsLocationState {
+    createHabitKind?: HabitDraft['kind'];
+}
 
 function recurrenceSummary(h: Habit): string {
     const r = h.recurrence;
@@ -26,10 +31,23 @@ function recurrenceSummary(h: Habit): string {
 
 export function HabitsLibrary() {
     const { life, dispatch } = useDayPlan();
-    const [showCreate, setShowCreate] = useState(false);
+    const location = useLocation();
+    const navigate = useNavigate();
+    const locationState = location.state as HabitsLocationState | null;
+    const createHabitKindFromState = locationState?.createHabitKind;
+    const [showCreate, setShowCreate] = useState(() => Boolean(createHabitKindFromState));
+    const [createInitial, setCreateInitial] = useState<Partial<HabitDraft> | undefined>(() =>
+        createHabitKindFromState ? { kind: createHabitKindFromState } : undefined,
+    );
     const [editing, setEditing] = useState<Habit | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
     const activeHabitCount = getActiveHabits(life).length;
+
+    useEffect(() => {
+        if (!createHabitKindFromState) return;
+
+        navigate(location.pathname, { replace: true, state: null });
+    }, [createHabitKindFromState, location.pathname, navigate]);
 
     const sorted = [...life.habits].sort((a, b) => {
         if (a.active !== b.active) return a.active ? -1 : 1;
@@ -45,6 +63,16 @@ export function HabitsLibrary() {
         dispatch({ type: 'DELETE_HABIT', habitId: habit.id });
     };
 
+    const openCreate = (initial?: Partial<HabitDraft>) => {
+        setCreateInitial(initial);
+        setShowCreate(true);
+    };
+
+    const closeCreate = () => {
+        setShowCreate(false);
+        setCreateInitial(undefined);
+    };
+
     return (
         <LifeShell
             title="Habits"
@@ -57,7 +85,7 @@ export function HabitsLibrary() {
                         : `${life.habits.length} habit${life.habits.length === 1 ? '' : 's'}, ${activeHabitCount
                         } active.`}
                 </p>
-                <Button size="sm" onClick={() => setShowCreate(true)}>
+                <Button size="sm" onClick={() => openCreate()}>
                     New Habit
                 </Button>
             </div>
@@ -70,11 +98,10 @@ export function HabitsLibrary() {
                                 <div className="flex items-center gap-2 flex-wrap mb-1">
                                     <h3 className="font-medium">{h.name}</h3>
                                     <span
-                                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                            h.kind === 'stabilizer'
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${h.kind === 'stabilizer'
                                                 ? 'bg-accent-subtle text-accent'
                                                 : 'bg-surface-dark text-text-light'
-                                        }`}
+                                            }`}
                                         title={h.kind === 'stabilizer'
                                             ? 'Auto-injects as a daily intention'
                                             : 'Surfaces in the Light Pool; never enters the day plan'}
@@ -125,14 +152,15 @@ export function HabitsLibrary() {
                 ))}
             </div>
 
-            <Modal open={showCreate} onClose={() => setShowCreate(false)} title="New habit">
+            <Modal open={showCreate} onClose={closeCreate} title="New habit">
                 <HabitForm
+                    initial={createInitial}
                     seasons={life.seasons}
                     submitLabel="Create"
-                    onCancel={() => setShowCreate(false)}
+                    onCancel={closeCreate}
                     onSubmit={(draft) => {
                         dispatch({ type: 'ADD_HABIT', habit: draft });
-                        setShowCreate(false);
+                        closeCreate();
                     }}
                 />
             </Modal>

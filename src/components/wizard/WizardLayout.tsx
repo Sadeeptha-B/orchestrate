@@ -68,7 +68,7 @@ export function WizardLayout({
             {/* Left sidebar — saved sessions */}
             {panelOpen && (
                 <aside
-                    className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-y-auto relative"
+                    className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-y-auto scrollbar-subtle relative"
                     style={{ width: panelWidth }}
                 >
                     {/* Drag handle */}

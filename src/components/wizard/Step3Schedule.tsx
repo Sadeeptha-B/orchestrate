@@ -347,7 +347,7 @@ export function Step3Schedule() {
                     </div>
 
                     {/* Horizontal session summary */}
-                    <div className="flex gap-3 overflow-x-auto pb-1">
+                    <div className="flex gap-3 overflow-x-auto scrollbar-subtle pb-1">
                         {remainingSessions.map((session) => {
                             const assignedIds = plan.taskSessions[session.id] ?? [];
                             const sessionMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));

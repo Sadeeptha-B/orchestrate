@@ -42,7 +42,7 @@ export function Welcome() {
             : 'Ready to plan?';
 
     return (
-        <div className="min-h-screen flex flex-col items-center px-6 py-12">
+        <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
             {/* Top-right controls */}
             <div className="fixed top-5 right-5 flex gap-1.5 z-10">
                 <button

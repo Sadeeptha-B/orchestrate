@@ -1,18 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { findActiveSeason } from '../../lib/seasons';
 
 export function SeasonFocusBanner() {
-    const { plan, life, dispatch } = useDayPlan();
+    const { life } = useDayPlan();
     const navigate = useNavigate();
     const season = findActiveSeason(life);
     const [emptyDismissed, setEmptyDismissed] = useState(false);
-
-    const existingTitles = useMemo(
-        () => new Set(plan.intentions.map((i) => i.title.trim().toLowerCase())),
-        [plan.intentions],
-    );
 
     if (!season) {
         if (emptyDismissed) return null;
@@ -45,58 +40,42 @@ export function SeasonFocusBanner() {
     const goals = season.supportingGoals;
 
     return (
-        <div className="rounded-lg border border-accent/30 bg-accent-subtle/20 px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="text-xs font-semibold text-text-light uppercase tracking-wider">
+        <div className="rounded-lg border border-accent/30 bg-accent-subtle/20 px-3 py-2 space-y-1">
+            {/* Season name + view link */}
+            <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-semibold text-accent uppercase tracking-wider flex-shrink-0">
                         Season
-                    </p>
-                    <p className="text-sm font-medium text-text mt-0.5">{season.name}</p>
-                    {season.primaryTheme && (
-                        <p className="text-xs text-text-light mt-0.5">{season.primaryTheme}</p>
-                    )}
+                    </span>
+                    <span className="text-sm font-medium text-text">{season.name}</span>
                 </div>
                 <button
                     type="button"
                     onClick={() => navigate(`/season/${season.id}`)}
-                    className="text-xs text-accent hover:underline cursor-pointer flex-shrink-0"
+                    className="text-[11px] text-accent hover:underline cursor-pointer flex-shrink-0"
                 >
                     View →
                 </button>
             </div>
 
-            {goals.length > 0 ? (
-                <div className="mt-3">
-                    <p className="text-[11px] text-text-light mb-1.5">
-                        Pull goals into today:
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                        {goals.map((goal, i) => {
-                            const already = existingTitles.has(goal.trim().toLowerCase());
-                            return (
-                                <button
-                                    key={i}
-                                    type="button"
-                                    disabled={already}
-                                    onClick={() => dispatch({ type: 'ADD_INTENTION', title: goal })}
-                                    className={
-                                        already
-                                            ? 'inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-surface-dark/50 text-text-light text-xs cursor-default'
-                                            : 'inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-card border border-accent/30 text-accent text-xs hover:bg-accent-subtle/60 transition-colors cursor-pointer'
-                                    }
-                                    title={already ? 'Already added' : 'Add as intention for today'}
-                                >
-                                    <span aria-hidden>{already ? '✓' : '+'}</span>
-                                    <span>{goal}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
+            {/* Theme */}
+            {season.primaryTheme && (
+                <p className="text-xs text-text-light">{season.primaryTheme}</p>
+            )}
+
+            {/* Goals — wrapping chips, scrollable after 2 rows */}
+            {goals.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 max-h-14 overflow-y-auto scrollbar-subtle">
+                    {goals.map((goal, i) => (
+                        <span
+                            key={i}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-card border border-border text-text-light text-[11px]"
+                        >
+                            <span aria-hidden className="text-accent">◆</span>
+                            <span>{goal}</span>
+                        </span>
+                    ))}
                 </div>
-            ) : (
-                <p className="text-xs text-text-light italic mt-2">
-                    No supporting goals listed for this season.
-                </p>
             )}
         </div>
     );

@@ -74,7 +74,7 @@ export function SeasonContextCard() {
 
                 {goals.length > 0 && (
                     <div className="mt-2.5">
-                        <ul className="text-sm space-y-1 max-h-28 overflow-y-auto pr-1">
+                        <ul className="text-sm space-y-1 max-h-28 overflow-y-auto scrollbar-subtle pr-1">
                             {visibleGoals.map((g, i) => (
                                 <li key={i} className="flex gap-2">
                                     <span className="text-text-light flex-shrink-0">·</span>
