@@ -10,10 +10,10 @@ This document describes the architecture of Orchestrate: how the application is 
 
 | Layer | Technology |
 |---|---|
-| Framework | React 18+ with TypeScript |
-| Build tool | Vite |
+| Framework | React 19 with TypeScript |
+| Build tool | Vite 8 |
 | Styling | Tailwind CSS v4 (CSS custom properties via `@theme`) |
-| Routing | React Router v6 (`BrowserRouter`, basename `/orchestrate/`) |
+| Routing | React Router v7 (`BrowserRouter`, basename `/orchestrate/`) |
 | State management | React Context + `useReducer` (DayPlan), React Context + `useState` (Todoist, Music) |
 | Persistence | `localStorage` (4 primary keys + 3 auxiliary keys) |
 | External APIs | Todoist REST API v1, Google Calendar embed, Spotify embed |
@@ -51,7 +51,7 @@ StrictMode
 
 ## 3. Routing
 
-Orchestrate has three routes, all defined in the `AppRoutes` component inside `App.tsx`:
+Orchestrate has eight routes, all defined in the `AppRoutes` component inside `App.tsx`:
 
 | Path | Component | Guard |
 |---|---|---|

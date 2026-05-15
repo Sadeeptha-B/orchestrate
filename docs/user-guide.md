@@ -1,12 +1,17 @@
-> **What is this?** A mental-model + how-to guide for the entities Orchestrate uses to model your day: **Habits** (stabilizer / light-coherent), **Intentions**, **LinkedTasks** (main / background), **Light Pool**, **True Rest**, and **Capacity**. Use this as your quick reference. For the higher-level overview see [synthesis.md](./synthesis.md); for types and reducer actions see [data-model.md](./data-model.md).
+> **What is this?** A guide to how Orchestrate thinks about your day — and how you can use that to get more done with less friction. Covers **Habits**, **Intentions**, **Tasks**, the **Light Pool**, **True Rest**, and **Capacity**. For the technical overview see [synthesis.md](./synthesis.md); for exact types and actions see [data-model.md](./data-model.md).
 >
 > **Reflects:** v6.
 
 # Orchestrate — User Guide
 
-## 1. The big picture
+## 1. How Orchestrate sees your day
 
-Orchestrate models the day in **two persistence layers** and surfaces work through **three execution pathways** plus a non-task **recovery track**.
+At its core, Orchestrate divides your world into two layers:
+
+- **The stuff that persists across days** — your seasons, your habits, your routines. These survive when the day resets.
+- **Today's plan** — your intentions, the tasks you've linked to them, which session each task lives in, and how you're feeling throughout the day. This resets every morning.
+
+On top of that, there are **three ways work can flow** through your day, plus a recovery layer that deliberately stays off the grid:
 
 ```
                     LifeContext (durable, multi-day)
@@ -22,272 +27,262 @@ Orchestrate models the day in **two persistence layers** and surfaces work throu
                    │  checkIns                      │
                    └────────────────────────────────┘
 
-      Pathway A: Deep Track      → Main task in a session
-      Pathway B: Stabilizer      → Auto-injected intention → background task in sessions
-      Pathway C: Light Pool      → Logged-only HabitLogEntry, never enters task graph
+      Deep Track       → Your main work: big tasks in dedicated session blocks
+      Stabilizer       → Your recurring rituals: auto-injected, slotted, protected
+      Light Pool       → Your micro-gap fillers: logged when you pull them, never scheduled
 
-      + Manual background        → Small today-only nudges inside an intention
-      + True Rest                → Static recovery cues (no logging, no completion)
-      + Capacity                 → Advisory arithmetic surrounding all of the above
+      + Manual background  → Small today-only nudges inside an intention
+      + True Rest          → Recovery cues with zero tracking overhead
+      + Capacity           → Advisory math that tells you if you're overloaded
 ```
 
 ---
 
-## 2. Two persistence layers
+## 2. Where your data lives
 
-| Layer | Where it lives | Lifetime |
+| Layer | What it holds | How long it lasts |
 |---|---|---|
-| **LifeContext** | `orchestrate-life-context` | Durable. Survives daily resets. Holds Seasons + Habits + active-season pointer. |
-| **DayPlan** | `orchestrate-day-plan` | Auto-resets when `date !== todayISO()`. Holds today's Intentions, LinkedTasks, session assignments, check-ins, and the v6 `habitLog`. |
+| **LifeContext** | Seasons, Habits, which season is active | Durable — survives daily resets. |
+| **DayPlan** | Today's Intentions, linked tasks, session assignments, check-ins, Light Pool log | Resets every morning automatically. |
+| **Settings** | Capacity defaults, session time slots, encrypted Todoist token, calendar config | Durable — independent of the day. |
 
-User preferences (`AppSettings` — capacity defaults, session slots, encrypted Todoist token) live in their own durable key.
-
----
-
-## 3. The Habit entity (v6)
-
-A `Habit` is a durable recurring entity in `LifeContext`. It has two **orthogonal** classifications:
-
-- **`kind: 'stabilizer' | 'light-coherent'`** — drives **behavior**.
-- **`isAnchor: boolean`** — drives **protection**.
-
-…plus the usual fields: `recurrence`, `minimumViable`, `triggerCue`, `completionRule`, `failureTolerance`, `seasonIds`, `active`, `autoLinkTodoistId?`, `maxBlockMinutes?`.
-
-`kind` and `isAnchor` answer different questions; you can mix them freely (see §6).
+You don't need to think about this much. The important takeaway: your habits and seasons are safe across day boundaries. Today's task plan is ephemeral by design.
 
 ---
 
-## 4. The three execution pathways
+## 3. Habits: the recurring backbone
 
-Each pathway is a different route from intent to action. Pick by use case, not by reflex.
+A **Habit** is anything you want to do regularly — from morning meditation to flashcard reviews. Every habit has two independent settings that determine how it behaves:
 
-### 4.1 Pathway A — Deep Track (Main task)
+### What kind of habit is it?
 
+- **Stabilizer** (`kind: 'stabilizer'`) — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate will automatically add these to your intentions each morning and lock them as background tasks.
+- **Light-coherent** (`kind: 'light-coherent'`) — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. These show up in the **Light Pool** on your dashboard — you pull from them when you're ready, and they're logged but never scheduled.
+
+### How protected is it?
+
+- **Anchor** (`isAnchor: true`) — a habit so foundational that you don't want to accidentally delete it. Sleep, meditation, gym — the stuff your day collapses without. Anchor habits can't be deleted while active; you'd have to deactivate them first.
+- **Non-anchor** (`isAnchor: false`) — a regular habit you can remove freely.
+
+These two settings are independent. You can have any combination (see [§6](#stabilizer-vs-anchor) for all four).
+
+---
+
+## 4. The three ways work flows through your day
+
+### 4.1 Deep Track — your main work
+
+This is the big stuff. You create an intention ("Finish chapter 3"), link a Todoist task to it, mark it as **main**, give it a time estimate, and assign it to a specific session. Main tasks get a dedicated block — they're exclusive to one session.
+
+**The flow:**
 ```
-You create an Intention manually
-  → map a Todoist task to it in Step 1
-  → categorize 'main' in Step 2 (no cap)
-  → assign to ONE session in Step 3 (exclusive)
-  → execute; completion writes back to Todoist
+Create an Intention
+  → link a Todoist task in Step 1
+  → categorize as 'main' in Step 2
+  → assign to one session in Step 3
+  → work on it; completion syncs back to Todoist
 ```
 
-**For:** sustained, focused, today-specific work threads. The "primary intellectual pursuit" of the day.
+**Good for:** sustained, focused work that's specific to today.
 
 **Examples:**
-- *"Implement the v6 capacity arithmetic"* — coding intention, 2hr estimate.
-- *"Finish chapter 3 of the textbook"* — study intention, 90 min estimate.
-- *"Draft the project proposal"* — writing intention, 60 min estimate.
-- *"Refactor authentication module"* — code intention, 3hr estimate (consider breaking down — wizard will nudge above 60 min).
-- *"Read paper X end-to-end and write summary"* — research intention, 75 min estimate.
+- *"Implement the capacity arithmetic"* — coding, 2hr estimate
+- *"Finish chapter 3 of the textbook"* — study, 90 min
+- *"Draft the project proposal"* — writing, 60 min
+- *"Refactor the auth module"* — code, 3hr (the wizard will nudge you to break this down)
+- *"Read paper X and write summary"* — research, 75 min
 
-**Signature:** big enough to need a dedicated session block; specific to today.
+**When to use it:** the task is big enough to need a dedicated session block, and it's specific to today.
 
-### 4.2 Pathway B — Stabilizer ritual
+### 4.2 Stabilizer — your daily rituals
 
+These are habits that automatically show up as intentions every day their recurrence rule matches. You don't have to remember to add "morning meditation" — Orchestrate does it for you.
+
+**The flow:**
 ```
-Habit { kind: 'stabilizer', active, recurrence matches today }
-  → INJECT_HABIT_INTENTIONS at Step 1 entry creates an Intention { sourceHabitId }
-  → user maps a Todoist task (or autoLinkTodoistId pre-fills)
-  → LINK_TASK forces LinkedTask.type = 'background' (locked, cannot change in Step 2)
-  → assigned to one or many sessions in Step 3
-  → Step 2 cap = habit.maxBlockMinutes ?? taskCapDefaults.stabilizer (30 min default)
-```
-
-**For:** anchor-style rituals that need to live in a slot and have protection. The "non-negotiables" and "important recurring practices."
-
-**Examples (anchor stabilizers — the foundation):**
-- *Morning meditation* — daily, 5–15 min, `autoLinkTodoistId` set to a recurring Todoist task.
-- *Sleep wind-down* — daily, evening slot.
-- *Gym workout* — Mon/Wed/Fri, 45 min `maxBlockMinutes`.
-- *Evening shutdown ritual* — daily, 10 min.
-- *Take medication* — daily, 5 min (binary completion).
-
-**Examples (non-anchor stabilizers — recurring but not foundational):**
-- *Daily standup attendance* — weekdays, 15 min.
-- *Daily journal* — daily, 10 min.
-- *Evening planning ritual* — daily, 15 min.
-- *Weekly review* — weekly (Sunday), 30–45 min.
-
-**Signature:** recurs on a schedule; you want to be reminded daily; deserves a slot in the day.
-
-### 4.3 Pathway C — Light Pool (logged-only)
-
-```
-Habit { kind: 'light-coherent', active, recurrence matches today, season-scoped }
-  → getLightPoolHabits filters today's pool
-  → surfaces in LightPoolPanel (Dashboard) + LightPoolSection (/life)
-  → also surfaced in CheckInModal when feeling/work-type indicates low resources
-  → user clicks Start → LOG_HABIT_START writes a HabitLogEntry to plan.habitLog
-  → user clicks Done → LOG_HABIT_COMPLETE fills completedAt + durationMinutes
-  → NEVER becomes an Intention. NEVER becomes a LinkedTask. NEVER touches taskSessions.
-```
-
-**For:** the "Light Coherent Track" — small, resumable, coherent activities you pull from during micro-gaps. Replaces the impulse to open YouTube or Hacker News.
-
-**Examples (season-scoped — tied to current focus):**
-- *Anki / flashcard review* — during a learning season (e.g., "Spanish sprint", "Algorithms refresh").
-- *Read one section of [current technical book]* — during a "Systems study" season.
-- *Practice scales (10 min)* — during a music-learning season.
-- *Sketch one figure* — during an "art practice" season.
-- *Re-skim morning notes* — during a research-heavy season.
-
-**Examples (season-agnostic — general novelty / curiosity):**
-- *Idea capture / freewrite* — 5 min brain dump.
-- *Read one essay from current queue* — general reading habit.
-- *Duolingo session* — ambient language drill.
-- *Walk + audio note* — thinking time.
-- *Review a Pocket / Instapaper save* — light input.
-
-**Signature:** small (≤ 20 min default), resumable, opportunistic. You pull when you have a gap, not on a schedule. Cadence is loose (`timesPerWeek` soft target).
-
-### 4.4 Manual background tasks (the fourth pathway, lighter-weight)
-
-```
-You create an Intention manually
-  → map a Todoist task in Step 1
-  → categorize 'background' in Step 2 (cap = taskCapDefaults.manualBackground, default 30 min)
+You set up a stabilizer Habit once (e.g., "Morning meditation", daily)
+  → each matching day, it auto-injects as an Intention in Step 1
+  → you link a Todoist task (or it auto-links if you've set one up)
+  → the task is locked to 'background' — you can't change it to 'main'
   → assign to one or many sessions in Step 3
 ```
 
-Not from a Habit. Today-specific. Small. Tied to an intention.
+**Good for:** anchor-style rituals that need to live in a time slot.
 
-**For:** small one-off nudges that should be visible in the day's plan but shouldn't crowd a session.
+**Examples of anchor stabilizers (the non-negotiables):**
+- *Morning meditation* — daily, 5–15 min
+- *Sleep wind-down* — daily, evening
+- *Gym workout* — Mon/Wed/Fri, 45 min
+- *Evening shutdown ritual* — daily, 10 min
+- *Take medication* — daily, 5 min
+
+**Examples of non-anchor stabilizers (recurring but flexible):**
+- *Daily standup attendance* — weekdays, 15 min
+- *Daily journal* — daily, 10 min
+- *Weekly review* — weekly (Sunday), 30–45 min
+
+**When to use it:** the activity recurs on a schedule, you want to be reminded about it, and it deserves a slot in the day.
+
+### 4.3 Light Pool — your micro-gap fillers
+
+These are small, resumable activities that you pull from when you have a window — between sessions, when your attention drifts, or when you're waiting for something. They never become intentions or scheduled tasks. You just hit **Start** when you begin, **Done** when you finish, and it gets logged.
+
+**The flow:**
+```
+You set up a light-coherent Habit (e.g., "Anki flashcards", daily)
+  → it shows up in the Light Pool panel on the Dashboard
+  → you click Start when you have a gap → a log entry is created
+  → you click Done when you finish → duration is recorded
+  → it never enters your task plan. Never gets assigned to a session.
+```
+
+**Good for:** the "Light Coherent Track" — small coherent activities that replace the impulse to open YouTube or scroll Hacker News.
+
+**Examples tied to your current season:**
+- *Anki / flashcard review* — during a "Spanish sprint" season
+- *Read one section of [current book]* — during a "Systems study" season
+- *Practice scales (10 min)* — during a music-learning season
+- *Sketch one figure* — during an "art practice" season
+
+**Examples that aren't tied to any season:**
+- *Idea capture / freewrite* — 5 min brain dump
+- *Read one essay from current queue*
+- *Duolingo session*
+- *Walk + audio note* — thinking time
+
+**When to use it:** the activity is small (≤ 20 min), resumable, and opportunistic. You pull when you have a gap, not on a schedule.
+
+### 4.4 Manual background — today-only small tasks
+
+Not every small task needs to be a Habit. If you have a quick one-off chore that's tied to one of today's intentions, you can categorize it as **background** in Step 2. Background tasks can be assigned to multiple sessions (they'll show up as nudges) and have a 30-min cap by default.
 
 **Examples:**
-- *"Reply to recruiter email"* — under a job-search intention.
-- *"Push WIP commit before lunch"* — under a coding intention; small but you want it in a slot.
-- *"Schedule dentist appointment"* — today's logistics, one-off.
-- *"Send invoice for Q1 contract"* — under a freelance intention.
-- *"Skim the arxiv paper Alice sent"* — under a research intention; not primary reading, but you want it visible.
-- *"Print parking pass for tomorrow"* — admin one-off.
-- *"Drink 2L water"* — multi-session nudge; assigned to 2–3 sessions.
-- *"Stretch between sessions"* — multi-session nudge.
-- *"Reply to PR review comments"* — under the same intention as the feature work.
+- *"Reply to recruiter email"* — under a job-search intention
+- *"Push WIP commit before lunch"* — under a coding intention
+- *"Schedule dentist appointment"* — today's logistics
+- *"Drink 2L water"* — multi-session nudge, assigned to 2–3 sessions
 
-**Decision rule vs. light-coherent:**
-- If it **recurs** (matches a recurrence rule, you'd want it back next week) → make it a light-coherent Habit instead.
-- If it's **just for today** and tied to an intention → manual background.
-
-In practice, manual background is now a much smaller bucket than pre-v6: just "small chores attached to today's intentions."
+**Rule of thumb:** if it recurs and you'd want it back next week, make it a light-coherent Habit. If it's just for today, manual background.
 
 ---
 
-## 5. True Rest (the fifth surface, not a pathway)
+## 5. True Rest — deliberately untracked recovery
 
-True Rest is **not** in any of the three pathways. It's a fourth layer: non-task, non-logged, non-tracked recovery cues.
+True Rest is the one layer that has **no tracking at all**. No logging, no completion checkbox, no streak. Just gentle prompts to reset: *walk 5 minutes*, *box-breathe for 90 seconds*, *close your eyes for 2 minutes*, *look out a window*.
 
-- **Source:** static catalog in [src/data/restCues.ts](../src/data/restCues.ts) (~8 cues across `physical | breath | sensory`).
-- **Three surfaces:**
-  1. **Dashboard side rail** (`variant='card'`, rotates every 5 min) — always visible.
-  2. **Check-in modal** (`variant='inline'`) — when `feeling ∈ {struggling, stuck}` or `workType ∈ {low-energy, restless}`.
-  3. **Between-session banner** (`variant='banner'`) — gated by `useCurrentSession().nextSessionStartsWithin(60)`.
-- **Catalog examples:** *Walk 5 minutes*, *Box-breath: in 4 / hold 4 / out 4 / hold 4*, *Eyes closed — no input, no agenda*, *Window-gaze*, *Long-exhale breathing*, *Drink a full glass of water*, *Stretch — neck, shoulders, hips*, *Sit in silence*.
+It shows up in three places:
+1. **Dashboard side rail** — a rotating cue, always visible.
+2. **Check-in modal** — when you report feeling struggling, stuck, or low-energy.
+3. **Between sessions** — a banner when the next session is within 60 minutes.
 
-**Why separate from light-coherent?** The point of True Rest is *no cognitive load*. No decision to log, no checkbox, no streak. If you wanted to log a walk, you'd model it as a light-coherent Habit. True Rest is the deliberately untracked corner.
+**Why not just make it a light-coherent habit?** Because the whole point is zero cognitive overhead. No "should I log this?" decision. If you find yourself wanting to track walks, make that a light-coherent habit. True Rest is the deliberately untracked corner.
 
 ---
 
-## 6. Stabilizer vs Anchor — orthogonal classifications
+## 6. Stabilizer vs Anchor — they're not the same thing {#stabilizer-vs-anchor}
 
-They look overlapping. They aren't.
+This is worth spelling out because the two labels look similar but answer different questions:
 
-| Flag | Question it answers | What it controls |
+| Setting | What it controls | Question it answers |
 |---|---|---|
-| `kind: 'stabilizer'` (vs `'light-coherent'`) | **What behavior** does this habit have? | Auto-injects as intention; locks the linked task to `background` in Step 2. |
-| `isAnchor: true` | **How protected** is it? | Cannot be deleted while active. `DELETE_HABIT` no-ops; the UI offers "deactivate first." Surfaced as the "anchor habits" set on `/life` and the Welcome Life card. |
+| `kind: 'stabilizer'` | **Behavior** — auto-injects as an intention, locks to background | *"How does this habit show up each day?"* |
+| `isAnchor: true` | **Protection** — can't be deleted while active | *"Would my day collapse without this?"* |
 
-All four combinations are meaningful:
+All four combinations make sense:
 
-| `kind` | `isAnchor` | Use case | Examples |
+| Kind | Anchor? | What it means | Examples |
 |---|---|---|---|
-| `stabilizer` | `true` | The foundation. Non-negotiable; the day collapses without it. | Sleep wind-down, morning meditation, gym, evening shutdown, medication. |
-| `stabilizer` | `false` | Recurring ritual that you want injected daily, but might retire without ceremony. | Daily standup attendance, daily journal, evening planning. |
-| `light-coherent` | `true` | Unusual but valid — a micro-gap practice you want protection on. | Long-form weekly reading you don't want to delete on a whim. |
-| `light-coherent` | `false` | The typical Light Pool fare. | Flashcards, idea capture, language drills, sketches. |
+| Stabilizer | Yes | The foundation — non-negotiable, the day collapses without it | Sleep, meditation, gym, shutdown, medication |
+| Stabilizer | No | Recurring ritual you want injected daily, but might retire quietly | Daily standup, journal, evening planning |
+| Light-coherent | Yes | Unusual but valid — a micro-gap practice you want to protect | Long-form weekly reading you don't want to delete on a whim |
+| Light-coherent | No | The typical Light Pool activity | Flashcards, idea capture, language drills |
 
-**Mental model:**
-
-- **`isAnchor`** answers *"which habits, if dropped, would let the day collapse?"* — a strictly smaller subset than stabilizer.
-- **`kind`** answers *"how does this habit surface — slotted-and-scheduled, or pulled-from-a-pool?"*
-
-The pre-v6 word "anchor" was carrying double duty (foundational + auto-recurring). Now `kind: 'stabilizer'` carries the recurring semantics; `isAnchor` is purely "protected / foundational."
+**The mental shortcut:**
+- `isAnchor` answers *"which habits, if I dropped them, would let the day fall apart?"*
+- `kind` answers *"does this need a slot in the day, or do I pull from a pool?"*
 
 ---
 
-## 7. Anchors, Stabilizers, and Seasons — how they interact
+## 7. How Habits, Seasons, and Anchors work together
 
-`Habit.seasonIds: string[]` is the third axis. Three rules govern how it composes with the previous two:
+Every habit has a `seasonIds` list — which seasons it belongs to. This is the third axis:
 
-1. **`seasonIds: []` means always-on.** The habit appears regardless of which season is active.
-2. **`seasonIds: [X]` means season-scoped.** The habit only enters today's pool / auto-injection when season X is active.
-3. **Season membership doesn't change `kind` or `isAnchor`.** Habits keep their classifications across seasons.
+1. **`seasonIds: []`** (empty) means **always-on**. The habit shows up regardless of which season is active. Use this for foundational stuff.
+2. **`seasonIds: ['some-season']`** means **season-scoped**. The habit only shows up when that season is active. Use this for practices tied to a specific focus period.
+3. **Season membership doesn't change anything else.** A stabilizer stays a stabilizer, an anchor stays an anchor, regardless of season.
 
-### 7.1 The "always-on anchor" principle
+### The "always-on anchor" principle
 
-**Anchors should generally be season-agnostic (`seasonIds: []`).** Why? Because anchors are the foundation. If you lose your sleep anchor when switching from "Degree Push" to "Stabilization" season, that's a bug — the anchor *is* the foundation across all seasons. Sleep, meditation, gym, shutdown survive every season change.
+**Anchors should almost always be season-agnostic** (empty `seasonIds`). Your sleep routine shouldn't disappear when you switch from "Degree Push" to "Stabilization" season — it's the foundation *across* seasons.
 
-Conversely, **season-scoped habits should generally not be anchors.** The season ending naturally retires them — protection is overkill and creates friction at season transitions.
+Conversely, **season-scoped habits usually shouldn't be anchors.** The season ending naturally retires them. Protection would just create friction at transitions.
 
-### 7.2 The four useful combinations
+### The four common patterns
 
-| `kind` | `isAnchor` | `seasonIds` | What it represents |
-|---|---|---|---|
-| `stabilizer` | `true` | `[]` | **The foundation.** Sleep, meditation, gym, shutdown. Cross-season. Most users have 3–6 of these. |
-| `stabilizer` | `false` | `[seasonId]` | **A season's ritual.** Daily research log during a "Research push" season; daily writing during a "Drafting" season. Auto-injects while the season is active; quietly retires when the season ends. |
-| `light-coherent` | `false` | `[seasonId]` | **A season's micro-practice.** Spanish flashcards during a "Language sprint"; algorithms drills during an "Interview prep" season. Surfaces in the Light Pool only while that season is active. |
-| `light-coherent` | `false` | `[]` | **Novelty / curiosity.** General reading, idea capture, ambient practices that aren't tied to any one season. Survives every season change. |
+| Kind | Anchor? | Season-scoped? | What it is | Example |
+|---|---|---|---|---|
+| Stabilizer | Yes | No (always-on) | **Your foundation.** 3–6 of these, cross-season. | Sleep, meditation, gym, shutdown |
+| Stabilizer | No | Yes | **A season's ritual.** Auto-injects while the season is active. | Daily research log during a "Research push" season |
+| Light-coherent | No | Yes | **A season's micro-practice.** In the Light Pool only while that season is active. | Spanish flashcards during a "Language sprint" season |
+| Light-coherent | No | No (always-on) | **General curiosity.** Survives every season change. | Idea capture, general reading, Duolingo |
 
-### 7.3 Season activation lifecycle
+### What happens when you switch seasons
 
-When you activate season Y:
-- Habits with `seasonIds: [Y, …]` start appearing in Today's plan (stabilizers) or Light Pool (light-coherent).
-- Habits with `seasonIds: [X]` (previous season) disappear from Today's view but are not deleted. They sit dormant in the habit library; reactivating season X brings them back.
-- Habits with `seasonIds: []` (always-on) ride through unchanged.
-- Anchors are protected from deletion regardless of season — even between seasons.
+When you activate a new season:
+- Habits scoped to the new season start appearing (in the plan or Light Pool).
+- Habits scoped to the old season quietly disappear from today's view — but they're not deleted. Reactivating that season brings them back.
+- Always-on habits ride through unchanged.
+- Anchors stay protected regardless — even between seasons.
 
-**Practical implication:** when designing a new season, you create three buckets of habits to attach to it:
-1. The **stabilizer rituals** that define this season's daily structure (e.g., daily research log).
-2. The **light-coherent micro-practices** that support it (e.g., flashcards for the relevant skill).
-3. Leave existing **anchor stabilizers always-on** — don't reattach them to the season.
-
----
-
-## 8. Session capacity (advisory)
-
-Surrounds the three pathways. Pure utility, never gates.
-
-- **Computation:** `totalMinutes = sessionLength − sessionBufferMinutes`. `assignedMinutes = Σ estimatedMinutes` for tasks in the session. Background tasks count **once per assignment** (a 20-min task in two sessions counts 20 against each).
-- **Status thresholds:** `ok` < 100%, `tight` ≥ 100%, `over` > 150%.
-- **Mid-session:** `totalMinutes` shrinks to remaining wall-clock; buffer shrinks proportionally. So the badge ticks down as the day moves.
-- **Where it shows:**
-  - Step 3 timeline: per-session badge (e.g., `47/120 min`); banner above the timeline if any session is `over`.
-  - Dashboard `CurrentSession`: remaining-time pill and `over` banner (if applicable).
-- **Never blocks.** Even at 200% the wizard advances. Visibility > prevention.
-- **Light Pool entries are excluded.** They're outside the task graph entirely.
-
-**How to read the badge:**
-- *Grey* (`ok`) — you have headroom.
-- *Amber* (`tight`) — you're at or over capacity but within the tolerance band. Likely fine if estimates are conservative.
-- *Red* (`over`) — meaningfully overcommitted (>150%). Consider moving a task, breaking one down, or accepting that some won't land. The wizard won't stop you.
+**When setting up a new season**, think in three buckets:
+1. **Stabilizer rituals** for this season's daily structure (e.g., daily research log).
+2. **Light-coherent micro-practices** that support it (e.g., domain flashcards).
+3. **Leave your anchors alone** — they're already always-on.
 
 ---
 
-## 9. The check-in as decision point
+## 8. Session capacity — your advisory dashboard
 
-The hourly check-in is where the system reads your state and offers the right pathway.
+Capacity math runs across all your session assignments. It's advisory — it tells you how loaded each session is, but it never blocks you from proceeding.
 
-- `feeling: 'great'` + on track → no extra surfacing. Stay in Pathway A.
-- `workType: 'low-energy' | 'restless'` OR `feeling: 'struggling' | 'stuck'` → modal surfaces **1–2 Light Pool rows (Pathway C) + a True Rest cue**. You pick: a smaller move or a real reset.
-- `feeling: 'stuck'` → adds the **"What exactly are you avoiding?"** capture (persisted as `CheckIn.avoidanceNote`). The note feeds later pattern-spotting.
+**How it works:**
+- Each session's available time = session length minus a buffer (configurable, default 60 min).
+- Assigned minutes = sum of all task estimates in that session. Background tasks count once per assignment.
+- Mid-session, the available time shrinks to whatever's left on the clock.
 
-Capacity status feeds in passively — if the current session is `over`, the Dashboard banner is already visible above this same check-in, contextualizing why "struggling" might be more than psychological.
+**What the status badges mean:**
+- **Grey** (`ok`, under 100%) — you have headroom.
+- **Amber** (`tight`, 100–150%) — you're at or just over capacity. Probably fine if your estimates are conservative.
+- **Red** (`over`, above 150%) — meaningfully overcommitted. Consider moving or breaking down a task.
+
+**Where it shows up:**
+- Step 3 timeline — per-session badge, plus a banner if any session is `over`.
+- Dashboard current session — remaining-time indicator, plus a banner if you're `over`.
+
+**It never blocks the wizard.** Even at 200% you can proceed. The goal is visibility, not prevention.
+
+Light Pool entries are excluded from capacity — they're outside the task graph entirely.
+
+---
+
+## 9. The hourly check-in
+
+Every hour during an active session, Orchestrate asks how you're doing. This is where the system reads your state and routes you to the right response:
+
+- **Feeling great, on track?** No extra surfacing. Keep going.
+- **Struggling, low-energy, or restless?** The modal surfaces 1–2 Light Pool activities and a True Rest cue. You pick: a smaller productive move, or a genuine reset.
+- **Feeling stuck?** An extra prompt appears: *"What exactly are you avoiding?"* Your answer is saved on the check-in — it feeds pattern-spotting over time.
+
+Every check-in also asks what kind of work you're doing and suggests a matching playlist (coding → Deep Focus, lectures → Lo-Fi Beats, etc.).
+
+If the current session is over-capacity, the Dashboard banner is already visible alongside the check-in — contextualizing why "struggling" might be more than psychological.
 
 ---
 
 ## 10. Decision tree — "I want to add X to my day"
 
 ```
-Is X a non-task recovery move (walk, breath, gaze)?
+Is X a non-task recovery move (walk, breathe, gaze)?
 ├─ YES → Don't model it. True Rest will surface organically.
 │        If you find yourself wanting to log it, that's the signal
 │        it should be a light-coherent habit instead.
@@ -296,66 +291,65 @@ Is X a non-task recovery move (walk, breath, gaze)?
 Is X today-only?
 ├─ YES ↓
 │   Is X your primary work thread for the day?
-│   ├─ YES → Pathway A: create an Intention, map task, categorize 'main'.
-│   └─ NO  → Pathway A or D: create the Intention if it's new,
-│            or add this as a 'background' LinkedTask under an existing intention.
+│   ├─ YES → Deep Track: create an Intention, map a task, categorize 'main'.
+│   └─ NO  → manual background: attach it as a 'background' task
+│            under an existing or new intention.
 │
 └─ NO  (X is recurring) ↓
     Does X need a slot in the day to anchor your structure?
-    ├─ YES → Pathway B: create a Habit { kind: 'stabilizer' }.
-    │        Set isAnchor = true ONLY if dropping it would let the day collapse.
+    ├─ YES → create a stabilizer Habit.
+    │        Mark as anchor ONLY if dropping it would let the day collapse.
     │        Set seasonIds = [] for always-on, [seasonId] for season-scoped.
     └─ NO  (X is opportunistic, pulled when you have a gap)
-        → Pathway C: create a Habit { kind: 'light-coherent' }.
-          Set seasonIds = [seasonId] if X is tied to current focus,
-          [] for general novelty / curiosity practices.
+        → create a light-coherent Habit.
+          Set seasonIds = [seasonId] if tied to current focus,
+          [] for general curiosity practices.
 ```
 
 ---
 
-## 11. A typical day, in pathways
+## 11. A typical day, start to finish
 
-A concrete walk-through to anchor the model.
+Here's a concrete walk-through showing all the pieces in action.
 
-**Setup (LifeContext, durable):**
-- Active season: *"Stabilization Q2"* — primary theme: sleep + planning consistency + degree groundwork.
-- Anchor stabilizers (always-on, `seasonIds: []`): *Morning meditation*, *Gym (M/W/F)*, *Sleep wind-down*, *Evening shutdown*.
-- Season stabilizer (`seasonIds: ['stabilization-q2']`): *Daily 15-min planning ritual*.
-- Season light-coherent (`seasonIds: ['stabilization-q2']`): *Read one section of [current systems book]*, *Algorithms warm-up (one easy problem)*.
-- Always-on light-coherent (`seasonIds: []`): *Idea capture freewrite*, *Duolingo session*.
+**Your setup (durable, lives across days):**
+- Active season: *"Stabilization Q2"* — sleep + planning consistency + degree groundwork.
+- Anchor stabilizers (always-on): *Morning meditation*, *Gym (M/W/F)*, *Sleep wind-down*, *Evening shutdown*.
+- Season stabilizer: *Daily 15-min planning ritual*.
+- Season light-coherent: *Read one section of [current systems book]*, *Algorithms warm-up (one easy problem)*.
+- Always-on light-coherent: *Idea capture freewrite*, *Duolingo session*.
 
-**Step 1 — Intentions (Wizard):**
-- Auto-injected (stabilizer pathway): *Morning meditation*, *Gym*, *Daily planning ritual*. Each carries 🔁 Habit badge + Skip for today option.
-- User-added (deep track): *"Finish v6 capacity arithmetic"*, *"Read paper on session scheduling"*.
-- (Light-coherent habits do NOT appear here.)
+**Step 1 — Intentions:**
+- Auto-injected from stabilizers: *Morning meditation*, *Gym*, *Daily planning ritual*. Each shows the 🔁 Habit badge and a "Skip for today" option.
+- You add manually: *"Finish v6 capacity arithmetic"*, *"Read paper on session scheduling"*.
+- Light-coherent habits don't appear here — they live in the Light Pool.
 
 **Step 2 — Refine:**
-- *Morning meditation* → background, locked, capped at 15 min (`habit.maxBlockMinutes`).
+- *Morning meditation* → background, locked, capped at 15 min (habit setting).
 - *Gym* → background, locked, capped at 45 min.
 - *Daily planning ritual* → background, locked, capped at 30 min (per-kind default).
 - *Finish v6 capacity arithmetic* → main, 120 min.
 - *Read paper on session scheduling* → main, 60 min.
-- User adds a manual background under the v6 intention: *"Push WIP commit before lunch"*, 10 min.
+- You add a manual background: *"Push WIP commit before lunch"*, 10 min.
 
 **Step 3 — Schedule:**
 - Early morning: *Morning meditation* + *Gym*.
 - Morning: *Finish v6 capacity arithmetic* (main).
 - Afternoon: *Read paper* (main) + *Daily planning ritual* + *Push WIP commit* (background).
-- Night: *Evening shutdown* (auto-injected, separate flow if recurrence matches).
-
-Capacity badge shows the morning session is `tight` at 110% — advisory, user proceeds.
+- Night: *Evening shutdown*.
+- Capacity badge shows the morning session is `tight` at 110%. You proceed — it's advisory.
 
 **During the day:**
-- Light Pool panel on the Dashboard lists *Read one section*, *Algorithms warm-up*, *Idea capture*, *Duolingo*. User pulls *Algorithms warm-up* between morning and afternoon sessions — Start logged, completed 12 min later. Writes to `plan.habitLog`. Does not touch task graph.
+- The Light Pool panel lists *Read one section*, *Algorithms warm-up*, *Idea capture*, *Duolingo*. Between morning and afternoon sessions, you pull *Algorithms warm-up* — Start, work for 12 minutes, Done. Logged to `habitLog`, doesn't touch the task graph.
 - Between-session True Rest banner: *"Walk 5 minutes — outside if possible."* No tracking.
-- 14:00 check-in: `feeling: 'struggling'`, `workType: 'low-energy'`. Modal surfaces 1–2 Light Pool rows + a True Rest cue (*"Long-exhale breathing — 3 min"*). User picks the True Rest, then resumes Pathway A.
-- 15:00 check-in: `feeling: 'stuck'`. Modal adds the avoidance prompt: *"What exactly are you avoiding?"* → user types *"The paper's math section — I don't have the prerequisites yet"*. Persisted on the check-in.
+- 2:00 PM check-in: feeling *struggling*, work type *low-energy*. The modal shows a True Rest cue (*"Long-exhale breathing — 3 min"*) and a couple Light Pool rows. You try the breathing, then resume your main work.
+- 3:00 PM check-in: feeling *stuck*. The avoidance prompt appears. You write: *"The paper's math section — I don't have the prerequisites yet."* Saved for later reflection.
 
 **End of day:**
-- Stabilizer tasks: 3/3 completed (recorded as LinkedTask completions, syncs to Todoist).
+- Stabilizer tasks: 3/3 completed (synced to Todoist).
 - Main tasks: 1.5/2 completed.
-- Light Pool log: 2 entries (algorithms warm-up done, Duolingo done; flashcards and reading skipped today).
-- True Rest surfaced but not tracked.
+- Light Pool log: 2 entries (algorithms warm-up and Duolingo; flashcards and reading skipped today).
+- True Rest: surfaced but untracked, as intended.
 
 ---
 
@@ -363,13 +357,13 @@ Capacity badge shows the morning session is `tight` at 110% — advisory, user p
 
 | You want to model… | Use… |
 |---|---|
-| A today-only big work thread | Main task (Pathway A) |
-| A recurring ritual that needs a slot | Stabilizer Habit (Pathway B). Add `isAnchor: true` if foundational. |
-| A small recurring practice you pull opportunistically | Light-coherent Habit (Pathway C) |
+| A today-only big work thread | Main task (Deep Track) |
+| A recurring ritual that needs a slot | Stabilizer Habit. Add `isAnchor` if foundational. |
+| A small recurring practice you pull opportunistically | Light-coherent Habit (Light Pool) |
 | A today-only small chore tied to an intention | Manual background task |
-| A non-task recovery prompt | Don't model. True Rest covers it. |
-| A practice tied to a specific focus period | Light-coherent Habit with `seasonIds: [seasonId]` |
-| A foundational habit that survives season changes | Stabilizer Habit with `isAnchor: true`, `seasonIds: []` |
+| A non-task recovery prompt | Don't model. True Rest handles it. |
+| A practice tied to a specific focus period | Light-coherent Habit with `seasonIds` set |
+| A foundational habit that survives season changes | Stabilizer Habit with `isAnchor`, always-on (`seasonIds: []`) |
 
 ---
 
@@ -378,4 +372,4 @@ Capacity badge shows the morning session is `tight` at 110% — advisory, user p
 - [synthesis.md](./synthesis.md) — overview of Orchestrate's purpose and full feature inventory.
 - [data-model.md](./data-model.md) — exact type signatures, reducer actions, migration chain.
 - [architecture.md](./architecture.md) — provider tree, routing, components, persistence layout.
-- [history/plan_v6.md](./history/plan_v6.md) — the implementation record for the v6 split that this guide describes.
+- [history/plan_v6.md](./history/plan_v6.md) — the implementation record for the v6 changes this guide describes.

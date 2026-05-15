@@ -42,10 +42,16 @@ export function UserGuide() {
                     <Intro />
                     <TableOfContents />
 
-                    <Section id="big-picture" title="1. The big picture">
+                    <Section id="big-picture" title="1. How Orchestrate sees your day">
                         <p>
-                            Orchestrate models the day in <strong>two persistence layers</strong> and surfaces work
-                            through <strong>three execution pathways</strong> plus a non-task recovery track.
+                            At its core, Orchestrate divides your world into two layers:
+                        </p>
+                        <ul className="list-disc pl-5 space-y-1">
+                            <li><strong>The stuff that persists across days</strong> — your seasons, your habits, your routines. These survive when the day resets.</li>
+                            <li><strong>Today's plan</strong> — your intentions, the tasks you've linked to them, which session each task lives in, and how you're feeling throughout the day. This resets every morning.</li>
+                        </ul>
+                        <p>
+                            On top of that, there are <strong>three ways work can flow</strong> through your day, plus a recovery layer that deliberately stays off the grid:
                         </p>
                         <Flow>{`                    LifeContext (durable, multi-day)
                    ┌────────────────────────────────┐
@@ -60,367 +66,370 @@ export function UserGuide() {
                    │  checkIns                      │
                    └────────────────────────────────┘
 
-      Pathway A: Deep Track      → Main task in a session
-      Pathway B: Stabilizer      → Auto-injected intention → background task in sessions
-      Pathway C: Light Pool      → Logged-only HabitLogEntry, never enters task graph
+      Deep Track       → Your main work: big tasks in dedicated session blocks
+      Stabilizer       → Your recurring rituals: auto-injected, slotted, protected
+      Light Pool       → Your micro-gap fillers: logged when you pull them, never scheduled
 
-      + Manual background        → Small today-only nudges inside an intention
-      + True Rest                → Static recovery cues (no logging, no completion)
-      + Capacity                 → Advisory arithmetic surrounding all of the above`}</Flow>
+      + Manual background  → Small today-only nudges inside an intention
+      + True Rest          → Recovery cues with zero tracking overhead
+      + Capacity           → Advisory math that tells you if you're overloaded`}</Flow>
                     </Section>
 
-                    <Section id="layers" title="2. Two persistence layers">
+                    <Section id="layers" title="2. Where your data lives">
                         <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
                             <thead className="bg-surface-dark text-left">
                                 <tr>
                                     <th className="px-3 py-2 font-medium">Layer</th>
-                                    <th className="px-3 py-2 font-medium">localStorage key</th>
-                                    <th className="px-3 py-2 font-medium">Lifetime</th>
+                                    <th className="px-3 py-2 font-medium">What it holds</th>
+                                    <th className="px-3 py-2 font-medium">How long it lasts</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <Tr>
                                     <Td><strong>LifeContext</strong></Td>
-                                    <Td><Code>orchestrate-life-context</Code></Td>
-                                    <Td>Durable. Survives daily resets. Holds Seasons + Habits + active-season pointer.</Td>
+                                    <Td>Seasons, Habits, which season is active</Td>
+                                    <Td>Durable — survives daily resets.</Td>
                                 </Tr>
                                 <Tr>
                                     <Td><strong>DayPlan</strong></Td>
-                                    <Td><Code>orchestrate-day-plan</Code></Td>
-                                    <Td>Auto-resets when the date changes. Holds today's Intentions, LinkedTasks, session assignments, check-ins, and the v6 <Code>habitLog</Code>.</Td>
+                                    <Td>Today's Intentions, linked tasks, session assignments, check-ins, Light Pool log</Td>
+                                    <Td>Resets every morning automatically.</Td>
+                                </Tr>
+                                <Tr>
+                                    <Td><strong>Settings</strong></Td>
+                                    <Td>Capacity defaults, session time slots, encrypted Todoist token, calendar config</Td>
+                                    <Td>Durable — independent of the day.</Td>
                                 </Tr>
                             </tbody>
                         </table>
                         <p className="text-text-light">
-                            User preferences (capacity defaults, session slots, encrypted Todoist token) live in their
-                            own durable <Code>orchestrate-settings</Code> key.
+                            You don't need to think about this much. The important takeaway: your habits and seasons
+                            are safe across day boundaries. Today's task plan is ephemeral by design.
                         </p>
                     </Section>
 
-                    <Section id="habit-entity" title="3. The Habit entity">
+                    <Section id="habit-entity" title="3. Habits: the recurring backbone">
                         <p>
-                            A <strong>Habit</strong> is a durable recurring entity in <Code>LifeContext</Code>. It
-                            has two <em>orthogonal</em> classifications:
+                            A <strong>Habit</strong> is anything you want to do regularly — from morning meditation to
+                            flashcard reviews. Every habit has two independent settings that determine how it behaves:
                         </p>
-                        <ul className="list-disc pl-5 space-y-1">
-                            <li><Code>kind: 'stabilizer' | 'light-coherent'</Code> — drives <strong>behavior</strong>.</li>
-                            <li><Code>isAnchor: boolean</Code> — drives <strong>protection</strong>.</li>
+
+                        <SubHeading>What kind of habit is it?</SubHeading>
+                        <ul className="list-disc pl-5 space-y-1.5">
+                            <li><strong>Stabilizer</strong> — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate will automatically add these to your intentions each morning and lock them as background tasks.</li>
+                            <li><strong>Light-coherent</strong> — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. These show up in the Light Pool on your dashboard — you pull from them when you're ready, and they're logged but never scheduled.</li>
                         </ul>
-                        <p>
-                            …plus the usual fields: <Code>recurrence</Code>, <Code>minimumViable</Code>,{' '}
-                            <Code>triggerCue</Code>, <Code>completionRule</Code>, <Code>failureTolerance</Code>,{' '}
-                            <Code>seasonIds</Code>, <Code>active</Code>, <Code>autoLinkTodoistId?</Code>,{' '}
-                            <Code>maxBlockMinutes?</Code>.
-                        </p>
+
+                        <SubHeading>How protected is it?</SubHeading>
+                        <ul className="list-disc pl-5 space-y-1.5">
+                            <li><strong>Anchor</strong> — a habit so foundational that you don't want to accidentally delete it. Sleep, meditation, gym — the stuff your day collapses without. Anchor habits can't be deleted while active; you'd have to deactivate them first.</li>
+                            <li><strong>Non-anchor</strong> — a regular habit you can remove freely.</li>
+                        </ul>
+
                         <Callout tone="info">
-                            <Code>kind</Code> and <Code>isAnchor</Code> answer different questions; you can mix
-                            them freely. See <Link to="#stabilizer-vs-anchor" className="text-accent hover:underline">§6</Link>.
+                            These two settings are independent. You can have any combination — see{' '}
+                            <Link to="#stabilizer-vs-anchor" className="text-accent hover:underline">§6</Link>{' '}
+                            for all four.
                         </Callout>
                     </Section>
 
-                    <Section id="pathways" title="4. The three execution pathways">
+                    <Section id="pathways" title="4. The three ways work flows through your day">
+                        <SubHeading id="pathway-a">4.1 Deep Track — your main work</SubHeading>
                         <p>
-                            Each pathway is a different route from intent to action. Pick by use case, not by reflex.
+                            This is the big stuff. You create an intention ("Finish chapter 3"), link a Todoist task to
+                            it, mark it as <strong>main</strong>, give it a time estimate, and assign it to a specific
+                            session. Main tasks get a dedicated block — they're exclusive to one session.
                         </p>
-
-                        <SubHeading id="pathway-a">4.1 Pathway A — Deep Track (Main task)</SubHeading>
-                        <Flow>{`You create an Intention manually
-  → map a Todoist task to it in Step 1
-  → categorize 'main' in Step 2 (no cap)
-  → assign to ONE session in Step 3 (exclusive)
-  → execute; completion writes back to Todoist`}</Flow>
-                        <p><strong>For:</strong> sustained, focused, today-specific work threads. The "primary intellectual pursuit" of the day.</p>
+                        <Flow>{`Create an Intention
+  → link a Todoist task in Step 1
+  → categorize as 'main' in Step 2
+  → assign to one session in Step 3
+  → work on it; completion syncs back to Todoist`}</Flow>
+                        <p><strong>Good for:</strong> sustained, focused work that's specific to today.</p>
                         <ExampleList heading="Examples">
-                            <li><em>"Implement the v6 capacity arithmetic"</em> — coding intention, 2hr estimate.</li>
-                            <li><em>"Finish chapter 3 of the textbook"</em> — study intention, 90 min estimate.</li>
-                            <li><em>"Draft the project proposal"</em> — writing intention, 60 min estimate.</li>
-                            <li><em>"Refactor authentication module"</em> — code intention, 3hr estimate (consider breaking down — wizard will nudge above 60 min).</li>
-                            <li><em>"Read paper X end-to-end and write summary"</em> — research intention, 75 min estimate.</li>
+                            <li><em>"Implement the capacity arithmetic"</em> — coding, 2hr estimate.</li>
+                            <li><em>"Finish chapter 3 of the textbook"</em> — study, 90 min.</li>
+                            <li><em>"Draft the project proposal"</em> — writing, 60 min.</li>
+                            <li><em>"Refactor the auth module"</em> — code, 3hr (the wizard will nudge you to break this down).</li>
+                            <li><em>"Read paper X and write summary"</em> — research, 75 min.</li>
                         </ExampleList>
-                        <p className="text-text-light"><strong>Signature:</strong> big enough to need a dedicated session block; specific to today.</p>
+                        <p className="text-text-light"><strong>When to use it:</strong> the task is big enough to need a dedicated session block, and it's specific to today.</p>
 
-                        <SubHeading id="pathway-b">4.2 Pathway B — Stabilizer ritual</SubHeading>
-                        <Flow>{`Habit { kind: 'stabilizer', active, recurrence matches today }
-  → INJECT_HABIT_INTENTIONS at Step 1 entry creates an Intention { sourceHabitId }
-  → user maps a Todoist task (or autoLinkTodoistId pre-fills)
-  → LINK_TASK forces LinkedTask.type = 'background' (locked, cannot change in Step 2)
-  → assigned to one or many sessions in Step 3
-  → Step 2 cap = habit.maxBlockMinutes ?? taskCapDefaults.stabilizer (30 min default)`}</Flow>
-                        <p><strong>For:</strong> anchor-style rituals that need to live in a slot and have protection. The "non-negotiables" and "important recurring practices."</p>
-                        <ExampleList heading="Anchor stabilizers — the foundation">
-                            <li><em>Morning meditation</em> — daily, 5–15 min, <Code>autoLinkTodoistId</Code> set to a recurring Todoist task.</li>
-                            <li><em>Sleep wind-down</em> — daily, evening slot.</li>
-                            <li><em>Gym workout</em> — Mon/Wed/Fri, 45 min <Code>maxBlockMinutes</Code>.</li>
+                        <SubHeading id="pathway-b">4.2 Stabilizer — your daily rituals</SubHeading>
+                        <p>
+                            These are habits that automatically show up as intentions every day their recurrence rule
+                            matches. You don't have to remember to add "morning meditation" — Orchestrate does it for you.
+                        </p>
+                        <Flow>{`You set up a stabilizer Habit once (e.g., "Morning meditation", daily)
+  → each matching day, it auto-injects as an Intention in Step 1
+  → you link a Todoist task (or it auto-links if you've set one up)
+  → the task is locked to 'background' — you can't change it to 'main'
+  → assign to one or many sessions in Step 3`}</Flow>
+                        <p><strong>Good for:</strong> anchor-style rituals that need to live in a time slot.</p>
+                        <ExampleList heading="Anchor stabilizers — the non-negotiables">
+                            <li><em>Morning meditation</em> — daily, 5–15 min.</li>
+                            <li><em>Sleep wind-down</em> — daily, evening.</li>
+                            <li><em>Gym workout</em> — Mon/Wed/Fri, 45 min.</li>
                             <li><em>Evening shutdown ritual</em> — daily, 10 min.</li>
-                            <li><em>Take medication</em> — daily, 5 min (binary completion).</li>
+                            <li><em>Take medication</em> — daily, 5 min.</li>
                         </ExampleList>
-                        <ExampleList heading="Non-anchor stabilizers — recurring but not foundational">
+                        <ExampleList heading="Non-anchor stabilizers — recurring but flexible">
                             <li><em>Daily standup attendance</em> — weekdays, 15 min.</li>
                             <li><em>Daily journal</em> — daily, 10 min.</li>
                             <li><em>Evening planning ritual</em> — daily, 15 min.</li>
                             <li><em>Weekly review</em> — weekly (Sunday), 30–45 min.</li>
                         </ExampleList>
-                        <p className="text-text-light"><strong>Signature:</strong> recurs on a schedule; you want to be reminded daily; deserves a slot in the day.</p>
+                        <p className="text-text-light"><strong>When to use it:</strong> the activity recurs on a schedule, you want to be reminded about it, and it deserves a slot in the day.</p>
 
-                        <SubHeading id="pathway-c">4.3 Pathway C — Light Pool (logged-only)</SubHeading>
-                        <Flow>{`Habit { kind: 'light-coherent', active, recurrence matches today, season-scoped }
-  → getLightPoolHabits filters today's pool
-  → surfaces in LightPoolPanel (Dashboard) + LightPoolSection (/life)
-  → also surfaced in CheckInModal when feeling/work-type indicates low resources
-  → user clicks Start → LOG_HABIT_START writes a HabitLogEntry to plan.habitLog
-  → user clicks Done → LOG_HABIT_COMPLETE fills completedAt + durationMinutes
-  → NEVER becomes an Intention. NEVER becomes a LinkedTask. NEVER touches taskSessions.`}</Flow>
-                        <p><strong>For:</strong> the "Light Coherent Track" — small, resumable, coherent activities you pull from during micro-gaps. Replaces the impulse to open YouTube or Hacker News.</p>
-                        <ExampleList heading="Season-scoped — tied to current focus">
-                            <li><em>Anki / flashcard review</em> — during a learning season (e.g., "Spanish sprint", "Algorithms refresh").</li>
-                            <li><em>Read one section of [current technical book]</em> — during a "Systems study" season.</li>
+                        <SubHeading id="pathway-c">4.3 Light Pool — your micro-gap fillers</SubHeading>
+                        <p>
+                            These are small, resumable activities that you pull from when you have a window — between
+                            sessions, when your attention drifts, or when you're waiting for something. They never become
+                            intentions or scheduled tasks. You just hit <strong>Start</strong> when you begin,{' '}
+                            <strong>Done</strong> when you finish, and it gets logged.
+                        </p>
+                        <Flow>{`You set up a light-coherent Habit (e.g., "Anki flashcards", daily)
+  → it shows up in the Light Pool panel on the Dashboard
+  → you click Start when you have a gap → a log entry is created
+  → you click Done when you finish → duration is recorded
+  → it never enters your task plan. Never gets assigned to a session.`}</Flow>
+                        <p><strong>Good for:</strong> the "Light Coherent Track" — small coherent activities that replace the impulse to open YouTube or scroll Hacker News.</p>
+                        <ExampleList heading="Tied to your current season">
+                            <li><em>Anki / flashcard review</em> — during a "Spanish sprint" season.</li>
+                            <li><em>Read one section of [current book]</em> — during a "Systems study" season.</li>
                             <li><em>Practice scales (10 min)</em> — during a music-learning season.</li>
                             <li><em>Sketch one figure</em> — during an "art practice" season.</li>
-                            <li><em>Re-skim morning notes</em> — during a research-heavy season.</li>
                         </ExampleList>
-                        <ExampleList heading="Season-agnostic — general novelty / curiosity">
+                        <ExampleList heading="Not tied to any season">
                             <li><em>Idea capture / freewrite</em> — 5 min brain dump.</li>
-                            <li><em>Read one essay from current queue</em> — general reading habit.</li>
+                            <li><em>Read one essay from current queue</em> — general reading.</li>
                             <li><em>Duolingo session</em> — ambient language drill.</li>
                             <li><em>Walk + audio note</em> — thinking time.</li>
-                            <li><em>Review a Pocket / Instapaper save</em> — light input.</li>
                         </ExampleList>
-                        <p className="text-text-light"><strong>Signature:</strong> small (≤ 20 min default), resumable, opportunistic. You pull when you have a gap, not on a schedule. Cadence is loose (<Code>timesPerWeek</Code> soft target).</p>
+                        <p className="text-text-light"><strong>When to use it:</strong> the activity is small (≤ 20 min), resumable, and opportunistic. You pull when you have a gap, not on a schedule.</p>
 
-                        <SubHeading id="manual-background">4.4 Manual background tasks (the fourth pathway, lighter-weight)</SubHeading>
-                        <Flow>{`You create an Intention manually
-  → map a Todoist task in Step 1
-  → categorize 'background' in Step 2 (cap = taskCapDefaults.manualBackground, default 30 min)
-  → assign to one or many sessions in Step 3`}</Flow>
-                        <p>Not from a Habit. Today-specific. Small. Tied to an intention.</p>
-                        <p><strong>For:</strong> small one-off nudges that should be visible in the day's plan but shouldn't crowd a session.</p>
+                        <SubHeading id="manual-background">4.4 Manual background — today-only small tasks</SubHeading>
+                        <p>
+                            Not every small task needs to be a Habit. If you have a quick one-off chore that's tied to
+                            one of today's intentions, categorize it as <strong>background</strong> in Step 2.
+                            Background tasks can be assigned to multiple sessions and have a 30-min cap by default.
+                        </p>
                         <ExampleList heading="Examples">
                             <li><em>"Reply to recruiter email"</em> — under a job-search intention.</li>
-                            <li><em>"Push WIP commit before lunch"</em> — under a coding intention; small but you want it in a slot.</li>
-                            <li><em>"Schedule dentist appointment"</em> — today's logistics, one-off.</li>
-                            <li><em>"Send invoice for Q1 contract"</em> — under a freelance intention.</li>
-                            <li><em>"Skim the arxiv paper Alice sent"</em> — under a research intention; not primary reading, but you want it visible.</li>
-                            <li><em>"Print parking pass for tomorrow"</em> — admin one-off.</li>
-                            <li><em>"Drink 2L water"</em> — multi-session nudge; assigned to 2–3 sessions.</li>
-                            <li><em>"Stretch between sessions"</em> — multi-session nudge.</li>
-                            <li><em>"Reply to PR review comments"</em> — under the same intention as the feature work.</li>
+                            <li><em>"Push WIP commit before lunch"</em> — under a coding intention.</li>
+                            <li><em>"Schedule dentist appointment"</em> — today's logistics.</li>
+                            <li><em>"Drink 2L water"</em> — multi-session nudge, assigned to 2–3 sessions.</li>
                         </ExampleList>
                         <Callout tone="info">
-                            <strong>Decision rule vs. light-coherent:</strong>{' '}
-                            If it <em>recurs</em> (you'd want it back next week) → make it a light-coherent Habit. If
-                            it's <em>just for today</em> and tied to an intention → manual background.
+                            <strong>Rule of thumb:</strong>{' '}
+                            If it recurs and you'd want it back next week, make it a light-coherent Habit. If
+                            it's just for today, manual background.
                         </Callout>
                     </Section>
 
-                    <Section id="true-rest" title="5. True Rest (the fifth surface, not a pathway)">
+                    <Section id="true-rest" title="5. True Rest — deliberately untracked recovery">
                         <p>
-                            True Rest is <strong>not</strong> in any of the three pathways. It's a fourth layer:
-                            non-task, non-logged, non-tracked recovery cues.
+                            True Rest is the one layer that has <strong>no tracking at all</strong>. No logging,
+                            no completion checkbox, no streak. Just gentle prompts to reset.
                         </p>
-                        <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Source:</strong> static catalog (~8 cues across <em>physical / breath / sensory</em>).</li>
-                            <li>
-                                <strong>Three surfaces:</strong>
-                                <ol className="list-decimal pl-5 mt-1 space-y-0.5">
-                                    <li><strong>Dashboard side rail</strong> (<Code>variant=&apos;card&apos;</Code>, rotates every 5 min) — always visible.</li>
-                                    <li><strong>Check-in modal</strong> (<Code>variant=&apos;inline&apos;</Code>) — when feeling is struggling/stuck or workType is low-energy/restless.</li>
-                                    <li><strong>Between-session banner</strong> (<Code>variant=&apos;banner&apos;</Code>) — when the next session starts within 60 min.</li>
-                                </ol>
-                            </li>
-                            <li><strong>Catalog examples:</strong> <em>Walk 5 minutes</em>, <em>Box-breath</em>, <em>Eyes closed — no input</em>, <em>Window-gaze</em>, <em>Long-exhale breathing</em>, <em>Drink a full glass of water</em>, <em>Stretch</em>, <em>Sit in silence</em>.</li>
-                        </ul>
+                        <p>It shows up in three places:</p>
+                        <ol className="list-decimal pl-5 space-y-1">
+                            <li><strong>Dashboard side rail</strong> — a rotating cue, always visible.</li>
+                            <li><strong>Check-in modal</strong> — when you report feeling struggling, stuck, or low-energy.</li>
+                            <li><strong>Between sessions</strong> — a banner when the next session is within 60 minutes.</li>
+                        </ol>
+                        <p className="text-text-light">
+                            <strong>Catalog examples:</strong> <em>Walk 5 minutes</em>, <em>Box-breathe for 90 seconds</em>,{' '}
+                            <em>Close your eyes for 2 minutes</em>, <em>Look out a window</em>,{' '}
+                            <em>Long-exhale breathing</em>, <em>Drink a full glass of water</em>,{' '}
+                            <em>Stretch</em>, <em>Sit in silence</em>.
+                        </p>
                         <Callout tone="info">
-                            <strong>Why separate from light-coherent?</strong> The point of True Rest is{' '}
-                            <em>no cognitive load</em>. No decision to log, no checkbox, no streak. If you wanted to
-                            log a walk, you'd model it as a light-coherent Habit. True Rest is the deliberately
-                            untracked corner.
+                            <strong>Why not just make it a light-coherent habit?</strong> Because the whole point is
+                            zero cognitive overhead. No "should I log this?" decision. If you find yourself wanting
+                            to track walks, make that a light-coherent habit. True Rest is the deliberately untracked corner.
                         </Callout>
                     </Section>
 
-                    <Section id="stabilizer-vs-anchor" title="6. Stabilizer vs Anchor — orthogonal classifications">
-                        <p>They look overlapping. They aren't.</p>
+                    <Section id="stabilizer-vs-anchor" title="6. Stabilizer vs Anchor — they're not the same thing">
+                        <p>This is worth spelling out because the two labels look similar but answer different questions:</p>
                         <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
                             <thead className="bg-surface-dark text-left">
                                 <tr>
-                                    <th className="px-3 py-2 font-medium">Flag</th>
-                                    <th className="px-3 py-2 font-medium">Question it answers</th>
+                                    <th className="px-3 py-2 font-medium">Setting</th>
                                     <th className="px-3 py-2 font-medium">What it controls</th>
+                                    <th className="px-3 py-2 font-medium">Question it answers</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <Tr>
                                     <Td><Code>kind: 'stabilizer'</Code></Td>
-                                    <Td><strong>What behavior</strong> does this habit have?</Td>
-                                    <Td>Auto-injects as intention; locks the linked task to <Code>background</Code> in Step 2.</Td>
+                                    <Td><strong>Behavior</strong> — auto-injects as an intention, locks to background</Td>
+                                    <Td><em>"How does this habit show up each day?"</em></Td>
                                 </Tr>
                                 <Tr>
                                     <Td><Code>isAnchor: true</Code></Td>
-                                    <Td><strong>How protected</strong> is it?</Td>
-                                    <Td>Cannot be deleted while active. <Code>DELETE_HABIT</Code> no-ops; UI offers "deactivate first." Surfaced as the "anchor habits" set on <Code>/life</Code> and the Welcome Life card.</Td>
+                                    <Td><strong>Protection</strong> — can't be deleted while active</Td>
+                                    <Td><em>"Would my day collapse without this?"</em></Td>
                                 </Tr>
                             </tbody>
                         </table>
 
-                        <p className="mt-4">All four combinations are meaningful:</p>
+                        <p className="mt-4">All four combinations make sense:</p>
                         <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
                             <thead className="bg-surface-dark text-left">
                                 <tr>
-                                    <th className="px-3 py-2 font-medium"><Code>kind</Code></th>
-                                    <th className="px-3 py-2 font-medium"><Code>isAnchor</Code></th>
-                                    <th className="px-3 py-2 font-medium">Use case</th>
+                                    <th className="px-3 py-2 font-medium">Kind</th>
+                                    <th className="px-3 py-2 font-medium">Anchor?</th>
+                                    <th className="px-3 py-2 font-medium">What it means</th>
                                     <th className="px-3 py-2 font-medium">Examples</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <Tr>
-                                    <Td><Code>stabilizer</Code></Td>
-                                    <Td><Code>true</Code></Td>
-                                    <Td>The foundation. Non-negotiable; the day collapses without it.</Td>
-                                    <Td>Sleep wind-down, morning meditation, gym, evening shutdown, medication.</Td>
+                                    <Td>Stabilizer</Td>
+                                    <Td>Yes</Td>
+                                    <Td>The foundation — non-negotiable, the day collapses without it.</Td>
+                                    <Td>Sleep, meditation, gym, shutdown, medication.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td><Code>stabilizer</Code></Td>
-                                    <Td><Code>false</Code></Td>
-                                    <Td>Recurring ritual that you want injected daily, but might retire without ceremony.</Td>
-                                    <Td>Daily standup attendance, daily journal, evening planning.</Td>
+                                    <Td>Stabilizer</Td>
+                                    <Td>No</Td>
+                                    <Td>Recurring ritual you want injected daily, but might retire quietly.</Td>
+                                    <Td>Daily standup, journal, evening planning.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td><Code>light-coherent</Code></Td>
-                                    <Td><Code>true</Code></Td>
-                                    <Td>Unusual but valid — a micro-gap practice you want protection on.</Td>
+                                    <Td>Light-coherent</Td>
+                                    <Td>Yes</Td>
+                                    <Td>Unusual but valid — a micro-gap practice you want to protect.</Td>
                                     <Td>Long-form weekly reading you don't want to delete on a whim.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td><Code>light-coherent</Code></Td>
-                                    <Td><Code>false</Code></Td>
-                                    <Td>The typical Light Pool fare.</Td>
-                                    <Td>Flashcards, idea capture, language drills, sketches.</Td>
+                                    <Td>Light-coherent</Td>
+                                    <Td>No</Td>
+                                    <Td>The typical Light Pool activity.</Td>
+                                    <Td>Flashcards, idea capture, language drills.</Td>
                                 </Tr>
                             </tbody>
                         </table>
 
                         <Callout tone="success">
-                            <strong>Mental model.</strong>{' '}
-                            <Code>isAnchor</Code> answers <em>"which habits, if dropped, would let the day collapse?"</em> —
-                            a strictly smaller subset than stabilizer.{' '}
-                            <Code>kind</Code> answers <em>"how does this habit surface — slotted-and-scheduled, or
-                            pulled-from-a-pool?"</em>
+                            <strong>The mental shortcut.</strong>{' '}
+                            <Code>isAnchor</Code> answers <em>"which habits, if I dropped them, would let the day fall apart?"</em>{' '}
+                            <Code>kind</Code> answers <em>"does this need a slot in the day, or do I pull from a pool?"</em>
                         </Callout>
                     </Section>
 
-                    <Section id="anchor-stabilizer-seasons" title="7. Anchors, Stabilizers, and Seasons — how they interact">
+                    <Section id="anchor-stabilizer-seasons" title="7. How Habits, Seasons, and Anchors work together">
                         <p>
-                            <Code>Habit.seasonIds: string[]</Code> is the third axis. Three rules govern how it
-                            composes with the previous two:
+                            Every habit has a <Code>seasonIds</Code> list — which seasons it belongs to. This is the third axis:
                         </p>
                         <ol className="list-decimal pl-5 space-y-1">
-                            <li><Code>seasonIds: []</Code> means <strong>always-on</strong>. The habit appears regardless of which season is active.</li>
-                            <li><Code>seasonIds: [X]</Code> means <strong>season-scoped</strong>. The habit only enters today's pool / auto-injection when season X is active.</li>
-                            <li><strong>Season membership doesn't change <Code>kind</Code> or <Code>isAnchor</Code>.</strong> Habits keep their classifications across seasons.</li>
+                            <li><strong>Empty list</strong> means <strong>always-on</strong>. The habit shows up regardless of which season is active. Use this for foundational stuff.</li>
+                            <li><strong>Specific season(s)</strong> means <strong>season-scoped</strong>. The habit only shows up when that season is active. Use this for practices tied to a specific focus period.</li>
+                            <li><strong>Season membership doesn't change anything else.</strong> A stabilizer stays a stabilizer, an anchor stays an anchor, regardless of season.</li>
                         </ol>
 
-                        <SubHeading id="always-on-anchor">7.1 The "always-on anchor" principle</SubHeading>
+                        <SubHeading id="always-on-anchor">The "always-on anchor" principle</SubHeading>
                         <p>
-                            <strong>Anchors should generally be season-agnostic</strong>{' '}
-                            (<Code>seasonIds: []</Code>). Why? Because anchors are the foundation. If you lose your
-                            sleep anchor when switching from "Degree Push" to "Stabilization" season, that's a bug —
-                            the anchor <em>is</em> the foundation across all seasons. Sleep, meditation, gym,
-                            shutdown survive every season change.
+                            <strong>Anchors should almost always be season-agnostic</strong> (empty <Code>seasonIds</Code>).
+                            Your sleep routine shouldn't disappear when you switch from "Degree Push" to "Stabilization"
+                            season — it's the foundation <em>across</em> seasons.
                         </p>
                         <p>
-                            Conversely, <strong>season-scoped habits should generally not be anchors.</strong>{' '}
-                            The season ending naturally retires them — protection is overkill and creates friction
-                            at season transitions.
+                            Conversely, <strong>season-scoped habits usually shouldn't be anchors.</strong>{' '}
+                            The season ending naturally retires them. Protection would just create friction at transitions.
                         </p>
 
-                        <SubHeading id="four-combinations">7.2 The four useful combinations</SubHeading>
+                        <SubHeading id="four-combinations">The four common patterns</SubHeading>
                         <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
                             <thead className="bg-surface-dark text-left">
                                 <tr>
-                                    <th className="px-3 py-2 font-medium"><Code>kind</Code></th>
-                                    <th className="px-3 py-2 font-medium"><Code>isAnchor</Code></th>
-                                    <th className="px-3 py-2 font-medium"><Code>seasonIds</Code></th>
-                                    <th className="px-3 py-2 font-medium">What it represents</th>
+                                    <th className="px-3 py-2 font-medium">Kind</th>
+                                    <th className="px-3 py-2 font-medium">Anchor?</th>
+                                    <th className="px-3 py-2 font-medium">Season-scoped?</th>
+                                    <th className="px-3 py-2 font-medium">What it is</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <Tr>
-                                    <Td><Code>stabilizer</Code></Td>
-                                    <Td><Code>true</Code></Td>
-                                    <Td><Code>[]</Code></Td>
-                                    <Td><strong>The foundation.</strong> Sleep, meditation, gym, shutdown. Cross-season. Most users have 3–6 of these.</Td>
+                                    <Td>Stabilizer</Td>
+                                    <Td>Yes</Td>
+                                    <Td>No (always-on)</Td>
+                                    <Td><strong>Your foundation.</strong> 3–6 of these, cross-season. Sleep, meditation, gym, shutdown.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td><Code>stabilizer</Code></Td>
-                                    <Td><Code>false</Code></Td>
-                                    <Td><Code>[seasonId]</Code></Td>
-                                    <Td><strong>A season's ritual.</strong> Daily research log during a "Research push" season; daily writing during a "Drafting" season. Auto-injects while the season is active; quietly retires when the season ends.</Td>
+                                    <Td>Stabilizer</Td>
+                                    <Td>No</Td>
+                                    <Td>Yes</Td>
+                                    <Td><strong>A season's ritual.</strong> Auto-injects while the season is active. E.g., daily research log during a "Research push" season.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td><Code>light-coherent</Code></Td>
-                                    <Td><Code>false</Code></Td>
-                                    <Td><Code>[seasonId]</Code></Td>
-                                    <Td><strong>A season's micro-practice.</strong> Spanish flashcards during a "Language sprint"; algorithms drills during an "Interview prep" season. Surfaces in the Light Pool only while that season is active.</Td>
+                                    <Td>Light-coherent</Td>
+                                    <Td>No</Td>
+                                    <Td>Yes</Td>
+                                    <Td><strong>A season's micro-practice.</strong> In the Light Pool only while that season is active. E.g., flashcards during an "Interview prep" season.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td><Code>light-coherent</Code></Td>
-                                    <Td><Code>false</Code></Td>
-                                    <Td><Code>[]</Code></Td>
-                                    <Td><strong>Novelty / curiosity.</strong> General reading, idea capture, ambient practices that aren't tied to any one season. Survives every season change.</Td>
+                                    <Td>Light-coherent</Td>
+                                    <Td>No</Td>
+                                    <Td>No (always-on)</Td>
+                                    <Td><strong>General curiosity.</strong> Survives every season change. Idea capture, general reading, Duolingo.</Td>
                                 </Tr>
                             </tbody>
                         </table>
 
-                        <SubHeading id="season-lifecycle">7.3 Season activation lifecycle</SubHeading>
-                        <p>When you activate season Y:</p>
+                        <SubHeading id="season-lifecycle">What happens when you switch seasons</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Habits with <Code>seasonIds: [Y, …]</Code> start appearing in Today's plan (stabilizers) or Light Pool (light-coherent).</li>
-                            <li>Habits with <Code>seasonIds: [X]</Code> (previous season) disappear from Today's view but are not deleted. They sit dormant in the habit library; reactivating season X brings them back.</li>
-                            <li>Habits with <Code>seasonIds: []</Code> (always-on) ride through unchanged.</li>
-                            <li>Anchors are protected from deletion regardless of season — even between seasons.</li>
+                            <li>Habits scoped to the new season start appearing (in the plan or Light Pool).</li>
+                            <li>Habits scoped to the old season quietly disappear from today's view — but they're not deleted. Reactivating that season brings them back.</li>
+                            <li>Always-on habits ride through unchanged.</li>
+                            <li>Anchors stay protected regardless — even between seasons.</li>
                         </ul>
                         <Callout tone="success">
-                            <strong>Practical implication.</strong> When designing a new season, you create three buckets:
-                            (1) the <strong>stabilizer rituals</strong> that define its daily structure;
-                            (2) the <strong>light-coherent micro-practices</strong> that support it;
-                            (3) leave existing <strong>anchor stabilizers always-on</strong> — don't reattach them to the season.
+                            <strong>When setting up a new season,</strong> think in three buckets:
+                            (1) <strong>stabilizer rituals</strong> for this season's daily structure;
+                            (2) <strong>light-coherent micro-practices</strong> that support it;
+                            (3) <strong>leave your anchors alone</strong> — they're already always-on.
                         </Callout>
                     </Section>
 
-                    <Section id="capacity" title="8. Session capacity (advisory)">
-                        <p>Surrounds the three pathways. Pure utility, never gates.</p>
+                    <Section id="capacity" title="8. Session capacity — your advisory dashboard">
+                        <p>Capacity math runs across all your session assignments. It's advisory — it tells you how loaded each session is, but it never blocks you from proceeding.</p>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Computation:</strong> <Code>totalMinutes = sessionLength − sessionBufferMinutes</Code>. <Code>assignedMinutes = Σ estimatedMinutes</Code> for tasks in the session. Background tasks count <em>once per assignment</em>.</li>
-                            <li><strong>Status thresholds:</strong> <Code>ok</Code> &lt; 100%, <Code>tight</Code> ≥ 100%, <Code>over</Code> &gt; 150%.</li>
-                            <li><strong>Mid-session:</strong> <Code>totalMinutes</Code> shrinks to remaining wall-clock; buffer shrinks proportionally. The badge ticks down as the day moves.</li>
-                            <li><strong>Where it shows:</strong> Step 3 timeline (per-session badge + over-capacity banner) and Dashboard <strong>Current Session</strong> (remaining-time pill + banner if over).</li>
-                            <li><strong>Never blocks.</strong> Even at 200% the wizard advances. Visibility &gt; prevention.</li>
-                            <li><strong>Light Pool entries are excluded</strong> from the arithmetic — they're outside the task graph.</li>
+                            <li><strong>How it works:</strong> each session's available time = session length minus a buffer. Assigned minutes = sum of all task estimates in that session. Background tasks count once per assignment.</li>
+                            <li><strong>Mid-session:</strong> the available time shrinks to whatever's left on the clock.</li>
+                            <li><strong>Where it shows up:</strong> Step 3 timeline (per-session badge + over-capacity banner) and Dashboard current session (remaining-time indicator + banner if over).</li>
+                            <li><strong>It never blocks the wizard.</strong> Even at 200% you can proceed. The goal is visibility, not prevention.</li>
+                            <li><strong>Light Pool entries are excluded</strong> — they're outside the task graph entirely.</li>
                         </ul>
-                        <p className="mt-3"><strong>How to read the badge:</strong></p>
+                        <p className="mt-3"><strong>What the status badges mean:</strong></p>
                         <ul className="list-none pl-1 space-y-1">
-                            <li><span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap bg-surface-dark text-text-light border-border">47/120 min</span> <span className="text-text-light">— <Code>ok</Code>: you have headroom.</span></li>
-                            <li><span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700">130/120 min</span> <span className="text-text-light">— <Code>tight</Code>: at or just over capacity. Likely fine if estimates are conservative.</span></li>
-                            <li><span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700">200/120 min</span> <span className="text-text-light">— <Code>over</Code>: meaningfully overcommitted. Consider moving a task, breaking one down, or accepting some won't land.</span></li>
+                            <li><span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap bg-surface-dark text-text-light border-border">47/120 min</span> <span className="text-text-light">— <strong>Grey</strong> (under 100%): you have headroom.</span></li>
+                            <li><span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700">130/120 min</span> <span className="text-text-light">— <strong>Amber</strong> (100–150%): at or just over capacity. Probably fine if estimates are conservative.</span></li>
+                            <li><span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border whitespace-nowrap bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-300 dark:border-red-700">200/120 min</span> <span className="text-text-light">— <strong>Red</strong> (above 150%): meaningfully overcommitted. Consider moving or breaking down a task.</span></li>
                         </ul>
                     </Section>
 
-                    <Section id="check-in" title="9. The check-in as decision point">
-                        <p>The hourly check-in is where the system reads your state and offers the right pathway.</p>
+                    <Section id="check-in" title="9. The hourly check-in">
+                        <p>Every hour during an active session, Orchestrate asks how you're doing. This is where the system reads your state and routes you to the right response:</p>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><Code>feeling: 'great'</Code> + on track → no extra surfacing. Stay in Pathway A.</li>
-                            <li><Code>workType: 'low-energy' | 'restless'</Code> OR <Code>feeling: 'struggling' | 'stuck'</Code> → modal surfaces <strong>1–2 Light Pool rows</strong> (Pathway C) + a <strong>True Rest cue</strong>. You pick: a smaller move or a real reset.</li>
-                            <li><Code>feeling: 'stuck'</Code> → adds the <strong>"What exactly are you avoiding?"</strong> capture (persisted as <Code>CheckIn.avoidanceNote</Code>). Feeds later pattern-spotting.</li>
+                            <li><strong>Feeling great, on track?</strong> No extra surfacing. Keep going.</li>
+                            <li><strong>Struggling, low-energy, or restless?</strong> The modal surfaces 1–2 <strong>Light Pool</strong> activities and a <strong>True Rest</strong> cue. You pick: a smaller productive move, or a genuine reset.</li>
+                            <li><strong>Feeling stuck?</strong> An extra prompt appears: <em>"What exactly are you avoiding?"</em> Your answer is saved — it feeds pattern-spotting over time.</li>
                         </ul>
                         <p>
-                            Capacity status feeds in passively — if the current session is <Code>over</Code>, the
-                            Dashboard banner is already visible above this same check-in, contextualizing why
-                            "struggling" might be more than psychological.
+                            Every check-in also asks what kind of work you're doing and suggests a matching playlist
+                            (coding → Deep Focus, lectures → Lo-Fi Beats, etc.).
+                        </p>
+                        <p className="text-text-light">
+                            If the current session is over-capacity, the Dashboard banner is already visible alongside
+                            the check-in — contextualizing why "struggling" might be more than psychological.
                         </p>
                     </Section>
 
                     <Section id="decision-tree" title='10. Decision tree — "I want to add X to my day"'>
-                        <Flow>{`Is X a non-task recovery move (walk, breath, gaze)?
+                        <Flow>{`Is X a non-task recovery move (walk, breathe, gaze)?
 ├─ YES → Don't model it. True Rest will surface organically.
 │        If you find yourself wanting to log it, that's the signal
 │        it should be a light-coherent habit instead.
@@ -429,48 +438,48 @@ export function UserGuide() {
 Is X today-only?
 ├─ YES ↓
 │   Is X your primary work thread for the day?
-│   ├─ YES → Pathway A: create an Intention, map task, categorize 'main'.
-│   └─ NO  → Pathway A or D: create the Intention if it's new,
-│            or add this as a 'background' LinkedTask under an existing intention.
+│   ├─ YES → Deep Track: create an Intention, map a task, categorize 'main'.
+│   └─ NO  → manual background: attach it as a 'background' task
+│            under an existing or new intention.
 │
 └─ NO  (X is recurring) ↓
     Does X need a slot in the day to anchor your structure?
-    ├─ YES → Pathway B: create a Habit { kind: 'stabilizer' }.
-    │        Set isAnchor = true ONLY if dropping it would let the day collapse.
+    ├─ YES → create a stabilizer Habit.
+    │        Mark as anchor ONLY if dropping it would let the day collapse.
     │        Set seasonIds = [] for always-on, [seasonId] for season-scoped.
     └─ NO  (X is opportunistic, pulled when you have a gap)
-        → Pathway C: create a Habit { kind: 'light-coherent' }.
-          Set seasonIds = [seasonId] if X is tied to current focus,
-          [] for general novelty / curiosity practices.`}</Flow>
+        → create a light-coherent Habit.
+          Set seasonIds = [seasonId] if tied to current focus,
+          [] for general curiosity practices.`}</Flow>
                     </Section>
 
-                    <Section id="typical-day" title="11. A typical day, in pathways">
-                        <p>A concrete walk-through to anchor the model.</p>
+                    <Section id="typical-day" title="11. A typical day, start to finish">
+                        <p>A concrete walk-through showing all the pieces in action.</p>
 
-                        <SubHeading>Setup (LifeContext, durable)</SubHeading>
+                        <SubHeading>Your setup (durable, lives across days)</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Active season: <em>"Stabilization Q2"</em> — primary theme: sleep + planning consistency + degree groundwork.</li>
-                            <li>Anchor stabilizers (always-on, <Code>seasonIds: []</Code>): <em>Morning meditation</em>, <em>Gym (M/W/F)</em>, <em>Sleep wind-down</em>, <em>Evening shutdown</em>.</li>
-                            <li>Season stabilizer (<Code>seasonIds: ['stabilization-q2']</Code>): <em>Daily 15-min planning ritual</em>.</li>
-                            <li>Season light-coherent (<Code>seasonIds: ['stabilization-q2']</Code>): <em>Read one section of [current systems book]</em>, <em>Algorithms warm-up (one easy problem)</em>.</li>
-                            <li>Always-on light-coherent (<Code>seasonIds: []</Code>): <em>Idea capture freewrite</em>, <em>Duolingo session</em>.</li>
+                            <li>Active season: <em>"Stabilization Q2"</em> — sleep + planning consistency + degree groundwork.</li>
+                            <li>Anchor stabilizers (always-on): <em>Morning meditation</em>, <em>Gym (M/W/F)</em>, <em>Sleep wind-down</em>, <em>Evening shutdown</em>.</li>
+                            <li>Season stabilizer: <em>Daily 15-min planning ritual</em>.</li>
+                            <li>Season light-coherent: <em>Read one section of [current systems book]</em>, <em>Algorithms warm-up (one easy problem)</em>.</li>
+                            <li>Always-on light-coherent: <em>Idea capture freewrite</em>, <em>Duolingo session</em>.</li>
                         </ul>
 
-                        <SubHeading>Step 1 — Intentions (Wizard)</SubHeading>
+                        <SubHeading>Step 1 — Intentions</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Auto-injected (stabilizer pathway): <em>Morning meditation</em>, <em>Gym</em>, <em>Daily planning ritual</em>. Each carries the 🔁 Habit badge + "Skip for today" option.</li>
-                            <li>User-added (deep track): <em>"Finish v6 capacity arithmetic"</em>, <em>"Read paper on session scheduling"</em>.</li>
-                            <li>Light-coherent habits do <strong>not</strong> appear here.</li>
+                            <li>Auto-injected from stabilizers: <em>Morning meditation</em>, <em>Gym</em>, <em>Daily planning ritual</em>. Each shows the 🔁 Habit badge and a "Skip for today" option.</li>
+                            <li>You add manually: <em>"Finish v6 capacity arithmetic"</em>, <em>"Read paper on session scheduling"</em>.</li>
+                            <li>Light-coherent habits don't appear here — they live in the Light Pool.</li>
                         </ul>
 
                         <SubHeading>Step 2 — Refine</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li><em>Morning meditation</em> → background, locked, capped at 15 min (<Code>habit.maxBlockMinutes</Code>).</li>
+                            <li><em>Morning meditation</em> → background, locked, capped at 15 min (habit setting).</li>
                             <li><em>Gym</em> → background, locked, capped at 45 min.</li>
                             <li><em>Daily planning ritual</em> → background, locked, capped at 30 min (per-kind default).</li>
                             <li><em>Finish v6 capacity arithmetic</em> → main, 120 min.</li>
                             <li><em>Read paper on session scheduling</em> → main, 60 min.</li>
-                            <li>User adds a manual background under the v6 intention: <em>"Push WIP commit before lunch"</em>, 10 min.</li>
+                            <li>You add a manual background: <em>"Push WIP commit before lunch"</em>, 10 min.</li>
                         </ul>
 
                         <SubHeading>Step 3 — Schedule</SubHeading>
@@ -481,23 +490,23 @@ Is X today-only?
                             <li>Night: <em>Evening shutdown</em>.</li>
                         </ul>
                         <p className="text-text-light text-sm">
-                            Capacity badge shows the morning session is <Code>tight</Code> at 110% — advisory, user proceeds.
+                            Capacity badge shows the morning session is <em>tight</em> at 110%. You proceed — it's advisory.
                         </p>
 
                         <SubHeading>During the day</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Light Pool panel lists <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. User pulls <em>Algorithms warm-up</em> between sessions — Start logged, completed 12 min later. Writes to <Code>plan.habitLog</Code>. Does not touch task graph.</li>
+                            <li>The Light Pool panel lists <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. Between morning and afternoon sessions, you pull <em>Algorithms warm-up</em> — Start, work for 12 minutes, Done. Logged, doesn't touch the task graph.</li>
                             <li>Between-session True Rest banner: <em>"Walk 5 minutes — outside if possible."</em> No tracking.</li>
-                            <li>14:00 check-in: <Code>feeling: 'struggling'</Code>, <Code>workType: 'low-energy'</Code>. Modal surfaces 1–2 Light Pool rows + a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>). User picks the True Rest, then resumes Pathway A.</li>
-                            <li>15:00 check-in: <Code>feeling: 'stuck'</Code>. Avoidance prompt: <em>"What exactly are you avoiding?"</em> → user types <em>"The paper's math section — I don't have the prerequisites yet"</em>. Persisted on the check-in.</li>
+                            <li>2:00 PM check-in: feeling <em>struggling</em>, work type <em>low-energy</em>. The modal shows a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>) and a couple Light Pool rows. You try the breathing, then resume your main work.</li>
+                            <li>3:00 PM check-in: feeling <em>stuck</em>. The avoidance prompt appears. You write: <em>"The paper's math section — I don't have the prerequisites yet."</em> Saved for later reflection.</li>
                         </ul>
 
                         <SubHeading>End of day</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Stabilizer tasks: 3/3 completed (recorded as LinkedTask completions, syncs to Todoist).</li>
+                            <li>Stabilizer tasks: 3/3 completed (synced to Todoist).</li>
                             <li>Main tasks: 1.5/2 completed.</li>
-                            <li>Light Pool log: 2 entries (algorithms warm-up done, Duolingo done; flashcards and reading skipped today).</li>
-                            <li>True Rest surfaced but not tracked.</li>
+                            <li>Light Pool log: 2 entries (algorithms warm-up and Duolingo; flashcards and reading skipped today).</li>
+                            <li>True Rest: surfaced but untracked, as intended.</li>
                         </ul>
                     </Section>
 
@@ -510,13 +519,13 @@ Is X today-only?
                                 </tr>
                             </thead>
                             <tbody>
-                                <Tr><Td>A today-only big work thread</Td><Td>Main task (Pathway A)</Td></Tr>
-                                <Tr><Td>A recurring ritual that needs a slot</Td><Td>Stabilizer Habit (Pathway B). Add <Code>isAnchor: true</Code> if foundational.</Td></Tr>
-                                <Tr><Td>A small recurring practice you pull opportunistically</Td><Td>Light-coherent Habit (Pathway C)</Td></Tr>
+                                <Tr><Td>A today-only big work thread</Td><Td>Main task (Deep Track)</Td></Tr>
+                                <Tr><Td>A recurring ritual that needs a slot</Td><Td>Stabilizer Habit. Add <Code>isAnchor</Code> if foundational.</Td></Tr>
+                                <Tr><Td>A small recurring practice you pull opportunistically</Td><Td>Light-coherent Habit (Light Pool)</Td></Tr>
                                 <Tr><Td>A today-only small chore tied to an intention</Td><Td>Manual background task</Td></Tr>
-                                <Tr><Td>A non-task recovery prompt</Td><Td>Don't model. True Rest covers it.</Td></Tr>
-                                <Tr><Td>A practice tied to a specific focus period</Td><Td>Light-coherent Habit with <Code>seasonIds: [seasonId]</Code></Td></Tr>
-                                <Tr><Td>A foundational habit that survives season changes</Td><Td>Stabilizer Habit with <Code>isAnchor: true</Code>, <Code>seasonIds: []</Code></Td></Tr>
+                                <Tr><Td>A non-task recovery prompt</Td><Td>Don't model. True Rest handles it.</Td></Tr>
+                                <Tr><Td>A practice tied to a specific focus period</Td><Td>Light-coherent Habit with <Code>seasonIds</Code> set</Td></Tr>
+                                <Tr><Td>A foundational habit that survives season changes</Td><Td>Stabilizer Habit with <Code>isAnchor</Code>, always-on</Td></Tr>
                             </tbody>
                         </table>
                     </Section>
@@ -544,25 +553,25 @@ function Intro() {
     return (
         <div className="rounded-lg bg-accent-subtle border-l-4 border-accent p-4 mb-6">
             <p className="text-sm text-text leading-relaxed">
-                A mental-model + how-to guide for the entities Orchestrate uses to model your day:{' '}
-                <strong>Habits</strong> (stabilizer / light-coherent), <strong>Intentions</strong>,{' '}
-                <strong>LinkedTasks</strong> (main / background), the <strong>Light Pool</strong>,{' '}
-                <strong>True Rest</strong>, and <strong>Capacity</strong>. Use this as your quick reference.
+                A guide to how Orchestrate thinks about your day — and how you can use that to
+                get more done with less friction. Covers <strong>Habits</strong>,{' '}
+                <strong>Intentions</strong>, <strong>Tasks</strong>, the <strong>Light Pool</strong>,{' '}
+                <strong>True Rest</strong>, and <strong>Capacity</strong>.
             </p>
         </div>
     );
 }
 
 const TOC_ENTRIES: { id: string; label: string }[] = [
-    { id: 'big-picture',             label: '1. The big picture' },
-    { id: 'layers',                  label: '2. Two persistence layers' },
-    { id: 'habit-entity',            label: '3. The Habit entity' },
-    { id: 'pathways',                label: '4. The three execution pathways' },
+    { id: 'big-picture',             label: '1. How Orchestrate sees your day' },
+    { id: 'layers',                  label: '2. Where your data lives' },
+    { id: 'habit-entity',            label: '3. Habits: the recurring backbone' },
+    { id: 'pathways',                label: '4. The three work pathways' },
     { id: 'true-rest',               label: '5. True Rest' },
     { id: 'stabilizer-vs-anchor',    label: '6. Stabilizer vs Anchor' },
-    { id: 'anchor-stabilizer-seasons', label: '7. Anchors, Stabilizers, Seasons' },
+    { id: 'anchor-stabilizer-seasons', label: '7. Habits, Seasons, Anchors' },
     { id: 'capacity',                label: '8. Session capacity' },
-    { id: 'check-in',                label: '9. The check-in as decision point' },
+    { id: 'check-in',               label: '9. The hourly check-in' },
     { id: 'decision-tree',           label: '10. Decision tree' },
     { id: 'typical-day',             label: '11. A typical day' },
     { id: 'quick-reference',         label: '12. Quick reference' },
