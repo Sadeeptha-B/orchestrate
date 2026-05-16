@@ -96,7 +96,7 @@ Three plan-status modes are still detected (used to choose the status copy and p
 
 The hub appears at `/` whenever `plan.setupComplete === false`. Once setup is complete, `/` shows the Dashboard instead. The Life surfaces remain reachable from both.
 
-The top-right fixed controls expose an about button, a settings gear (navigates to `/settings`), and the theme toggle. When the user is first-ever (no history, no in-progress plan), an inline "Coming from another browser or device? Restore your data →" hint is shown beneath the "New here?" link; it navigates to `/settings?tab=data` for the cross-browser onboarding flow. The Settings page's "Open Saved Sessions →" hint navigates to `/setup` (where the sidebar lives).
+The top-right fixed controls — About (?), Settings (⚙), ThemeToggle — are rendered by the shared `HeaderControls` component across all surfaces (Welcome, Dashboard, Wizard, LifeShell, UserGuide, SettingsPage). On Welcome they float in a fixed-position container; elsewhere they sit in the header bar alongside page-specific buttons. `HeaderControls` owns the About modal (with a Settings integration hint) and an optional `aboutTriggerRef` so external elements (e.g. Welcome's "Learn what Orchestrate does" link) can programmatically open it. When the user is first-ever (no history, no in-progress plan), an inline "Coming from another browser or device? Restore your data →" hint is shown beneath the "New here?" link; it navigates to `/settings?tab=data` for the cross-browser onboarding flow. The Settings page's "Open Saved Sessions →" hint navigates to `/setup` (where the sidebar lives).
 
 ### 4.2 Wizard Flow
 
@@ -111,7 +111,7 @@ The wizard is a 4-step sequential flow. The current step is stored in `plan.wiza
 
 **WizardLayout** wraps every step and provides:
 - A collapsible saved sessions sidebar (drag-to-resize via `useResizablePanel`, default open), always available — including while editing.
-- A header with a clickable logo (navigates to `/`, which resolves to Dashboard or Welcome based on `setupComplete`), step progress bar, clickable step navigation pills, theme toggle, settings gear (navigates to `/settings`), and about modal.
+- A header with a clickable logo (navigates to `/`, which resolves to Dashboard or Welcome based on `setupComplete`), step progress bar, clickable step navigation pills, and `HeaderControls` (About, Settings, ThemeToggle).
 - Back/Next footer buttons with `canAdvance` gating.
 - An "editing" mode for when the user returns to the wizard from the dashboard.
 
@@ -119,7 +119,7 @@ The wizard is a 4-step sequential flow. The current step is stored in `plan.wiza
 
 The dashboard (`Dashboard.tsx`) is the main operational view. It is organized into these sections:
 
-1. **Header** — Logo, completion counter, Save/Edit/Saved Sessions/Settings buttons, theme toggle.
+1. **Header** — Logo, completion counter, Save/Edit/Saved Sessions buttons, and `HeaderControls` (About, Settings, ThemeToggle).
 2. **Music row** — `PlaylistSelector` (6 work-type buttons) + `DigitalClock`.
 3. **Player row** — `SpotifyPlayer` (embedded iframe) + `InsightCard` (cycles between Transition Tips and a True Rest cue every 2 min; manual `›` button resets the timer).
 4. **Timeline + side rail** — `SessionTimeline` (visual bar with assigned tasks). Side rail: `SeasonContextCard` only.
@@ -514,7 +514,6 @@ src/
 │   │   └── GoogleCalendarEmbed.tsx # Google Calendar iframe
 │   ├── settings/
 │   │   ├── SettingsPage.tsx    # /settings — vertical-tab layout: Integrations, Capacity, Data
-│   │   ├── SettingsModal.tsx   # Legacy modal wrapper (kept for backward compat)
 │   │   ├── CapacitySettings.tsx# v6: session buffer + per-kind taskCapDefaults inputs
 │   │   └── DataManagement.tsx  # Import / Export / Full Backup / Import Backup
 │   ├── guide/                  # v6: in-app user guide
@@ -540,6 +539,7 @@ src/
 │       ├── SessionTimelineBar.tsx
 │       ├── AboutContent.tsx
 │       ├── Logo.tsx            # favicon img with overridable className
+│       ├── HeaderControls.tsx  # Shared About (?), Settings (⚙), ThemeToggle cluster + About modal
 │       ├── ThemeToggle.tsx     # light/dark toggle button (uses useTheme)
 │       └── formStyles.ts       # shared input/label Tailwind class strings
 │

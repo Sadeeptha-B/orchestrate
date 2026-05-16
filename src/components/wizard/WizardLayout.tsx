@@ -2,13 +2,11 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProgressBar } from '../ui/ProgressBar';
 import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { HistorySidebar, type HistoryTab } from '../dashboard/HistorySidebar';
-import { AboutContent } from '../ui/AboutContent';
 import { Logo } from '../ui/Logo';
-import { ThemeToggle } from '../ui/ThemeToggle';
+import { HeaderControls } from '../ui/HeaderControls';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../../data/wizardSteps';
 
@@ -36,7 +34,6 @@ export function WizardLayout({
     const navigate = useNavigate();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
-    const [showAbout, setShowAbout] = useState(false);
     const [panelOpen, setPanelOpen] = useState(true);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
     const backlogCount = life.backlog?.length ?? 0;
@@ -139,21 +136,7 @@ export function WizardLayout({
                                     Back to Dashboard
                                 </Button>
                             )}
-                            <button
-                                onClick={() => setShowAbout(true)}
-                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"
-                                title="About Orchestrate"
-                            >
-                                ?
-                            </button>
-                            <button
-                                onClick={() => navigate('/settings')}
-                                className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                                title="Settings"
-                            >
-                                ⚙
-                            </button>
-                            <ThemeToggle />
+                            <HeaderControls />
                         </div>
                     </div>
                     <ProgressBar current={step} total={TOTAL_STEPS} />
@@ -213,21 +196,6 @@ export function WizardLayout({
                     </div>
                 </footer>
             </div>
-
-            {/* About modal */}
-            <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
-                <AboutContent onOpenGuide={() => { setShowAbout(false); navigate('/guide'); }} />
-                <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
-                    Connect Todoist and Google Calendar in{' '}
-                    <button
-                        onClick={() => { setShowAbout(false); navigate('/settings?tab=integrations'); }}
-                        className="text-accent hover:underline cursor-pointer"
-                    >
-                        Settings
-                    </button>{' '}
-                    to get the most out of this app.
-                </p>
-            </Modal>
         </div>
     );
 }

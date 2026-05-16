@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Logo } from '../ui/Logo';
-import { ThemeToggle } from '../ui/ThemeToggle';
+import { HeaderControls } from '../ui/HeaderControls';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { DataManagement } from './DataManagement';
 import { CapacitySettings } from './CapacitySettings';
@@ -56,7 +56,7 @@ export function SettingsPage() {
                         >
                             ← Back
                         </button>
-                        <ThemeToggle />
+                        <HeaderControls />
                     </div>
                 </div>
             </header>
@@ -71,8 +71,8 @@ export function SettingsPage() {
                                     <button
                                         onClick={() => selectTab(tab)}
                                         className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${activeTab === tab
-                                                ? 'bg-accent text-white'
-                                                : 'text-text-light hover:bg-surface-dark hover:text-text'
+                                            ? 'bg-accent text-white'
+                                            : 'text-text-light hover:bg-surface-dark hover:text-text'
                                             }`}
                                     >
                                         {TAB_LABELS[tab]}

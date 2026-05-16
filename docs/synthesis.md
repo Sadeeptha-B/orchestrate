@@ -84,7 +84,7 @@ The user can return to any step from the Dashboard ("Edit Plan" → Step 1, "Rec
 
 The operational view for the rest of the day. Layout (top to bottom):
 
-1. **Header** — completion counter (linked tasks done / total), Save / Edit / Saved Sessions / Settings (navigates to `/settings`).
+1. **Header** — completion counter (linked tasks done / total), Save / Edit / Saved Sessions, and `HeaderControls` (About / Settings / ThemeToggle).
 2. **Music row** — `PlaylistSelector` (6 work-type buttons) + live `DigitalClock`.
 3. **Player row** — embedded `SpotifyPlayer` iframe + `InsightCard` (alternates between the Transition Tips music cheat-sheet and a True Rest recovery cue every 2 min; manual `›` advance).
 4. **Timeline** — `SessionTimelineBar` (read-only) with a pulse on the active session.

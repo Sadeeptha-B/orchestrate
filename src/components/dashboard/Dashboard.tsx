@@ -15,8 +15,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Logo } from '../ui/Logo';
-import { ThemeToggle } from '../ui/ThemeToggle';
-import { AboutContent } from '../ui/AboutContent';
+import { HeaderControls } from '../ui/HeaderControls';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
 import { LightPoolPanel } from './LightPoolPanel';
@@ -49,7 +48,6 @@ export function Dashboard() {
     };
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const [calendarOpen, setCalendarOpen] = useState(false);
-    const [showAboutModal, setShowAboutModal] = useState(false);
 
     const { panelWidth, onMouseDown } = useResizablePanel();
 
@@ -121,17 +119,7 @@ export function Dashboard() {
                                 ? 'Hide Backlog'
                                 : <>📥 Backlog{backlogCount > 0 ? ` (${backlogCount})` : ''}</>}
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => navigate('/settings')}>
-                            Settings
-                        </Button>
-                        <button
-                            onClick={() => setShowAboutModal(true)}
-                            className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"
-                            title="About Orchestrate"
-                        >
-                            ?
-                        </button>
-                        <ThemeToggle />
+                        <HeaderControls />
                     </div>
                 </div>
             </header>
@@ -302,20 +290,6 @@ export function Dashboard() {
                         </Button>
                     </div>
                 </div>
-            </Modal>
-
-            <Modal open={showAboutModal} onClose={() => setShowAboutModal(false)} title="About Orchestrate">
-                <AboutContent onOpenGuide={() => { setShowAboutModal(false); navigate('/guide'); }} />
-                <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
-                    Connect Todoist and Google Calendar in{' '}
-                    <button
-                        onClick={() => { setShowAboutModal(false); navigate('/settings?tab=integrations'); }}
-                        className="text-accent hover:underline cursor-pointer"
-                    >
-                        Settings
-                    </button>{' '}
-                    to get the most out of this app.
-                </p>
             </Modal>
         </div>
     );

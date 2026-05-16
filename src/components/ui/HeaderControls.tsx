@@ -1,19 +1,28 @@
-import { useState } from 'react';
+import { useState, type MutableRefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal } from './Modal';
 import { ThemeToggle } from './ThemeToggle';
 import { AboutContent } from './AboutContent';
 
+interface HeaderControlsProps {
+    /** Populate this ref with a function that opens the About modal from outside. */
+    aboutTriggerRef?: MutableRefObject<(() => void) | null>;
+}
+
 /**
- * v6: shared top-right control cluster — About (?), Settings (⚙), ThemeToggle — plus the
- * About modal. Owns its own modal state so it can be dropped into any shell
- * (LifeShell, UserGuide, future read-only routes) without further wiring.
+ * Shared top-right control cluster — About (?), Settings (⚙), ThemeToggle — plus the
+ * About modal with a Settings integration hint. Owns its own modal state so it can be
+ * dropped into any shell without further wiring.
  *
- * Settings now navigates to /settings instead of opening a modal.
+ * Every page should render this component (or compose around it) so the three controls
+ * are always available. Pages may pass page-specific buttons alongside as siblings.
  */
-export function HeaderControls() {
+export function HeaderControls({ aboutTriggerRef }: HeaderControlsProps) {
     const navigate = useNavigate();
     const [showAbout, setShowAbout] = useState(false);
+
+    // Expose the trigger so external elements (e.g. Welcome's "Learn" link) can open About.
+    if (aboutTriggerRef) aboutTriggerRef.current = () => setShowAbout(true);
 
     return (
         <>
@@ -42,6 +51,16 @@ export function HeaderControls() {
                         navigate('/guide');
                     }}
                 />
+                <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
+                    Connect Todoist and Google Calendar in{' '}
+                    <button
+                        onClick={() => { setShowAbout(false); navigate('/settings?tab=integrations'); }}
+                        className="text-accent hover:underline cursor-pointer"
+                    >
+                        Settings
+                    </button>{' '}
+                    to get the most out of this app.
+                </p>
             </Modal>
         </>
     );
