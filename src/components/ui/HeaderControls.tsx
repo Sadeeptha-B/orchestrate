@@ -3,35 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { Modal } from './Modal';
 import { ThemeToggle } from './ThemeToggle';
 import { AboutContent } from './AboutContent';
-import { SettingsModal } from '../settings/SettingsModal';
-
-interface HeaderControlsProps {
-    /**
-     * Optional handler for the "Open Saved Sessions →" hint inside SettingsModal after a
-     * sessions import. When omitted (default), we navigate to /setup with `fromWelcome: true`
-     * so the saved-sessions sidebar (which lives in the Wizard chrome) becomes reachable.
-     */
-    onShowSavedSessions?: () => void;
-}
 
 /**
  * v6: shared top-right control cluster — About (?), Settings (⚙), ThemeToggle — plus the
- * About and Settings modals. Owns its own modal state so it can be dropped into any shell
+ * About modal. Owns its own modal state so it can be dropped into any shell
  * (LifeShell, UserGuide, future read-only routes) without further wiring.
  *
- * Dashboard, Welcome, and WizardLayout still inline their own Settings/About wiring because
- * they have surface-specific behaviors (saved-sessions sidebar toggle, modal-to-modal
- * navigation). Don't replace those without checking the call sites.
+ * Settings now navigates to /settings instead of opening a modal.
  */
-export function HeaderControls({ onShowSavedSessions }: HeaderControlsProps = {}) {
+export function HeaderControls() {
     const navigate = useNavigate();
     const [showAbout, setShowAbout] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
-
-    const defaultShowSavedSessions = () => {
-        setShowSettings(false);
-        navigate('/setup', { state: { fromWelcome: true } });
-    };
 
     return (
         <>
@@ -44,7 +26,7 @@ export function HeaderControls({ onShowSavedSessions }: HeaderControlsProps = {}
                     ?
                 </button>
                 <button
-                    onClick={() => setShowSettings(true)}
+                    onClick={() => navigate('/settings')}
                     className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"
                     title="Settings"
                 >
@@ -61,12 +43,6 @@ export function HeaderControls({ onShowSavedSessions }: HeaderControlsProps = {}
                     }}
                 />
             </Modal>
-
-            <SettingsModal
-                open={showSettings}
-                onClose={() => setShowSettings(false)}
-                onShowSavedSessions={onShowSavedSessions ?? defaultShowSavedSessions}
-            />
         </>
     );
 }

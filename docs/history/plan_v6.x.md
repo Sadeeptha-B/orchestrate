@@ -1,6 +1,11 @@
-# Plan v6.1 — Habit-as-Task Decoupling
+# Plan v6.x — Habit-as-Task Decoupling (v6.1) + Intentions Backlog (v6.2)
 
-> Frozen post-implementation plan. The living docs ([synthesis.md](../synthesis.md), [data-model.md](../data-model.md), [architecture.md](../architecture.md), [user-guide.md](../user-guide.md)) reflect the result. This document preserves the *narrative* of how v6.1 was designed and what tradeoffs were made.
+> Frozen post-implementation plan. The living docs ([synthesis.md](../synthesis.md), [data-model.md](../data-model.md), [architecture.md](../architecture.md), [user-guide.md](../user-guide.md)) reflect the result. This document preserves the *narrative* of how the v6.1 and v6.2 point-releases were designed and what tradeoffs were made.
+>
+> - **v6.1** — Habit-as-Task Decoupling (below)
+> - **v6.2** — Intentions Backlog + Todoist unschedule-on-discard ([jump](#v62--intentions-backlog--todoist-unschedule-on-discard))
+
+# v6.1 — Habit-as-Task Decoupling
 
 ## Context
 
@@ -195,3 +200,163 @@ After the initial v6.1 land, a holistic-review pass + a Todoist-integration resi
 - **v7 — Modes, Rituals, Recovery**: `DayPlan.mode` field, mode switcher, RitualPlayer with templates, Minimum Viable Day. Still the next iteration.
 - **v8 — Reviews, Drift Detection, Hierarchical Views**: `/review` route, `useDriftSignals` hook, `/week` cadence view, expanded `/life`.
 - **Step 1 chip → drill-down**: the "N habit tasks scheduled" chip is informational. A click could deep-link to the Step 3 timeline pre-scrolled to the habit's session. Not done in v6.1 to keep the surface change minimal.
+
+---
+
+# v6.2 — Intentions Backlog + Todoist unschedule-on-discard
+
+## Context
+
+v6.1 cleaned up how *habits* relate to tasks; v6.2 fixes three pain points around how *intentions* relate to the day:
+
+1. **Overcommitment realization mid-plan.** At Step 3 the user often realizes the intentions written in Step 1 don't fit the day. v6.1 only offered *delete* (loses the thought) or *keep* (overflows the day). Neither matched the actual user mental model: "I want to do this, just not today."
+2. **Mid-day course corrections.** Same problem at a different time: users want to swap an intention for another without losing the deferred one.
+3. **Day rollover loses unfinished work.** `loadPlan()` silently discarded a stale plan when the date changed. Yesterday's unfinished intentions evaporated. The plan auto-resetting daily was correct; the silent erasure of unfinished thought was not.
+
+Layered on top: a **latent bug** in `REMOVE_INTENTION` — it scrubbed `plan.linkedTasks` + `plan.taskSessions` but never told Todoist, so deleted intentions left behind orphan scheduled tasks with stale due dates. The new backlog flow exercises the same path, so fixing the bug was bundled into v6.2.
+
+Schema bumps to `6.2` (JSON float).
+
+## Decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| **Storage** | `life.backlog: BacklogEntry[]` — piggybacked on the existing `LifeContext` slice. No new persistence key. | Backlog is durable cross-day state like seasons and habits. Reusing `orchestrate-life-context` reuses `IMPORT_BACKUP`, the persist effect, and the migration entry point. Adding a 5th key was strictly more plumbing for no observable win. |
+| **UI surface** | Reuse the existing left-side sidebar — rename `SavedSessions.tsx` → `HistorySidebar.tsx` and split it into two tabs (Sessions / Backlog). Wizard + Dashboard headers get a second `📥 Backlog (N)` button next to "Saved Sessions"; each opens the sidebar focused on its tab. | User asked for this layout explicitly. Saved sessions and the backlog are both "history-shaped" surfaces — different shape, same affordance set. One sidebar with two tabs avoids competing slide-outs. |
+| **Discard UX** | Replace the single `Remove` button on intention rows with two icon buttons: `📥` (Move to backlog — non-destructive, primary) and `🗑` (Delete — confirm modal). Both unschedule Todoist tasks via the shared `useIntentionRemoval` hook. | The primary failure mode in v6.1 was treating "don't want this today" as "delete forever." Making backlog the visual default + delete a deliberate destructive action correctly biases the user toward recoverable choices. |
+| **Where the affordance appears** | Step 1 (via `EditableTaskList` row buttons) **and** Step 3 (via a new "Today's intentions" overview panel at the top of Phase 1, with the same row affordances). | User explicitly called out Step 3 as the "realize-overcommitment" moment. The overview panel doubles as a single-glance "what am I doing today" widget for Phase 1. |
+| **Rollover unschedule** | **No** — auto-rollover never touches Todoist. Yesterday's tasks become "overdue" in Todoist, which the user can resolve there. Only *manual* paths (manual move-to-backlog, manual delete, manual discard-from-backlog) unschedule. | Auto-clearing yesterday's due dates would hide the user's incomplete work in their primary task tool. The backlog is Orchestrate's idea, not Todoist's; we don't get to delete signal from Todoist on the user's behalf without an explicit user action. |
+| **Auto-save on rollover** | **Authoritative auto-save** — rollover saves the stale plan to `history` with `label: "Auto: {date}"` and *replaces* any existing same-date manual save. | User reasoning: the rollover capture is the only one that reflects end-of-day truth; any earlier manual save was necessarily a mid-day snapshot. The auto-save wins. |
+| **Restore from backlog: how do tasks come back?** | Tasks rebuild as fresh `LinkedTask` rows (`type: 'unclassified'`, no estimate, no assignment, not completed). User re-flows them through Step 2 + Step 3. `titleSnapshot` populates from live `taskMap` first, then from `entry.taskSnapshots` (captured at archive time), then as a last resort the todoist id. | Preserving estimates / assignments / type across days is conceptually wrong — yesterday's plan isn't today's plan. Fresh re-categorization forces the user to re-decide consciously. |
+| **Schema marker** | `6.2` (JSON float). | Consistent with v6.1's "label tracks marker" choice. JSON floats compare with `<` correctly, so the migration gate stays simple. |
+
+## Architectural shape
+
+No new contexts. Two new pure-function modules + one new hook:
+
+- **`src/lib/backlog.ts`** — `hasUnfinishedWork(intention, plan)`, `buildBacklogEntry(intention, plan, reason)`, `harvestStalePlan(plan)`, `rebuildLinkedTasksForBacklogEntry(entry, taskCache)`, `buildAutoSaveEntry(plan, wizardStepsCount, schemaVersion)`. Pure helpers used by the reducer and by `loadInitialState`.
+- **`src/lib/intentionUnschedule.ts`** — `unscheduleIntentionTasks(...)` (the Todoist-side cleanup) + `useIntentionRemoval()` hook (the shared "unschedule then dispatch" wrapper). The hook is the single source of truth for *all* intention-removal call sites: `EditableTaskList`, `Step3Schedule`, `BacklogTab`.
+- **Reducer-side**: four new actions (`MOVE_INTENTION_TO_BACKLOG`, `RESTORE_FROM_BACKLOG`, `DELETE_BACKLOG_ENTRY`, `BACKLOG_HARVEST`). `REMOVE_INTENTION` reducer-case stays pure — Todoist unschedule moves to the call site.
+- **Init-side**: `loadPlan` is removed; `loadInitialState` coordinates `peekRawPlan` + `loadLifeContext` + `loadHistory` + `loadSettings` so the rollover migration can both auto-save and harvest before returning the four-slice initial state. `useReducer(reducer, null, loadInitialState)` replaces the four separate per-slice loaders.
+
+## Schema versioning
+
+Schema bumped from `6.1` (JSON float) to `6.2`. Migrations:
+
+- **`migratePlan` v6.1 → v6.2**: no plan-shape changes. The schema marker is just stamped on persist.
+- **`loadLifeContext` v6.1 → v6.2**: `backlog` defaults to `[]` when missing (kept undefined-safe — readers tolerate `undefined`).
+- **`IMPORT_BACKUP`**: incoming `life.backlog` merges by entry id (existing entries never overwritten). `life.restCues` now also merges-by-presence (the v6.1 IMPORT_BACKUP case had silently dropped it — fixed as a small drive-by).
+- **First cold load after deploy with a stale plan**: triggers `loadInitialState`'s rollover branch. Auto-saves and harvests. Idempotent on re-runs because once the plan resets to today, the date-check short-circuits.
+
+## Cross-slice invariants (changes)
+
+Carried forward from v6.1:
+- Activating a season auto-deactivates the previously active one.
+- Deleting a season clears its id from any habit's `seasonIds`.
+- Anchor habits cannot be deleted while active.
+- `INJECT_HABIT_TASKS` idempotency via `sourceHabitId` presence.
+- `SKIP_HABIT_TASK` doesn't set `completed`.
+- Light-coherent habits never enter `linkedTasks`.
+
+Added in v6.2:
+- **`MOVE_INTENTION_TO_BACKLOG`** mirrors `REMOVE_INTENTION`'s plan-side cleanup (scrubs `linkedTasks` + `taskSessions`) and additionally appends a `BacklogEntry` to `life.backlog`. The intention's `titleSnapshot`s are captured at archive time so a future bring-back can show task labels even after the Todoist tasks are gone.
+- **`RESTORE_FROM_BACKLOG`** is idempotent against re-adds: if an intention with the same id is already in `plan.intentions`, the action removes the backlog entry but skips the plan-side append. It also skips any `todoistId` already present in `plan.linkedTasks` (e.g. the same task is linked to a different intention today).
+- **`DELETE_BACKLOG_ENTRY`** assumes the caller already unscheduled Todoist tasks via `useIntentionRemoval().discardFromBacklog`. The reducer itself stays pure.
+- **`BACKLOG_HARVEST`** is a pure append used only by the rollover path; it's exposed as an action for symmetry/testability even though `loadInitialState` writes into the same slice directly.
+
+## Lifecycle
+
+### Day rollover (auto-save + backlog harvest)
+
+1. App boot. `loadInitialState()` reads raw `orchestrate-day-plan` via `peekRawPlan()` (which runs `migratePlan` but skips the freshness gate).
+2. If `parsed.date === todayISO()`: return the plan as-is alongside the other slices. No-op.
+3. Else: stale plan detected. Build an authoritative `SavedDayPlan` (`label: "Auto: {date}"`), prepend to `history`, and *replace* any existing same-date entry.
+4. Run `harvestStalePlan(parsed)` to compute `BacklogEntry[]` for intentions where `hasUnfinishedWork()` is true. Empty-linked-task intentions (intentions the user never linked tasks to) are NOT harvested — there's nothing to recover.
+5. Append harvested entries to `life.backlog`. Return `{ plan: freshPlan(), settings, history: updated, life: updated, editingStep: null }`.
+6. Effects re-persist the four slices on the next render.
+
+### Manual move-to-backlog (Step 1 / Step 3 / EditableTaskList)
+
+1. User clicks `📥`. `EditableTaskList`'s click handler (or Step3Schedule's row handler) calls `useIntentionRemoval().moveToBacklog(intentionId)`.
+2. Hook collects the intention's linked task ids from `plan.linkedTasks` (filtering by `intentionId` to exclude orphan habit-tasks defensively).
+3. Hook calls `unscheduleIntentionTasks(...)` which, per id: skips habit-derived, missing-from-cache, and already-unscheduled tasks; otherwise fires `actions.updateTask(id, { due_string: 'no date' })`. Calls run in parallel via `Promise.allSettled`; errors are logged but never block.
+4. Hook dispatches `MOVE_INTENTION_TO_BACKLOG`. Reducer scrubs plan-side state + appends `BacklogEntry` to `life.backlog`.
+5. UI re-renders. Sidebar's `📥 Backlog (N)` count increments. Backlog tab shows the new entry.
+
+### Delete intention permanently
+
+Same flow as move-to-backlog but: confirm modal first, then `useIntentionRemoval().removeIntention(intentionId)` dispatches the original `REMOVE_INTENTION` after the unschedule. The bug-fix: previously the unschedule never happened. Now it always does.
+
+### Restore from backlog
+
+1. User clicks "Bring to today" inside `BacklogTab`.
+2. Handler reads the live Todoist `taskMap` and builds a `taskCache: Record<todoistId, content>`.
+3. Dispatches `RESTORE_FROM_BACKLOG { backlogId, taskCache }`.
+4. Reducer appends the entry's intention to `plan.intentions` and reconstructs fresh `LinkedTask` rows via `rebuildLinkedTasksForBacklogEntry(entry, taskCache)`. Title snapshot resolution order: `taskCache[id]` → `entry.taskSnapshots?.[id]` → undefined (in which case `getTaskTitle` falls back to the id).
+5. Entry is removed from `life.backlog`.
+6. If `plan.setupComplete === false`, the handler navigates to `/setup` so the user lands in Step 1 with their restored intention ready to re-flow through Step 2 + Step 3. (If they're already on Dashboard, the restored intention shows up there immediately and they can Edit Plan / Recontextualize at their own pace.)
+
+### Discard backlog entry
+
+1. User clicks "Discard" in `BacklogTab`. Confirm modal.
+2. On confirm: `useIntentionRemoval().discardFromBacklog(backlogId)` looks up the entry, calls `unscheduleIntentionTasks(entry.intention.linkedTaskIds, [], actions, taskMap)` (empty `linkedTasks` array is intentional — no habit-task safety check needed since backlog entries only hold intention-bound ids by construction), then dispatches `DELETE_BACKLOG_ENTRY`.
+
+## New / modified files
+
+**Added:**
+- `src/lib/backlog.ts` — backlog helpers.
+- `src/lib/intentionUnschedule.ts` — Todoist unschedule helper + `useIntentionRemoval` hook.
+- `src/components/dashboard/HistorySidebar.tsx` — renamed from `SavedSessions.tsx`; container with tab toggle. Contains both `HistorySidebar` (the controlled-tab container) and `SavedSessionsTab` (the per-row Sessions UI extracted intact).
+- `src/components/dashboard/BacklogTab.tsx` — per-row Backlog UI ("Bring to today" / "Discard" with confirm modal).
+
+**Removed:**
+- `src/components/dashboard/SavedSessions.tsx` — renamed/refactored into `HistorySidebar.tsx`.
+
+**Modified — core:**
+- `src/types/index.ts` — `BacklogEntry` type, `LifeContext.backlog?`.
+- `src/context/DayPlanContext.tsx` — schema → `6.2`; `peekRawPlan` + `loadInitialState`; `emptyLifeContext` includes `backlog: []`; four new actions; `IMPORT_BACKUP` merges backlog entries by id (and now also retains `restCues`); `useReducer` initializer switched to `loadInitialState`. The old `loadPlan` helper was deleted.
+- `src/context/TodoistContext.tsx` — `UpdateTaskOpts` `due_*` and `duration*` fields are now `string | null` / `number | null` so callers can pass `null` to clear scheduling. (`apiFetch` already round-trips `null` through `JSON.stringify`.)
+
+**Modified — UI:**
+- `src/components/wizard/WizardLayout.tsx` — header gains `📥 Backlog (N)` button; sidebar shell wraps the new `HistorySidebar` with controlled tab state.
+- `src/components/dashboard/Dashboard.tsx` — same.
+- `src/components/ui/EditableTaskList.tsx` — intention rows get `📥` / `🗑` icon buttons routed through `useIntentionRemoval`. Delete is confirm-modal-gated.
+- `src/components/wizard/Step3Schedule.tsx` — new "Today's intentions ({N})" overview panel at the top of Phase 1 with the same `📥` / `🗑` affordances.
+
+**Docs:**
+- `docs/synthesis.md` — `Last updated:` + `Reflects:` bumped to v6.2; §2.1 vocab gains the **Backlog** row; §2.2 wizard step descriptions note the new affordance; §5 data-model essentials mention `life.backlog`; §7 feature inventory adds the backlog feature; bug-fix call-out.
+- `docs/architecture.md` — `loadInitialState` description in §5.1; new sidebar component name; `UpdateTaskOpts` `null` support note in §5.2; new §6.8 Intentions Backlog; backlog-tab component in §12 directory structure.
+- `docs/data-model.md` — `BacklogEntry` type; `LifeContext.backlog`; schema marker `6.2`; new reducer-action catalog entries; rollover migration prose.
+- `docs/user-guide.md` + `src/components/guide/UserGuide.tsx` — backlog mental model + how to defer / bring back / discard, what happens at rollover.
+- `docs/history/plan_v6.1.md` renamed to `docs/history/plan_v6.x.md`; this v6.2 section appended.
+
+## Verification performed
+
+- `npm run build` — passes; bundle 526.59 kB (gzip 146.41 kB), up from 511.71 kB in v6.1 (acceptable — new types, helpers, sidebar tabs, modals, Step 3 overview panel).
+- `npm run lint` — clean.
+- `npx tsc --noEmit` — clean.
+
+End-to-end manual checks (run on first browser session post-deploy):
+
+- **Bug fix E2E**: create an intention, link 2 Todoist tasks, schedule them (Step 3 Phase 2). Click 🗑 → confirm. Confirm in Todoist that both tasks lost their due dates (previously they'd remain scheduled).
+- **Manual move-to-backlog E2E**: same setup but click 📥. Confirm intention disappears from `plan.intentions`, appears under the Backlog tab in the sidebar with reason "manual", Todoist tasks unscheduled, header counter increments.
+- **Bring back E2E**: open the sidebar's Backlog tab, click "Bring to today". Confirm intention reappears in `plan.intentions` with fresh `LinkedTask` rows (`type: 'unclassified'`, no estimate, no assignment). User can re-flow them through Step 2 + Step 3.
+- **Rollover E2E**: change system clock forward one day and reload. Confirm: (a) yesterday's plan appears in Saved Sessions tab labeled `Auto: <yesterday>`, replacing any same-date manual save; (b) intentions with uncompleted linked tasks appear in Backlog tab with reason "rolled over"; (c) Todoist due dates untouched.
+- **Discard backlog entry E2E**: confirm modal appears; on confirm, entry gone, Todoist tasks unscheduled.
+- **Habit-task safety**: spot-check that orphan habit-tasks (`sourceHabitId` set) are never unscheduled by `unscheduleIntentionTasks` — the helper has explicit skip logic. Habits are owned by `syncHabitToTodoist`, not by the intention flow.
+- **Backup roundtrip**: full-backup export from a v6.2 instance with backlog entries; import into a fresh v6.2 instance; confirm `life.backlog` round-trips intact (merge-by-id).
+- **Auto-save authority**: have a manual save for date X, then rollover from a plan with date X. Confirm only one entry for date X exists, and that it's the auto-save (manual snapshot replaced).
+
+## Notable design notes
+
+- **`due_string: 'no date'` over `due_date: null`.** Both work on the Todoist REST API v1 (the JSON body's `null` is propagated by `JSON.stringify`), but `'no date'` is the documented sentinel and is consistent with other recurring/clearing operations in the Todoist API surface. Either would have been correct.
+- **`loadPlan` removed entirely.** `peekRawPlan` does the same parse-and-migrate work but without the date-freshness gate, and `loadInitialState` is the only caller that needs to decide what to do with a stale plan. Keeping `loadPlan` would have been a duplicate of `peekRawPlan` plus a discard — the wrong primitive once the harvest path existed.
+- **Why the bug existed for so long.** v6.1 (and prior) treated the reducer as the boundary of correctness. Reducer purity is a virtue, but it meant async side-effects (like clearing a remote due date) had no obvious home — call sites typically dispatched and moved on. v6.2 makes the side-effect explicit by introducing the `useIntentionRemoval` hook as *the* boundary for intention removal. Every call site goes through it; there's nowhere for the bug to hide.
+
+## Deferred to later iterations
+
+- **v7 — Modes, Rituals, Recovery**: unchanged from v6.1's deferred list.
+- **v8 — Reviews, Drift Detection**: unchanged.
+- **Backlog on `/life`**: a dedicated `/life` section mirroring the sidebar's BacklogTab. v6.2 ships only the sidebar surface; adding a `/life` section is a one-component diff if usage warrants it.
+- **Auto-prune of old auto-saves**: the user explicitly opted out of automatic history cleanup ("we leave it up to the user can choose to delete old saves to maintain storage discipline"). A future iteration could add a "prune saves older than 30 days" toggle in Settings.
+- **Backlog age decay**: backlog entries currently live forever. A staleness signal ("this has been in backlog for 14 days — drop it?") could land in v8's drift-detection work.
