@@ -215,34 +215,42 @@ function emptyLifeContext(): LifeContext {
     return { seasons: [], habits: [], activeSeasonId: null };
 }
 
+/**
+ * Per-habit schema migration:
+ *  - v5 → v6: ensure `kind`, defaulting legacy habits to `'stabilizer'`.
+ *  - v6 → v6.1: fold `autoLinkTodoistId` → `todoistTaskId`, `maxBlockMinutes` → `targetDurationMinutes`,
+ *    default `windowBehavior` to `'lenient'`. The deprecated fields are stripped so storage doesn't
+ *    accumulate cruft — they only need to round-trip once.
+ *
+ * Called from both `loadLifeContext` (initial localStorage load) and the `IMPORT_BACKUP` reducer
+ * case (so imported v6 payloads also get the v6.1 shape applied).
+ */
+function migrateHabit(h: Habit): Habit {
+    const { autoLinkTodoistId, maxBlockMinutes, ...rest } = h;
+    const kind = rest.kind ?? 'stabilizer';
+    const migrated: Habit = { ...rest, kind };
+    if (kind === 'stabilizer') {
+        if (autoLinkTodoistId && !rest.todoistTaskId) {
+            migrated.todoistTaskId = autoLinkTodoistId;
+        }
+        if (maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
+            migrated.targetDurationMinutes = maxBlockMinutes;
+        }
+        if (!rest.windowBehavior) {
+            migrated.windowBehavior = 'lenient';
+        }
+    }
+    return migrated;
+}
+
 function loadLifeContext(): LifeContext {
     try {
         const raw = localStorage.getItem(LIFE_KEY);
         if (!raw) return emptyLifeContext();
         const parsed = JSON.parse(raw) as Partial<LifeContext> & { _schemaVersion?: number };
-        const habits = (parsed.habits ?? []).map((h) => {
-            // v5 → v6: every habit gets a kind. Existing habits default to 'stabilizer'.
-            const kind = h.kind ?? 'stabilizer';
-            const migrated: Habit = { ...h, kind };
-            // v6 → v6.1: stabilizer fields previously stored elsewhere fold into the new schedule
-            // shape. autoLinkTodoistId becomes the habit's primary Todoist task; maxBlockMinutes
-            // becomes targetDurationMinutes; windowBehavior defaults to 'lenient'.
-            if (kind === 'stabilizer') {
-                if (h.autoLinkTodoistId && !h.todoistTaskId) {
-                    migrated.todoistTaskId = h.autoLinkTodoistId;
-                }
-                if (h.maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
-                    migrated.targetDurationMinutes = h.maxBlockMinutes;
-                }
-                if (!h.windowBehavior) {
-                    migrated.windowBehavior = 'lenient';
-                }
-            }
-            return migrated;
-        });
         return {
             seasons: parsed.seasons ?? [],
-            habits,
+            habits: (parsed.habits ?? []).map(migrateHabit),
             activeSeasonId: parsed.activeSeasonId ?? null,
             restCues: parsed.restCues,
         };
@@ -710,11 +718,13 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'SKIP_HABIT_TASK': {
-            // v6.1: mark a habit-task as skipped for today (kept in linkedTasks for idempotency,
-            // removed from session assignments so it disappears from session views).
+            // v6.1: mark a habit-task as skipped for today. The LinkedTask is kept so
+            // `computeHabitTasksToInject` (which dedupes by sourceHabitId presence) won't
+            // re-add it later in the same day. `completed` stays false — a skip is a deliberate
+            // "not today", not a completion, and shouldn't inflate the done-counter.
             const linkedTasks = plan.linkedTasks.map((lt) =>
                 lt.todoistId === action.todoistId && lt.sourceHabitId
-                    ? { ...lt, skippedForToday: true, completed: true, assignedSessions: [] }
+                    ? { ...lt, skippedForToday: true, assignedSessions: [] }
                     : lt,
             );
             const taskSessions = { ...plan.taskSessions };
@@ -785,6 +795,7 @@ function reducer(state: State, action: Action): State {
             if (action.settings) next.settings = { ...state.settings, ...action.settings };
             if (action.life) {
                 // Merge by id — never overwrite existing entries; append new ones.
+                // Imported habits go through `migrateHabit` so a v6 backup picks up the v6.1 shape.
                 const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
                 const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
                 next.life = {
@@ -794,7 +805,9 @@ function reducer(state: State, action: Action): State {
                     ],
                     habits: [
                         ...state.life.habits,
-                        ...action.life.habits.filter((h) => !existingHabitIds.has(h.id)),
+                        ...action.life.habits
+                            .filter((h) => !existingHabitIds.has(h.id))
+                            .map(migrateHabit),
                     ],
                     activeSeasonId: state.life.activeSeasonId ?? action.life.activeSeasonId,
                 };

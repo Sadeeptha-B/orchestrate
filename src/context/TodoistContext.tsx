@@ -15,6 +15,15 @@ const CACHE_STALENESS_MS = 5 * 60_000;  // 5min — skip initial fetch if cache 
 
 interface PaginatedResponse<T> { results: T[]; next_cursor: string | null }
 
+/** Thrown by `apiFetch` on HTTP 401 so the provider can route to a re-auth banner. */
+class TodoistAuthError extends Error {
+    readonly status = 401;
+    constructor() {
+        super('Todoist authentication failed');
+        this.name = 'TodoistAuthError';
+    }
+}
+
 async function apiFetch<T>(token: string, path: string, opts?: RequestInit): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`, {
         ...opts,
@@ -24,6 +33,7 @@ async function apiFetch<T>(token: string, path: string, opts?: RequestInit): Pro
             ...(opts?.headers ?? {}),
         },
     });
+    if (res.status === 401) throw new TodoistAuthError();
     if (!res.ok) throw new Error(`Todoist API ${res.status}: ${res.statusText}`);
     if (res.status === 204) return undefined as unknown as T;
     return res.json();
@@ -101,6 +111,8 @@ export interface TodoistDataValue {
     loading: boolean;
     error: string | null;
     isConfigured: boolean;
+    /** True when the most recent API call returned 401 (token revoked/expired). Clears on token change. */
+    authFailed: boolean;
 }
 
 export interface TodoistActionsValue {
@@ -134,6 +146,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const [sections, setSections] = useState<TodoistSection[]>(() => cache.current?.sections ?? []);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [authFailed, setAuthFailed] = useState(false);
 
     const tokenRef = useRef<string | null>(null);
     const hasDataRef = useRef((cache.current?.tasks.length ?? 0) > 0);
@@ -141,6 +154,19 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const isConfigured = Boolean(
         settings.todoistToken && settings.todoistTokenIV && settings.todoistTokenKey,
     );
+
+    /**
+     * Single error-handling funnel: 401s flip `authFailed` and route to a re-auth message;
+     * everything else falls through to the call-site's specific fallback.
+     */
+    const handleApiError = useCallback((e: unknown, fallback: string) => {
+        if (e instanceof TodoistAuthError) {
+            setAuthFailed(true);
+            setError('Todoist authentication failed — reconnect in Settings.');
+            return;
+        }
+        setError(e instanceof Error ? e.message : fallback);
+    }, []);
 
     // ── Staleness & dedup tracking ──
     const lastFetchedRef = useRef({
@@ -163,7 +189,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey]);
 
-    useEffect(() => { tokenRef.current = null; }, [settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey]);
+    useEffect(() => {
+        tokenRef.current = null;
+        setAuthFailed(false);
+    }, [settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey]);
 
     // ── Refresh functions with dedup + staleness ──
 
@@ -197,7 +226,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                     setData(data);
                     lastFetchedRef.current[kind] = Date.now();
                 } catch (e) {
-                    if (errorMessage !== undefined) {
+                    // 401s always flip auth-failed, even for silent project/section fetches —
+                    // otherwise a revoked token would show no error anywhere.
+                    if (e instanceof TodoistAuthError) {
+                        setAuthFailed(true);
+                        setError('Todoist authentication failed — reconnect in Settings.');
+                    } else if (errorMessage !== undefined) {
                         setError(e instanceof Error ? e.message : errorMessage);
                     }
                     // else: silent — projects/sections are optional UI enhancement
@@ -268,13 +302,18 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isConfigured]);
 
-    // ── Focus refresh (tasks only, respects staleness) ──
+    // ── Focus refresh (respects per-resource staleness) ──
+    // Refreshes tasks AND projects; both dedupe internally via the 30s staleness window,
+    // so a quick tab-switch loop is cheap. Sections are static enough to skip here.
     useEffect(() => {
         if (!isConfigured) return;
-        const onFocus = () => { refreshTasks(); };
+        const onFocus = () => {
+            refreshTasks();
+            refreshProjects();
+        };
         window.addEventListener('focus', onFocus);
         return () => window.removeEventListener('focus', onFocus);
-    }, [isConfigured, refreshTasks]);
+    }, [isConfigured, refreshTasks, refreshProjects]);
 
     // ── Persist cache on data change ──
     useEffect(() => {
@@ -326,10 +365,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             setTasks((prev) => [...prev, task]);
             return task;
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to create task');
+            handleApiError(e, 'Failed to create task');
             return null;
         }
-    }, [resolveToken]);
+    }, [resolveToken, handleApiError]);
 
     const completeTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
@@ -344,9 +383,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             });
             setTasks((prev) => prev.filter((t) => t.id !== taskId));
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to complete task');
+            handleApiError(e, 'Failed to complete task');
         }
-    }, [resolveToken]);
+    }, [resolveToken, handleApiError]);
 
     const reopenTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
@@ -361,9 +400,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             });
             await refreshTasks({ force: true });
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to reopen task');
+            handleApiError(e, 'Failed to reopen task');
         }
-    }, [resolveToken, refreshTasks]);
+    }, [resolveToken, refreshTasks, handleApiError]);
 
     const moveTask = useCallback(async (taskId: string, projectId: string): Promise<boolean> => {
         const token = await resolveToken();
@@ -380,10 +419,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, project_id: projectId } : t)));
             return true;
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to move task');
+            handleApiError(e, 'Failed to move task');
             return false;
         }
-    }, [resolveToken]);
+    }, [resolveToken, handleApiError]);
 
     const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts) => {
         const token = await resolveToken();
@@ -395,9 +434,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             });
             setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to update task');
+            handleApiError(e, 'Failed to update task');
         }
-    }, [resolveToken]);
+    }, [resolveToken, handleApiError]);
 
     const deleteTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
@@ -409,9 +448,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                 return prev.filter((t) => !removed.has(t.id));
             });
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to delete task');
+            handleApiError(e, 'Failed to delete task');
         }
-    }, [resolveToken]);
+    }, [resolveToken, handleApiError]);
 
     const createProject = useCallback(async (name: string, opts?: CreateProjectOpts): Promise<TodoistProject | null> => {
         const token = await resolveToken();
@@ -424,10 +463,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             setProjects((prev) => [...prev, project]);
             return project;
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to create project');
+            handleApiError(e, 'Failed to create project');
             return null;
         }
-    }, [resolveToken]);
+    }, [resolveToken, handleApiError]);
 
     const deleteProject = useCallback(async (projectId: string) => {
         const token = await resolveToken();
@@ -439,9 +478,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             setTasks((prev) => prev.filter((t) => !removedProjects.has(t.project_id)));
             setSections((prev) => prev.filter((s) => !removedProjects.has(s.project_id)));
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to delete project');
+            handleApiError(e, 'Failed to delete project');
         }
-    }, [resolveToken, projects]);
+    }, [resolveToken, projects, handleApiError]);
 
     // ── Memoized task lookup map ──
     const taskMap = useMemo(
@@ -451,8 +490,8 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── Context values ──
     const dataValue = useMemo<TodoistDataValue>(() => ({
-        tasks, projects, sections, taskMap, loading, error, isConfigured,
-    }), [tasks, projects, sections, taskMap, loading, error, isConfigured]);
+        tasks, projects, sections, taskMap, loading, error, isConfigured, authFailed,
+    }), [tasks, projects, sections, taskMap, loading, error, isConfigured, authFailed]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
         createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask,

@@ -8,6 +8,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks/useTodoist';
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
+import { isHabitDerivedTask } from '../../lib/habits';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
 
 /** v6.1: synthetic group key used by SessionCard to render orphan habit-tasks under a "🔁 Habits" header. */
@@ -272,7 +273,7 @@ function SessionCard({
                                                 sessionId={session.id}
                                                 drag={drag}
                                                 scheduledRange={getScheduledRange(todoistTask)}
-                                                isHabitDerived={Boolean(lt.sourceHabitId)}
+                                                isHabitDerived={isHabitDerivedTask(lt)}
                                             />
                                         );
                                     })}

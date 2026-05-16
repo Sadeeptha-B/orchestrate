@@ -49,7 +49,17 @@ export function HabitsLibrary() {
     const [syncError, setSyncError] = useState<string | null>(null);
     const [migrating, setMigrating] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [refreshingProjects, setRefreshingProjects] = useState(false);
     const activeHabitCount = getActiveHabits(life).length;
+
+    const handleRefreshProjects = async () => {
+        setRefreshingProjects(true);
+        try {
+            await todoistActions.refreshProjects({ force: true });
+        } finally {
+            setRefreshingProjects(false);
+        }
+    };
 
     useEffect(() => {
         if (!createHabitKindFromState) return;
@@ -63,10 +73,23 @@ export function HabitsLibrary() {
         return a.name.localeCompare(b.name);
     });
 
-    const unsyncedStabilizers = useMemo(
-        () => life.habits.filter((h) => h.kind === 'stabilizer' && h.active && !h.todoistTaskId),
-        [life.habits],
+    // Stabilizers needing a (re-)sync: either they've never been synced (`!todoistTaskId`)
+    // OR their previously-synced Todoist task has gone missing out-of-band. The latter is only
+    // a reliable signal once the task cache has actually loaded (taskMap.size > 0).
+    const needsSyncStabilizers = useMemo(
+        () =>
+            life.habits.filter((h) => {
+                if (h.kind !== 'stabilizer' || !h.active) return false;
+                if (!h.todoistTaskId) return true;
+                return taskMap.size > 0 && !taskMap.has(h.todoistTaskId);
+            }),
+        [life.habits, taskMap],
     );
+    const neverSyncedCount = useMemo(
+        () => needsSyncStabilizers.filter((h) => !h.todoistTaskId).length,
+        [needsSyncStabilizers],
+    );
+    const missingTaskCount = needsSyncStabilizers.length - neverSyncedCount;
 
     const defaultProjectName = useMemo(() => {
         const id = settings.habitsTodoistProjectId;
@@ -99,6 +122,11 @@ export function HabitsLibrary() {
      * Push a stabilizer to Todoist using a pre-resolved default project id and persist the resulting
      * taskId on the habit. No-op for non-stabilizers. The caller resolves the default project once
      * (avoids a stale-closure loop where each iteration would re-create the project).
+     *
+     * Also self-heals two stale-reference cases by patching the habit on success:
+     *   - `todoistTaskId` updated when the create-or-update returned a different id
+     *   - `todoistProjectId` cleared when the per-habit override pointed at a deleted project
+     *     (we silently fell back to default in `resolveHabitProjectId`).
      */
     const syncStabilizer = async (habit: Habit, defaultProjectId: string): Promise<boolean> => {
         if (habit.kind !== 'stabilizer' || !isTodoistConfigured) return false;
@@ -110,8 +138,17 @@ export function HabitsLibrary() {
             taskMap,
         });
         if (!taskId) return false;
-        if (taskId !== habit.todoistTaskId) {
-            dispatch({ type: 'UPDATE_HABIT', habit: { ...habit, todoistTaskId: taskId } });
+
+        const patch: Partial<Habit> = {};
+        if (taskId !== habit.todoistTaskId) patch.todoistTaskId = taskId;
+        if (
+            habit.todoistProjectId
+            && !projects.some((p) => p.id === habit.todoistProjectId)
+        ) {
+            patch.todoistProjectId = undefined;
+        }
+        if (Object.keys(patch).length > 0) {
+            dispatch({ type: 'UPDATE_HABIT', habit: { ...habit, ...patch } });
         }
         return true;
     };
@@ -161,7 +198,7 @@ export function HabitsLibrary() {
     };
 
     const handleMigrate = async () => {
-        if (!isTodoistConfigured || unsyncedStabilizers.length === 0) return;
+        if (!isTodoistConfigured || needsSyncStabilizers.length === 0) return;
         setMigrating(true);
         setSyncError(null);
         // Resolve the default project ONCE — `syncStabilizer` re-uses this id across iterations
@@ -173,14 +210,14 @@ export function HabitsLibrary() {
             return;
         }
         let failures = 0;
-        for (const habit of unsyncedStabilizers) {
+        for (const habit of needsSyncStabilizers) {
             const ok = await syncStabilizer(habit, defaultProjectId);
             if (!ok) failures += 1;
         }
         setMigrating(false);
         if (failures > 0) {
             setSyncError(
-                `Migrated ${unsyncedStabilizers.length - failures} of ${unsyncedStabilizers.length}. Try again to retry the rest.`,
+                `Synced ${needsSyncStabilizers.length - failures} of ${needsSyncStabilizers.length}. Try again to retry the rest.`,
             );
         }
     };
@@ -190,13 +227,17 @@ export function HabitsLibrary() {
             title="Habits"
             subtitle="Stabilizers sync to Todoist as recurring tasks and surface as session-assigned tasks each day they're due. Light-coherent habits live in the Light Pool."
         >
-            {unsyncedStabilizers.length > 0 && (
+            {needsSyncStabilizers.length > 0 && (
                 <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
                     <div className="text-sm">
                         <strong>
-                            {unsyncedStabilizers.length} stabilizer{unsyncedStabilizers.length === 1 ? '' : 's'}
+                            {needsSyncStabilizers.length} stabilizer{needsSyncStabilizers.length === 1 ? '' : 's'}
                         </strong>{' '}
-                        need to be synced as recurring Todoist tasks.
+                        {missingTaskCount === 0
+                            ? 'need to be synced as recurring Todoist tasks.'
+                            : neverSyncedCount === 0
+                                ? "have a Todoist task that's gone missing — re-sync to recreate it."
+                                : `need syncing (${neverSyncedCount} new, ${missingTaskCount} missing in Todoist).`}
                         {isTodoistConfigured ? (
                             <span className="text-text-light">
                                 {' '}Will sync to{' '}
@@ -222,7 +263,7 @@ export function HabitsLibrary() {
                                 Choose project
                             </Button>
                             <Button size="sm" disabled={migrating} onClick={handleMigrate}>
-                                {migrating ? 'Migrating…' : 'Migrate'}
+                                {migrating ? 'Syncing…' : missingTaskCount === 0 ? 'Migrate' : 'Re-sync'}
                             </Button>
                         </div>
                     )}
@@ -245,7 +286,12 @@ export function HabitsLibrary() {
                         : `${life.habits.length} habit${life.habits.length === 1 ? '' : 's'}, ${activeHabitCount
                         } active.`}
                 </p>
-                <Button size="sm" onClick={() => openCreate()}>
+                <Button
+                    size="sm"
+                    onClick={() => openCreate()}
+                    disabled={migrating}
+                    title={migrating ? 'Wait for the sync to finish' : undefined}
+                >
                     New Habit
                 </Button>
             </div>
@@ -299,18 +345,20 @@ export function HabitsLibrary() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
+                                    disabled={migrating}
                                     onClick={() =>
                                         dispatch({ type: 'TOGGLE_HABIT_ACTIVE', habitId: h.id })
                                     }
                                 >
                                     {h.active ? 'Pause' : 'Activate'}
                                 </Button>
-                                <Button variant="ghost" size="sm" onClick={() => setEditing(h)}>
+                                <Button variant="ghost" size="sm" disabled={migrating} onClick={() => setEditing(h)}>
                                     Edit
                                 </Button>
                                 <Button
                                     variant="ghost"
                                     size="sm"
+                                    disabled={migrating}
                                     onClick={() => tryDelete(h)}
                                     className="text-red-500 hover:text-red-600"
                                 >
@@ -328,6 +376,8 @@ export function HabitsLibrary() {
                     seasons={life.seasons}
                     todoistProjects={isTodoistConfigured ? projects : []}
                     defaultProjectName={defaultProjectName}
+                    onRefreshProjects={isTodoistConfigured ? handleRefreshProjects : undefined}
+                    refreshingProjects={refreshingProjects}
                     submitLabel="Create"
                     onCancel={closeCreate}
                     onSubmit={handleCreate}
@@ -344,6 +394,8 @@ export function HabitsLibrary() {
                         seasons={life.seasons}
                         todoistProjects={isTodoistConfigured ? projects : []}
                         defaultProjectName={defaultProjectName}
+                        onRefreshProjects={isTodoistConfigured ? handleRefreshProjects : undefined}
+                        refreshingProjects={refreshingProjects}
                         initial={editing}
                         submitLabel="Save"
                         onCancel={() => setEditing(null)}
