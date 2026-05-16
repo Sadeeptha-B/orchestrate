@@ -1,13 +1,11 @@
-import { useState } from 'react';
+import { useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useDayPlan } from '../hooks/useDayPlan';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
-import { Modal } from './ui/Modal';
-import { AboutContent } from './ui/AboutContent';
 import { Logo } from './ui/Logo';
-import { ThemeToggle } from './ui/ThemeToggle';
+import { HeaderControls } from './ui/HeaderControls';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../data/wizardSteps';
 import { findActiveSeason } from '../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../lib/habits';
@@ -22,7 +20,7 @@ function getGreeting(): string {
 export function Welcome() {
     const { plan, history, life } = useDayPlan();
     const navigate = useNavigate();
-    const [showAbout, setShowAbout] = useState(false);
+    const aboutTriggerRef = useRef<(() => void) | null>(null);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
@@ -43,21 +41,7 @@ export function Welcome() {
         <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
             {/* Top-right controls */}
             <div className="fixed top-5 right-5 flex gap-1.5 z-10">
-                <button
-                    onClick={() => setShowAbout(true)}
-                    className="p-2 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"
-                    title="About Orchestrate"
-                >
-                    ?
-                </button>
-                <button
-                    onClick={() => navigate('/settings')}
-                    className="p-2 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
-                    title="Settings"
-                >
-                    ⚙
-                </button>
-                <ThemeToggle size="md" />
+                <HeaderControls aboutTriggerRef={aboutTriggerRef} />
             </div>
 
             <div className="w-full max-w-2xl space-y-8">
@@ -223,7 +207,7 @@ export function Welcome() {
                         <p className="text-xs text-text-light">
                             New here?{' '}
                             <button
-                                onClick={() => setShowAbout(true)}
+                                onClick={() => aboutTriggerRef.current?.()}
                                 className="text-accent hover:underline cursor-pointer"
                             >
                                 Learn what Orchestrate does
@@ -242,11 +226,6 @@ export function Welcome() {
                     </button>
                 </div>
             </div>
-
-            {/* About modal */}
-            <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
-                <AboutContent onOpenGuide={() => { setShowAbout(false); navigate('/guide'); }} />
-            </Modal>
 
 
         </div>

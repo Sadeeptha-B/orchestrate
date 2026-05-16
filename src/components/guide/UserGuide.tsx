@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Logo } from '../ui/Logo';
-import { ThemeToggle } from '../ui/ThemeToggle';
+import { HeaderControls } from '../ui/HeaderControls';
 
 /**
  * v6.1 User Guide — mental model and how-to for the three execution pathways
@@ -32,7 +32,7 @@ export function UserGuide() {
                         >
                             Back to Dashboard
                         </button>
-                        <ThemeToggle />
+                        <HeaderControls />
                     </div>
                 </div>
             </header>
