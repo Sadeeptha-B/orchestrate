@@ -162,7 +162,7 @@ This is the heart of the application. It manages:
 - Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; the UI offers to deactivate first).
 - Deleting a habit also drops any orphan habit-tasks for that habit from today's `plan.linkedTasks` and clears their session assignments.
 - `INJECT_HABIT_TASKS` (v6.1, replaces `INJECT_HABIT_INTENTIONS`) is idempotent — it skips habits whose `id` is already present as a `LinkedTask.sourceHabitId`. The action's payload (`HabitTaskInjection[]`) is precomputed by `lib/habitsTodoistSync.ts → computeHabitTasksToInject(...)` from the live Todoist `taskMap` + active session slots; only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify. Light-coherent habits never appear here.
-- `SKIP_HABIT_TASK` (v6.1) marks a habit-task `skippedForToday + completed` and clears it from session assignments — the LinkedTask itself is kept so re-injection won't duplicate it for the day.
+- `SKIP_HABIT_TASK` (v6.1) marks a habit-task `skippedForToday` and clears it from session assignments — the LinkedTask itself is kept so re-injection won't duplicate it for the day. `completed` stays false on a skip: it's "not today", not a completion, and shouldn't inflate the done-counter. Idempotency against re-injection is preserved via `sourceHabitId` presence alone.
 - Light-coherent habits surface only via the Light Pool, which writes to `plan.habitLog` and never touches `intentions`/`linkedTasks`/`taskSessions`.
 
 See the [Data Model](data-model.md) document for the full action catalog and type definitions.
@@ -173,17 +173,18 @@ See the [Data Model](data-model.md) document for the full action catalog and typ
 
 Manages all Todoist API data and mutations. Split into two contexts for render optimization:
 
-- **`TodoistDataContext`** — read-only values: `tasks`, `projects`, `sections`, `taskMap`, `loading`, `error`, `isConfigured`.
+- **`TodoistDataContext`** — read-only values: `tasks`, `projects`, `sections`, `taskMap`, `loading`, `error`, `isConfigured`, `authFailed` (post-v6.1; true when any API call returned HTTP 401, resets when the token changes).
 - **`TodoistActionsContext`** — mutation functions: `createTask` (returns the created `TodoistTask | null`), `updateTask`, `moveTask` (v6.1; Sync API `item_move`, returns success boolean), `completeTask`, `reopenTask`, `deleteTask`, `createProject` (returns the created `TodoistProject | null`), `deleteProject`, `refreshTasks`, `refreshProjects`, `refreshSections`. v6.1: `createTask` / `updateTask` accept Todoist's native `due_string` + `due_lang` + `duration` / `duration_unit` (used by `lib/habitsTodoistSync.ts` to push recurrence to the chosen Habits project).
 
 **Key behaviors:**
 1. **Stale-while-revalidate**: On mount, if a cached copy exists in `localStorage` (key: `orchestrate-todoist-cache`) and is less than 5 minutes old, it is used without fetching. Otherwise, a fresh fetch is triggered.
 2. **Request deduplication**: In-flight requests are tracked via `inflightRef`. Concurrent calls to `refreshTasks()` return the same promise.
-3. **Focus refresh**: A `window.focus` listener refreshes tasks (not projects/sections) but only if the last fetch was more than 30 seconds ago.
+3. **Focus refresh**: A `window.focus` listener refreshes tasks AND projects (post-v6.1; was tasks-only). Both dedupe internally via the 30s staleness window. Sections are skipped — they're static enough to not warrant refetching on every focus.
 4. **Loading UX**: The `loading` flag only activates when there is no cached data. This prevents flash-of-loading-state on subsequent fetches.
 5. **Data reconciliation**: Two one-time effects run after the first fetch:
    - *Title snapshot sync* — updates `titleSnapshot` on `LinkedTask` entries when the Todoist title has changed.
    - *Stale task cleanup* — marks linked tasks as completed if they no longer appear in the Todoist API response (i.e., were completed externally).
+6. **401 detection (post-v6.1)**: `apiFetch` throws a `TodoistAuthError` on `res.status === 401`. A single `handleApiError` helper inside the provider routes 401s to `setAuthFailed(true)` and a "reconnect in Settings" error message; non-auth errors fall through to each call-site's specific fallback. `authFailed` resets when the token is replaced or cleared. `TodoistSetup` renders a top banner when `authFailed && isConfigured` and flips the status badge from "Connected" to "Token rejected".
 
 **Consumer hooks** (`src/hooks/useTodoist.ts`):
 - `useTodoistData()` — for components that only read data (most wizard steps, SessionTimeline, CheckInModal).
@@ -266,7 +267,7 @@ The most complex component. Used in four places with different configurations:
 
 ### 6.5 True Rest (v6+)
 
-**Files:** `src/data/restCues.ts` (built-in catalog + `pickRestCue(seed?, cues?)`), `src/components/dashboard/TrueRestCard.tsx` (three variants), `src/components/life/RestCuesManager.tsx` (management page at `/rest-cues`).
+**Files:** `src/data/restCues.ts` (built-in catalog), `src/components/dashboard/TrueRestCard.tsx` (three variants), `src/components/life/RestCuesManager.tsx` (management page at `/rest-cues`).
 
 **Catalog:** 8 built-in cues across `physical | breath | sensory` categories, defined in `src/data/restCues.ts`. User-configurable: custom cues are stored as `life.restCues?: RestCue[]` in `LifeContext`. When `life.restCues` is `undefined`, the built-in defaults are used. On the first add/edit/delete, the reducer auto-seeds `life.restCues` from the defaults so no explicit "Customize" step is needed.
 
@@ -310,10 +311,15 @@ Background tasks count once per assignment: a 20-min background task assigned to
 - **`computeHabitTasksToInject({ life, plan, taskMap, sessionSlots, now, taskCaps })`** — produces the `HabitTaskInjection[]` consumed by `INJECT_HABIT_TASKS`. Filters: active stabilizer + recurrence matches today + season scope OK + `todoistTaskId` set + Todoist task is due today + unchecked + (if `windowBehavior === 'strict'`) current time ≤ `targetTime + duration`. Auto-assigns the session whose `[startTime, endTime)` window contains the Todoist `due.datetime` (falls back to `Habit.targetTime` when the Todoist due has no time-of-day component).
 
 **Lifecycle:**
-- **On habit save** (`HabitsLibrary` → `handleCreate` / `handleEdit`): dispatches `ADD_HABIT` / `UPDATE_HABIT` first, then resolves the default project via `ensureHabitsProject` once, then `syncHabitToTodoist` with the per-habit-resolved project; if a new `todoistTaskId` comes back, dispatches a follow-up `UPDATE_HABIT`. Sync failures show a non-blocking inline message; the habit stays saved locally.
-- **On `/habits` page load**: `HabitsLibrary` shows a "N stabilizers need to be synced" banner when any active stabilizer lacks `todoistTaskId`. The banner names the destination project ("Will sync to <name>" or "a new 'Habits' project" when unset) and exposes two buttons: a **Choose project** ghost button that opens `SettingsModal` (so the user can pick a default before migrating), and the primary **Migrate** button which resolves the default project once before iterating (the v6.1 fix that prevents re-creating a duplicate project per habit) and bulk-runs `syncHabitToTodoist` over the unsynced set.
-- **Default project picker**: `TodoistSetup` (Settings → Integrations) renders a dropdown of the user's Todoist projects, persisted to `AppSettings.habitsTodoistProjectId`. Leaving it on "Auto-create" defers to `ensureHabitsProject`'s lazy-create flow.
-- **Per-habit project override**: `HabitForm` (stabilizer-only Schedule section) renders the same project dropdown with a "Use default" option. Persisted to `Habit.todoistProjectId`. Editing this on an already-synced habit causes the next save to move the existing Todoist task into the new project.
+- **On habit save** (`HabitsLibrary` → `handleCreate` / `handleEdit`): dispatches `ADD_HABIT` / `UPDATE_HABIT` first, then resolves the default project via `ensureHabitsProject` once, then `syncHabitToTodoist` with the per-habit-resolved project. `syncStabilizer` self-heals two stale-reference cases on success via a single follow-up `UPDATE_HABIT`: (a) if `syncHabitToTodoist` returned a new `todoistTaskId` (covers the case where the previously-tracked Todoist task was deleted out-of-band and the helper fell through to the create branch), and (b) if `habit.todoistProjectId` pointed at a project that no longer exists (the helper silently fell back to default via `resolveHabitProjectId`, so we clear the dead override here). Sync failures show a non-blocking inline message; the habit stays saved locally.
+- **On `/habits` page load**: `HabitsLibrary` shows a single "needs sync" banner whose copy adapts to two underlying conditions: stabilizers that have never been synced (`!todoistTaskId`) and stabilizers whose previously-synced Todoist task has gone missing in the cache (`todoistTaskId` set but absent from `taskMap`, guarded by `taskMap.size > 0` so cold cache doesn't false-positive). Copy variants:
+  - all-new → "*N stabilizers need to be synced as recurring Todoist tasks*"
+  - all-missing → "*N stabilizers have a Todoist task that's gone missing — re-sync to recreate it*"
+  - mixed → "*N stabilizers need syncing (X new, Y missing in Todoist)*"
+  The primary button label flips between "Migrate" and "Re-sync" accordingly. The banner names the destination project inline and exposes a **Choose project** ghost button that opens `SettingsModal` so the user can pick a default before migrating. The primary action resolves the default project once before iterating (the v6.1 fix that prevents re-creating a duplicate project per habit) and bulk-runs `syncHabitToTodoist`. Re-sync just works because the helper's `taskMap.get(habit.todoistTaskId)` returns undefined for missing tasks and falls through to the create branch automatically.
+- **Habit-save lockout during migration (post-v6.1)**: while `migrating` is true, the **New Habit** button + per-row **Pause/Activate**, **Edit**, **Delete** buttons are all disabled. Migration is user-initiated (not a background sync), so the simple lockout was preferred over a mutex; it eliminates the race where a concurrent `handleCreate` would re-invoke `ensureHabitsProject` in parallel with the loop.
+- **Default project picker**: `TodoistSetup` (Settings → Integrations) renders a dropdown of the user's Todoist projects, persisted to `AppSettings.habitsTodoistProjectId`. Leaving it on "Auto-create" defers to `ensureHabitsProject`'s lazy-create flow. A **↻ Refresh projects** affordance next to the heading triggers `actions.refreshProjects({ force: true })` so users who just created a project in Todoist can pick it without reloading. When the stored `habitsTodoistProjectId` references a project that no longer exists in the loaded list, a stale-default warning banner appears with a **Clear** button; the select also shows the "Auto-create" option as the displayed value so the UI matches what the next save will actually do.
+- **Per-habit project override**: `HabitForm` (stabilizer-only Schedule section) renders the same project dropdown with a "Use default" option. Persisted to `Habit.todoistProjectId`. Editing this on an already-synced habit causes the next save to move the existing Todoist task into the new project. The form receives an `onRefreshProjects` / `refreshingProjects` pair from `HabitsLibrary` and renders the same **↻ Refresh** affordance. When `initial.todoistProjectId` doesn't match any current project, a stale-override warning is rendered above the select and the displayed value falls back to "Use default" so the UI reflects the post-save state.
 - **On Step 1 wizard mount**: `Step1Intentions` calls `computeHabitTasksToInject(...)` and dispatches `INJECT_HABIT_TASKS`. Re-fires when the Todoist `taskMap.size`, `life.habits`, or `life.activeSeasonId` changes (idempotent at the reducer level).
 
 ---
@@ -439,7 +445,7 @@ src/
 ├── data/
 │   ├── sessions.ts             # Default session slot definitions
 │   ├── playlists.ts            # Spotify playlist catalog + work-type lookup
-│   └── restCues.ts             # v6: True Rest catalog + pickRestCue
+│   └── restCues.ts             # v6: True Rest catalog
 │
 ├── components/
 │   ├── Welcome.tsx             # Landing page

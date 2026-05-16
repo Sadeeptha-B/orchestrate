@@ -459,8 +459,8 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 | `DELETE_HABIT` | `habitId: string` | No-ops if the habit is anchor + active. Otherwise removes; **v6.1:** also drops any orphan habit-tasks (`sourceHabitId === habitId`) from `plan.linkedTasks` and clears them from `plan.taskSessions` |
 | `TOGGLE_HABIT_ACTIVE` | `habitId: string` | Flips the habit's `active` flag |
 | `INJECT_HABIT_TASKS` | `entries: HabitTaskInjection[]` | **v6.1** (replaces `INJECT_HABIT_INTENTIONS`). Appends pre-computed orphan habit-tasks to `plan.linkedTasks` (each with `type: 'background'`, `sourceHabitId`, `intentionId: undefined`) and adds them to `plan.taskSessions[entry.sessionId]` when `sessionId` is set. Idempotent: any entry whose `habitId` is already present as a `LinkedTask.sourceHabitId` is skipped. |
-| `SKIP_HABIT_TASK` | `todoistId: string` | **v6.1** (replaces `SKIP_HABIT_INTENTION`). Marks an orphan habit-task `skippedForToday + completed`, clears it from session assignments. The LinkedTask itself is kept so re-injection won't duplicate it for the day. |
-| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import: existing entries are never overwritten, new entries are appended. Honors the no-backend safety net |
+| `SKIP_HABIT_TASK` | `todoistId: string` | **v6.1** (replaces `SKIP_HABIT_INTENTION`). Marks an orphan habit-task `skippedForToday: true` and clears it from session assignments. The LinkedTask itself is kept so re-injection won't duplicate it for the day. `completed` stays false — a skip is "not today", not a completion, and shouldn't count toward the done-counter. |
+| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import: existing entries are never overwritten, new entries are appended. Imported habits run through the same `migrateHabit` helper as `loadLifeContext`, so a v6 backup picks up the v6.1 stabilizer shape (`todoistTaskId`, `targetDurationMinutes`, `windowBehavior`) on import. Honors the no-backend safety net. |
 
 ### 3.6 Light Pool Actions (v6)
 
@@ -533,11 +533,11 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
   - Build a map `intentionId → sourceHabitId` from any incoming intentions that carry `sourceHabitId`.
   - **Drop habit-derived intentions entirely** from the resulting `intentions` array. Strip `sourceHabitId` and `skippedForToday` fields from any remaining intentions (defensive — they're no longer in the type).
   - **Re-anchor LinkedTasks** whose `intentionId` referenced a dropped habit-derived intention: clear `intentionId`, set `sourceHabitId = <habit id>`, force `type: 'background'`. Existing `assignedSessions` and `taskSessions` references are preserved (the `todoistId` keys haven't changed).
-- **LifeContext transforms** (`loadLifeContext`, stabilizers only):
+- **LifeContext transforms** (`migrateHabit`, called from `loadLifeContext` AND `IMPORT_BACKUP`, stabilizers only):
   - If `autoLinkTodoistId` is set and `todoistTaskId` is not, copy across.
   - If `maxBlockMinutes` is set and `targetDurationMinutes` is not, copy across.
   - If `windowBehavior` is unset, default to `'lenient'`.
-  - The deprecated fields are kept on the type as `@deprecated` — `loadLifeContext` reads them once and the runtime no longer touches them after that.
+  - The deprecated `autoLinkTodoistId` / `maxBlockMinutes` fields are **stripped from the persisted shape** after copy — storage doesn't accumulate cruft. The fields remain on the `Habit` type as `@deprecated` only so old payloads coming through `IMPORT_BACKUP` still parse.
 - **AppSettings:** `habitsTodoistProjectId` is left undefined; created lazily when the user first saves a stabilizer (or hits "Migrate" on the `/habits` page banner).
 - **Removed**: `Intention.sourceHabitId`, `Intention.skippedForToday`, the `INJECT_HABIT_INTENTIONS` and `SKIP_HABIT_INTENTION` actions, the `getHabitDerivedIntentionIds` helper. **Renamed**: `INJECT_HABIT_INTENTIONS` → `INJECT_HABIT_TASKS` (new payload), `SKIP_HABIT_INTENTION` → `SKIP_HABIT_TASK`. **Added**: `HabitTaskInjection` type, `LinkedTask.sourceHabitId` / `LinkedTask.skippedForToday`, `Habit.todoistTaskId` / `todoistProjectId` / `targetTime` / `targetDurationMinutes` / `windowBehavior`, `AppSettings.habitsTodoistProjectId`, `TodoistActionsValue.moveTask` (Sync API `item_move`), `lib/habitsTodoistSync.ts` (`buildDueString`, `ensureHabitsProject`, `resolveHabitProjectId`, `syncHabitToTodoist`, `computeHabitTasksToInject`).
 - **Persistence** stamps `_schemaVersion: 6.1` onto plan, settings, life-context, and saved-session payloads on every write.

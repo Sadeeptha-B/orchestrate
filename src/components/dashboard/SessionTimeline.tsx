@@ -289,7 +289,7 @@ function SessionCard({
     );
 }
 
-// ---- CurrentSession: shows only the active session ----
+// ---- CurrentSession: carousel across all sessions, defaulting to active/upcoming ----
 
 export function CurrentSession() {
     const { plan, settings } = useDayPlan();
@@ -297,77 +297,128 @@ export function CurrentSession() {
     const { taskMap } = useTodoistData();
     const drag = useTaskDrag();
 
+    const sessions = settings.sessionSlots;
+
     const intentionMap = useMemo(
         () => new Map(plan.intentions.map((i) => [i.id, i])),
         [plan.intentions],
     );
 
-    // v6: live remaining-time capacity for the active session (advisory; banner only on > 150%).
-    const activeCapacity = useMemo(() => {
-        if (!currentSession) return null;
-        return computeSessionCapacity(
-            currentSession,
-            plan.taskSessions,
-            plan.linkedTasks,
-            settings,
-        );
-    }, [currentSession, plan.taskSessions, plan.linkedTasks, settings]);
+    // Auto-select: current session → first remaining → last session (end-of-day).
+    const autoIndex = useMemo(() => {
+        if (currentSession) return sessions.findIndex((s) => s.id === currentSession.id);
+        if (remainingSessions.length > 0) return sessions.findIndex((s) => s.id === remainingSessions[0].id);
+        return Math.max(0, sessions.length - 1);
+    }, [currentSession, remainingSessions, sessions]);
 
-    if (!currentSession) {
-        const upcoming = remainingSessions[0];
-        if (!upcoming) {
-            return (
-                <Card>
-                    <p className="text-sm text-text-light">No more sessions today.</p>
-                </Card>
-            );
-        }
-        const upcomingTaskIds = plan.taskSessions[upcoming.id] ?? [];
+    // null = follow auto; number = user has manually pinned a session index.
+    const [pinnedIndex, setPinnedIndex] = useState<number | null>(null);
+    const displayIndex = pinnedIndex ?? autoIndex;
+    const displayedSession = sessions[displayIndex] ?? null;
+
+    const isViewingCurrent = displayedSession?.id === currentSession?.id;
+    const upcomingSession = !currentSession ? remainingSessions[0] : undefined;
+    const isViewingUpcoming = displayedSession?.id === upcomingSession?.id;
+    const isPast = displayedSession
+        ? !remainingSessions.some((s) => s.id === displayedSession.id)
+        : false;
+
+    const activeCapacity = useMemo(() => {
+        if (!isViewingCurrent || !currentSession) return null;
+        return computeSessionCapacity(currentSession, plan.taskSessions, plan.linkedTasks, settings);
+    }, [isViewingCurrent, currentSession, plan.taskSessions, plan.linkedTasks, settings]);
+
+    if (sessions.length === 0) {
         return (
-            <div className="space-y-2">
-                <p className="text-xs text-text-light px-1">
-                    No active session — next up at{' '}
-                    <span className="tabular-nums text-text font-medium">{upcoming.startTime}</span>
-                </p>
+            <Card>
+                <p className="text-sm text-text-light">No sessions planned.</p>
+            </Card>
+        );
+    }
+
+    const taskIds = displayedSession ? (plan.taskSessions[displayedSession.id] ?? []) : [];
+
+    return (
+        <div className="space-y-2">
+            {/* Nav bar */}
+            <div className="flex items-center justify-between gap-3 px-1">
+                <span className="text-xs text-text-light">
+                    {isViewingUpcoming && upcomingSession ? (
+                        <>
+                            No active session — next up at{' '}
+                            <span className="tabular-nums text-text font-medium">
+                                {upcomingSession.startTime}
+                            </span>
+                        </>
+                    ) : isViewingCurrent ? (
+                        <span className="text-accent font-medium">Now</span>
+                    ) : isPast ? (
+                        'Past session'
+                    ) : (
+                        'Upcoming session'
+                    )}
+                </span>
+                <div className="flex items-center gap-1.5">
+                    {pinnedIndex !== null && (
+                        <button
+                            onClick={() => setPinnedIndex(null)}
+                            className="text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent hover:bg-accent/20 transition-colors cursor-pointer"
+                            title={currentSession ? 'Jump to current session' : 'Jump to upcoming session'}
+                        >
+                            ↩ {currentSession ? 'Current' : 'Upcoming'}
+                        </button>
+                    )}
+                    <button
+                        onClick={() => setPinnedIndex(Math.max(0, displayIndex - 1))}
+                        disabled={displayIndex === 0}
+                        className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:text-text hover:bg-surface-dark transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-base leading-none"
+                        aria-label="Previous session"
+                    >
+                        ‹
+                    </button>
+                    <span className="text-xs tabular-nums text-text-light min-w-[2.5rem] text-center">
+                        {displayIndex + 1} / {sessions.length}
+                    </span>
+                    <button
+                        onClick={() => setPinnedIndex(Math.min(sessions.length - 1, displayIndex + 1))}
+                        disabled={displayIndex === sessions.length - 1}
+                        className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:text-text hover:bg-surface-dark transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-base leading-none"
+                        aria-label="Next session"
+                    >
+                        ›
+                    </button>
+                </div>
+            </div>
+
+            {activeCapacity && (
+                <div className="flex items-center justify-between gap-3 px-1">
+                    <span className="text-xs text-text-light">Remaining capacity this session</span>
+                    <SessionCapacityBadge capacity={activeCapacity} />
+                </div>
+            )}
+            {activeCapacity?.status === 'over' && currentSession && (
+                <SessionCapacityBanner
+                    sessions={[currentSession]}
+                    capacities={{ [currentSession.id]: activeCapacity }}
+                />
+            )}
+
+            {displayedSession ? (
                 <SessionCard
-                    session={upcoming}
-                    isCurrent={false}
-                    isPast={false}
-                    taskIds={upcomingTaskIds}
+                    session={displayedSession}
+                    isCurrent={isViewingCurrent}
+                    isPast={isPast}
+                    taskIds={taskIds}
                     linkedTasks={plan.linkedTasks}
                     taskMap={taskMap}
                     intentions={intentionMap}
                     drag={drag}
                 />
-            </div>
-        );
-    }
-
-    const taskIds = plan.taskSessions[currentSession.id] ?? [];
-
-    return (
-        <div className="space-y-2">
-            {activeCapacity && (
-                <div className="flex items-center justify-between gap-3 px-1">
-                    <span className="text-xs text-text-light">
-                        Remaining capacity this session
-                    </span>
-                    <SessionCapacityBadge capacity={activeCapacity} />
-                </div>
+            ) : (
+                <Card>
+                    <p className="text-sm text-text-light">No sessions planned.</p>
+                </Card>
             )}
-            {activeCapacity?.status === 'over' && (
-                <SessionCapacityBanner sessions={[currentSession]} capacities={{ [currentSession.id]: activeCapacity }} />
-            )}
-            <SessionCard
-                session={currentSession}
-                isCurrent
-                isPast={false}
-                taskIds={taskIds}
-                linkedTasks={plan.linkedTasks}
-                taskMap={taskMap}
-                intentions={intentionMap}
-                drag={drag}
-            />
         </div>
     );
 }

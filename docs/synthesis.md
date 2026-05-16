@@ -116,7 +116,7 @@ Users can override any playlist with a custom Spotify URL. The check-in suggests
 
 | System | Integration | Purpose |
 |---|---|---|
-| **Todoist** | REST API v1 with personal API token (AES-256-GCM encrypted in localStorage). Full CRUD on tasks/projects, completion via Sync API. Stale-while-revalidate cache (5min hydration / 30s focus). | Source of truth for tasks. Orchestrate stores only Todoist task IDs + a `titleSnapshot` fallback. |
+| **Todoist** | REST API v1 with personal API token (AES-256-GCM encrypted in localStorage). Full CRUD on tasks/projects, completion via Sync API. Stale-while-revalidate cache (5min hydration / 30s focus on **both** tasks and projects, post-v6.1). HTTP 401 routes to an `authFailed` flag surfaced as a reconnect banner in Settings. | Source of truth for tasks. Orchestrate stores only Todoist task IDs + a `titleSnapshot` fallback. |
 | **Google Calendar** | Read-only embed iframe. Multi-calendar with per-calendar colors. Week / month / agenda view. | Time context. The user's existing Todoist↔Google Calendar sync makes scheduled tasks appear automatically. |
 | **Spotify** | Embedded player iframe. 6 curated playlists, custom URL override per playlist. | Music protocol. |
 
@@ -199,6 +199,13 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - New routes: `/life` (hub, includes a Light Pool section with weekly cadence rollup), `/season` (list), `/season/:id` (detail), `/habits` (library), `/rest-cues`.
 - `ActiveSeasonBadge` in Dashboard + Wizard headers.
 - "Life" button in Dashboard header.
+- **Post-v6.1 integration hardening**:
+  - **Re-sync banner**: the `/habits` "needs sync" banner now also detects stabilizers whose previously-synced Todoist task has gone missing (cache-loaded but `taskMap.get(todoistTaskId) === undefined`), not just unsynced ones. Copy and button label flip between "Migrate" / "Re-sync" accordingly. The re-sync path uses the same loop and the helper's create-branch fall-through to recreate missing tasks.
+  - **Self-healing stale references on save**: `syncStabilizer` now patches the habit in a single follow-up `UPDATE_HABIT` when it detects a stale `todoistProjectId` (per-habit override pointing at a deleted project — silently fell back to default) or when the create branch returned a fresh `todoistTaskId` (covers out-of-band Todoist task deletion).
+  - **Refresh-projects affordance**: both `TodoistSetup` and `HabitForm` render a `↻ Refresh` button calling `actions.refreshProjects({ force: true })` so newly-created Todoist projects show up without an app reload. Both surfaces also detect stale project ids (default in Settings; per-habit in HabitForm) and render warnings with explicit "Clear" affordances.
+  - **Habit-save lockout during migration**: while the migrate loop is running, the **New Habit** button and per-row Pause/Edit/Delete buttons are disabled — prevents a concurrent `handleCreate` from racing the loop's `ensureHabitsProject` call (the user-task-vs-background-task distinction the user resolved against a mutex).
+  - **Auth-failure surfacing**: HTTP 401 from any Todoist call flips a new `authFailed` flag on `TodoistDataContext`; `TodoistSetup` renders a red top banner and flips the status badge to "Token rejected" so a revoked/expired token never disappears into the silent project/section fetch path.
+  - **`IMPORT_BACKUP` runs the same habit migration as `loadLifeContext`**: a v6 backup imported into v6.1 picks up `todoistTaskId` / `targetDurationMinutes` / `windowBehavior` defaults instead of looking unsynced.
 
 **Day-level intelligence (v6)**
 - **Light Pool panel** on the Dashboard (between Current Session and Task Manager) — per-row Start/Complete writes to `plan.habitLog`, never enters the task plan.
@@ -219,7 +226,7 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - Error boundary
 - PWA install + offline-tolerant cache
 - Stale Todoist task handling: snapshot sync, deleted-task auto-unlink, externally-completed-task auto-mark, fallback display chain
-- Todoist data layer with request deduplication, 30s focus-refresh window, 5min cache TTL, stale-while-revalidate
+- Todoist data layer with request deduplication, 30s focus-refresh window covering tasks + projects (post-v6.1), 5min cache TTL, stale-while-revalidate, 401 → `authFailed` flag + reconnect banner
 - **In-app user guide** at `/guide` — mirrors [user-guide.md](./user-guide.md); reachable from the About modal on Welcome, Dashboard, and every Wizard step.
 
 ---

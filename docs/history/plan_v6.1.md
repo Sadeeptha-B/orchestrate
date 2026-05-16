@@ -155,9 +155,43 @@ End-to-end manual checks (recommended on first browser session post-deploy):
 - **Complete on Dashboard** — check off a habit-task. Confetti fires; Todoist task completes; tomorrow's plan re-surfaces the habit via Todoist's auto-advanced recurrence.
 - **Light Pool unchanged** — light-coherent habits still appear in `LightPoolPanel`; logged via `habitLog`; never enter `linkedTasks`.
 
+## Post-implementation hardening
+
+After the initial v6.1 land, a holistic-review pass + a Todoist-integration resilience pass produced the following changes (still under the v6.1 schema marker — no version bump):
+
+### Correctness
+
+- **`SKIP_HABIT_TASK` no longer sets `completed: true`.** The original reducer marked a skipped habit-task as both `skippedForToday` AND `completed`, which inflated the dashboard's done counter and rendered the task with strikethrough + 🎉. Re-injection idempotency was never dependent on `completed` (it dedupes by `sourceHabitId` presence), so the lie wasn't load-bearing. Fix: drop the `completed: true` write — `skippedForToday` alone is the signal. Architecture / data-model invariant docs updated to match.
+- **Migration drops deprecated fields from the persisted shape.** `loadLifeContext`'s per-habit migration (now extracted as `migrateHabit`) destructures `autoLinkTodoistId` / `maxBlockMinutes` out of the spread so they don't round-trip back into localStorage on every persist. The fields remain on the `Habit` type as `@deprecated` purely so `IMPORT_BACKUP` of older payloads still parses.
+- **`IMPORT_BACKUP` runs the same per-habit migration.** Previously, importing a v6 backup into v6.1 left habits looking unsynced (the `autoLinkTodoistId` → `todoistTaskId` etc. only ran on `loadLifeContext`). The reducer case now maps imported habits through `migrateHabit` too.
+
+### Stale-reference resilience
+
+- **`syncStabilizer` self-heals two stale-reference cases on success.** A single follow-up `UPDATE_HABIT` now patches the habit when: (a) `syncHabitToTodoist` returned a new `todoistTaskId` (handles out-of-band Todoist task deletion — the helper's existing fall-through to the create branch already covered the sync, but the stale id stuck around), or (b) the per-habit `todoistProjectId` referenced a project that no longer exists (`resolveHabitProjectId` silently fell back to default; we clear the dead override here). This addresses the "Habit-task move robustness" item that was originally deferred.
+- **`/habits` re-sync banner detects missing tasks, not just missing ids.** `needsSyncStabilizers` includes both `!todoistTaskId` and `todoistTaskId set but absent from taskMap` (guarded by `taskMap.size > 0` to avoid cold-cache false positives). Banner copy and the primary button label adapt:
+  - all-new → "*N stabilizers need to be synced*" + "Migrate"
+  - all-missing → "*…have a Todoist task that's gone missing*" + "Re-sync"
+  - mixed → "*N stabilizers need syncing (X new, Y missing in Todoist)*" + "Re-sync"
+  The loop itself is unchanged — `syncHabitToTodoist`'s `taskMap.get(todoistTaskId) === undefined` fall-through to the create branch makes re-sync just work.
+- **Refresh-projects affordance on both setup surfaces.** `TodoistSetup` and `HabitForm` each render a `↻ Refresh` button calling `actions.refreshProjects({ force: true })`. Both surfaces also detect stale project ids: the Settings dropdown surfaces a warning + **Clear** button when `habitsTodoistProjectId` doesn't match any current project, and `HabitForm` shows a stale-override warning when `initial.todoistProjectId` doesn't match.
+- **Focus refresh extended to projects.** The existing `window.focus` listener now invokes both `refreshTasks` AND `refreshProjects`. Both dedupe via the 30s staleness window, so the cost is near-zero. Sections are still skipped — they're stable enough not to warrant refetching on focus.
+
+### Auth-failure surfacing
+
+- **`TodoistAuthError` + `authFailed` flag.** `apiFetch` throws a typed `TodoistAuthError` on HTTP 401. A single `handleApiError(e, fallback)` helper inside `TodoistProvider` routes 401s to `setAuthFailed(true)` + a "reconnect in Settings" message; non-auth errors fall through to each call-site's specific fallback. `authFailed` resets when the token changes. `TodoistSetup` renders a red top banner when `authFailed && isConnected` and flips the status badge from "Connected" to "Token rejected". This catches token revocation/expiry, which used to disappear silently into the project/section refresh path (which intentionally suppresses generic errors).
+
+### Concurrency
+
+- **Habit-save lockout during migration.** While `handleMigrate` runs, the **New Habit** button and per-row Pause/Edit/Delete buttons are disabled. This eliminates the race where a concurrent `handleCreate` would re-invoke `ensureHabitsProject` in parallel with the loop's resolved id. Confirmed with the user that migration is user-initiated (not a background sync), so the lockout was preferred over a module-level mutex.
+
+### Dead code / consolidation
+
+- **`pickRestCue` removed.** Exported from `src/data/restCues.ts` but never imported — `TrueRestCard` always used index-based cycling.
+- **`isHabitDerivedTask` / `getHabitTasksForDay` now have call sites.** Six places previously inlined `Boolean(lt.sourceHabitId)`; they now go through the shared helpers. `Step3Schedule`'s duplicate local `isHabitDerived` arrow was deleted.
+- **Stale UI copy.** `AboutContent`, `LifeView`, and `Step2Refine` all carried leftover "auto-inject as intentions" language. Updated to reflect v6.1's session-assigned-task behavior.
+
 ## Deferred to later iterations
 
 - **v7 — Modes, Rituals, Recovery**: `DayPlan.mode` field, mode switcher, RitualPlayer with templates, Minimum Viable Day. Still the next iteration.
 - **v8 — Reviews, Drift Detection, Hierarchical Views**: `/review` route, `useDriftSignals` hook, `/week` cadence view, expanded `/life`.
-- **Habit-task move robustness**: if a habit's `todoistTaskId` points to a Todoist task the user has deleted out-of-band, the next sync currently creates a new task but leaves `todoistTaskId` referencing the dead id until the create succeeds. The error path is non-fatal but worth tightening.
 - **Step 1 chip → drill-down**: the "N habit tasks scheduled" chip is informational. A click could deep-link to the Step 3 timeline pre-scrolled to the habit's session. Not done in v6.1 to keep the surface change minimal.
