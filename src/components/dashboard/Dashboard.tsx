@@ -6,11 +6,10 @@ import { CurrentSession, SessionTimeline } from './SessionTimeline';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
 import { HistorySidebar, type HistoryTab } from './HistorySidebar';
 import { DigitalClock } from './DigitalClock';
-import { TransitionTips } from './TransitionTips';
+import { InsightCard } from './InsightCard';
 import { CheckInModal } from '../checkin/CheckInModal';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { SettingsModal } from '../settings/SettingsModal';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
@@ -36,8 +35,6 @@ export function Dashboard() {
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
-    const [showNewDayModal, setShowNewDayModal] = useState(false);
-    const [newDaySaveName, setNewDaySaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
     const backlogCount = life.backlog?.length ?? 0;
@@ -52,26 +49,9 @@ export function Dashboard() {
     };
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const [calendarOpen, setCalendarOpen] = useState(false);
-    const [showSettingsModal, setShowSettingsModal] = useState(false);
     const [showAboutModal, setShowAboutModal] = useState(false);
 
     const { panelWidth, onMouseDown } = useResizablePanel();
-
-    const handleNewDay = () => {
-        setNewDaySaveName(format(parseISO(plan.date), 'EEEE, MMM d'));
-        setShowNewDayModal(true);
-    };
-
-    const confirmNewDay = (save: boolean) => {
-        if (save) {
-            const label = newDaySaveName.trim() || format(parseISO(plan.date), 'EEEE, MMM d');
-            dispatch({ type: 'SAVE_DAY', label });
-        }
-        setShowNewDayModal(false);
-        setNewDaySaveName('');
-        dispatch({ type: 'RESET_DAY' });
-        navigate('/setup', { state: { fromWelcome: true } });
-    };
 
     const handleEditPlan = () => {
         dispatch({ type: 'SET_EDITING_STEP', step: 1 });
@@ -121,9 +101,6 @@ export function Dashboard() {
                         <Button variant="ghost" size="sm" onClick={handleEditPlan}>
                             Edit Plan
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={handleNewDay}>
-                            Start New Day
-                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => navigate('/life')}>
                             Life
                         </Button>
@@ -144,7 +121,7 @@ export function Dashboard() {
                                 ? 'Hide Backlog'
                                 : <>📥 Backlog{backlogCount > 0 ? ` (${backlogCount})` : ''}</>}
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setShowSettingsModal(true)}>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/settings')}>
                             Settings
                         </Button>
                         <button
@@ -199,13 +176,13 @@ export function Dashboard() {
                                 </div>
                             </div>
 
-                            {/* Row 2: Spotify embed + transition tips */}
+                            {/* Row 2: Spotify embed + insight card */}
                             <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
                                 <div className="flex-1 min-w-0">
                                     <SpotifyPlayer />
                                 </div>
                                 <aside className="lg:w-72 lg:flex-shrink-0">
-                                    <TransitionTips />
+                                    <InsightCard />
                                 </aside>
                             </div>
                         </MusicProvider>
@@ -220,7 +197,6 @@ export function Dashboard() {
                             </div>
                             <aside className="lg:w-72 lg:flex-shrink-0 space-y-3">
                                 <SeasonContextCard />
-                                <TrueRestCard variant="card" />
                             </aside>
                         </div>
 
@@ -259,7 +235,7 @@ export function Dashboard() {
                                 <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
                                     <TodoistPanel
                                         mode="full"
-                                        onSetup={() => setShowSettingsModal(true)}
+                                        onSetup={() => navigate('/settings?tab=integrations')}
                                         showFilterToggle
                                         defaultFiltered
                                     />
@@ -286,7 +262,7 @@ export function Dashboard() {
                             </button>
                             {calendarOpen && (
                                 <div className="mt-3">
-                                    <GoogleCalendarEmbed height={400} onSetup={() => setShowSettingsModal(true)} />
+                                    <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
                                 </div>
                             )}
                         </div>
@@ -295,44 +271,6 @@ export function Dashboard() {
             </div>
 
             <CheckInModal open={showCheckin} onClose={dismiss} onRecontextualize={handleRecontextualize} />
-
-            <Modal
-                open={showNewDayModal}
-                onClose={() => setShowNewDayModal(false)}
-                title="Start New Day"
-            >
-                <div className="space-y-4">
-                    <p className="text-sm text-text-light">
-                        Would you like to save your current session before starting fresh?
-                    </p>
-                    <div>
-                        <label htmlFor="new-day-save-name" className="text-sm text-text-light block mb-1.5">
-                            Session name
-                        </label>
-                        <input
-                            id="new-day-save-name"
-                            type="text"
-                            value={newDaySaveName}
-                            onChange={(e) => setNewDaySaveName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && confirmNewDay(true)}
-                            placeholder="e.g. Thursday, Apr 10"
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-text focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
-                            autoFocus
-                        />
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => setShowNewDayModal(false)}>
-                            Cancel
-                        </Button>
-                        <Button variant="secondary" size="sm" onClick={() => confirmNewDay(false)}>
-                            Don&apos;t Save
-                        </Button>
-                        <Button size="sm" onClick={() => confirmNewDay(true)}>
-                            Save &amp; Start New
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
 
             <Modal
                 open={showSaveModal}
@@ -366,21 +304,12 @@ export function Dashboard() {
                 </div>
             </Modal>
 
-            <SettingsModal
-                open={showSettingsModal}
-                onClose={() => setShowSettingsModal(false)}
-                onShowSavedSessions={() => {
-                    setShowSettingsModal(false);
-                    setPanelOpen(true);
-                }}
-            />
-
             <Modal open={showAboutModal} onClose={() => setShowAboutModal(false)} title="About Orchestrate">
                 <AboutContent onOpenGuide={() => { setShowAboutModal(false); navigate('/guide'); }} />
                 <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
                     Connect Todoist and Google Calendar in{' '}
                     <button
-                        onClick={() => { setShowAboutModal(false); setShowSettingsModal(true); }}
+                        onClick={() => { setShowAboutModal(false); navigate('/settings?tab=integrations'); }}
                         className="text-accent hover:underline cursor-pointer"
                     >
                         Settings

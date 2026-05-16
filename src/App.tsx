@@ -12,6 +12,7 @@ import { SeasonDetail } from './components/life/SeasonDetail';
 import { HabitsLibrary } from './components/life/HabitsLibrary';
 import { RestCuesManager } from './components/life/RestCuesManager';
 import { UserGuide } from './components/guide/UserGuide';
+import { SettingsPage } from './components/settings/SettingsPage';
 
 function AppRoutes() {
     const { plan } = useDayPlan();
@@ -37,6 +38,7 @@ function AppRoutes() {
             <Route path="/season/:id" element={<SeasonDetail />} />
             <Route path="/habits" element={<HabitsLibrary />} />
             <Route path="/rest-cues" element={<RestCuesManager />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/guide" element={<UserGuide />} />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

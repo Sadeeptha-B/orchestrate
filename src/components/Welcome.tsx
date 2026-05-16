@@ -8,7 +8,6 @@ import { Modal } from './ui/Modal';
 import { AboutContent } from './ui/AboutContent';
 import { Logo } from './ui/Logo';
 import { ThemeToggle } from './ui/ThemeToggle';
-import { SettingsModal } from './settings/SettingsModal';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../data/wizardSteps';
 import { findActiveSeason } from '../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../lib/habits';
@@ -24,7 +23,6 @@ export function Welcome() {
     const { plan, history, life } = useDayPlan();
     const navigate = useNavigate();
     const [showAbout, setShowAbout] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
@@ -53,7 +51,7 @@ export function Welcome() {
                     ?
                 </button>
                 <button
-                    onClick={() => setShowSettings(true)}
+                    onClick={() => navigate('/settings')}
                     className="p-2 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
                     title="Settings"
                 >
@@ -237,7 +235,7 @@ export function Welcome() {
                         </p>
                     )}
                     <button
-                        onClick={() => setShowSettings(true)}
+                        onClick={() => navigate('/settings?tab=data')}
                         className="text-xs text-accent/80 hover:text-accent hover:underline cursor-pointer"
                     >
                         Restore from a backup →
@@ -250,15 +248,7 @@ export function Welcome() {
                 <AboutContent onOpenGuide={() => { setShowAbout(false); navigate('/guide'); }} />
             </Modal>
 
-            {/* Settings modal */}
-            <SettingsModal
-                open={showSettings}
-                onClose={() => setShowSettings(false)}
-                onShowSavedSessions={() => {
-                    setShowSettings(false);
-                    navigate('/setup', { state: { fromWelcome: true } });
-                }}
-            />
+
         </div>
     );
 }

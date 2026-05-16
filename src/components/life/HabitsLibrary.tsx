@@ -7,7 +7,6 @@ import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { HabitForm, type HabitDraft } from './HabitForm';
-import { SettingsModal } from '../settings/SettingsModal';
 import { getActiveHabits } from '../../lib/habits';
 import { ensureHabitsProject, resolveHabitProjectId, syncHabitToTodoist } from '../../lib/habitsTodoistSync';
 import type { Habit } from '../../types';
@@ -48,7 +47,6 @@ export function HabitsLibrary() {
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
     const [syncError, setSyncError] = useState<string | null>(null);
     const [migrating, setMigrating] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
     const [refreshingProjects, setRefreshingProjects] = useState(false);
     const activeHabitCount = getActiveHabits(life).length;
 
@@ -257,7 +255,7 @@ export function HabitsLibrary() {
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setShowSettings(true)}
+                                onClick={() => navigate('/settings?tab=integrations')}
                                 disabled={migrating}
                             >
                                 Choose project
@@ -305,8 +303,8 @@ export function HabitsLibrary() {
                                     <h3 className="font-medium">{h.name}</h3>
                                     <span
                                         className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${h.kind === 'stabilizer'
-                                                ? 'bg-accent-subtle text-accent'
-                                                : 'bg-surface-dark text-text-light'
+                                            ? 'bg-accent-subtle text-accent'
+                                            : 'bg-surface-dark text-text-light'
                                             }`}
                                         title={h.kind === 'stabilizer'
                                             ? 'Synced to Todoist as a recurring task; surfaces as a session-assigned task each day it is due'
@@ -404,10 +402,6 @@ export function HabitsLibrary() {
                 )}
             </Modal>
 
-            <SettingsModal
-                open={showSettings}
-                onClose={() => setShowSettings(false)}
-            />
 
             <Modal
                 open={confirmDelete !== null}

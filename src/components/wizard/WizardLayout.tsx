@@ -6,7 +6,6 @@ import { Modal } from '../ui/Modal';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { HistorySidebar, type HistoryTab } from '../dashboard/HistorySidebar';
-import { SettingsModal } from '../settings/SettingsModal';
 import { AboutContent } from '../ui/AboutContent';
 import { Logo } from '../ui/Logo';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -37,7 +36,6 @@ export function WizardLayout({
     const navigate = useNavigate();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
-    const [showSettings, setShowSettings] = useState(false);
     const [showAbout, setShowAbout] = useState(false);
     const [panelOpen, setPanelOpen] = useState(true);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
@@ -149,7 +147,7 @@ export function WizardLayout({
                                 ?
                             </button>
                             <button
-                                onClick={() => setShowSettings(true)}
+                                onClick={() => navigate('/settings')}
                                 className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer"
                                 title="Settings"
                             >
@@ -216,23 +214,13 @@ export function WizardLayout({
                 </footer>
             </div>
 
-            {/* Settings modal */}
-            <SettingsModal
-                open={showSettings}
-                onClose={() => setShowSettings(false)}
-                onShowSavedSessions={() => {
-                    setShowSettings(false);
-                    setPanelOpen(true);
-                }}
-            />
-
             {/* About modal */}
             <Modal open={showAbout} onClose={() => setShowAbout(false)} title="About Orchestrate">
                 <AboutContent onOpenGuide={() => { setShowAbout(false); navigate('/guide'); }} />
                 <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
                     Connect Todoist and Google Calendar in{' '}
                     <button
-                        onClick={() => { setShowAbout(false); setShowSettings(true); }}
+                        onClick={() => { setShowAbout(false); navigate('/settings?tab=integrations'); }}
                         className="text-accent hover:underline cursor-pointer"
                     >
                         Settings
