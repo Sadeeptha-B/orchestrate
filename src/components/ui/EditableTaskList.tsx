@@ -1,6 +1,9 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
 import type { Intention } from '../../types';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useIntentionRemoval } from '../../lib/intentionUnschedule';
+import { Modal } from './Modal';
+import { Button } from './Button';
 
 interface EditableTaskListProps {
     tasks: Intention[];
@@ -9,10 +12,12 @@ interface EditableTaskListProps {
 
 export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) {
     const { dispatch } = useDayPlan();
+    const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editValue, setEditValue] = useState('');
     const [dragId, setDragId] = useState<string | null>(null);
     const [dragOverId, setDragOverId] = useState<string | null>(null);
+    const [confirmDelete, setConfirmDelete] = useState<Intention | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     const startEdit = useCallback((task: Intention) => {
@@ -100,6 +105,7 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
     if (tasks.length === 0) return null;
 
     return (
+        <>
         <ul className="space-y-2">
             {tasks.map((task) => {
                 const isEditing = editingId === task.id;
@@ -157,20 +163,58 @@ export function EditableTaskList({ tasks, renderRight }: EditableTaskListProps) 
                             </span>
                         )}
 
-                        {/* Right side: custom actions or remove */}
-                        <div className="flex items-center gap-2 flex-shrink-0">
+                        {/* Right side: custom actions, backlog, delete (v6.2) */}
+                        <div className="flex items-center gap-1 flex-shrink-0">
                             {renderRight?.(task)}
                             <button
-                                onClick={() => dispatch({ type: 'REMOVE_INTENTION', intentionId: task.id })}
-                                className="text-text-light hover:text-red-400 transition-colors text-xs cursor-pointer"
-                                aria-label={`Remove ${task.title}`}
+                                onClick={() => void moveToBacklog(task.id)}
+                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-sm cursor-pointer"
+                                title="Move to backlog"
+                                aria-label={`Move ${task.title} to backlog`}
                             >
-                                Remove
+                                📥
+                            </button>
+                            <button
+                                onClick={() => setConfirmDelete(task)}
+                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors text-sm cursor-pointer"
+                                title="Delete"
+                                aria-label={`Delete ${task.title}`}
+                            >
+                                🗑
                             </button>
                         </div>
                     </li>
                 );
             })}
         </ul>
+
+        <Modal
+                open={confirmDelete !== null}
+                onClose={() => setConfirmDelete(null)}
+                title="Delete intention permanently?"
+            >
+                <p className="text-sm text-text-light mb-4">
+                    <strong>{confirmDelete?.title}</strong> will be removed from today.
+                    Any of its linked Todoist tasks that are currently scheduled will be unscheduled.
+                    To park it for later instead, cancel and click 📥.
+                </p>
+                <div className="flex justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(null)}>
+                        Cancel
+                    </Button>
+                    <Button
+                        size="sm"
+                        onClick={async () => {
+                            if (!confirmDelete) return;
+                            const id = confirmDelete.id;
+                            setConfirmDelete(null);
+                            await removeIntention(id);
+                        }}
+                    >
+                        Delete
+                    </Button>
+                </div>
+            </Modal>
+        </>
     );
 }

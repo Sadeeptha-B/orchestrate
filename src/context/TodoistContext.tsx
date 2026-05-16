@@ -92,9 +92,14 @@ interface CreateTaskOpts {
 }
 
 interface UpdateTaskOpts {
-    content?: string; due_datetime?: string; due_date?: string;
-    due_string?: string; due_lang?: string;
-    duration?: number; duration_unit?: string;
+    content?: string;
+    /** v6.2: explicit `null` clears the field in Todoist (used to unschedule on intention discard). */
+    due_datetime?: string | null;
+    due_date?: string | null;
+    due_string?: string | null;
+    due_lang?: string;
+    duration?: number | null;
+    duration_unit?: string;
 }
 
 interface CreateProjectOpts {

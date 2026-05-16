@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
-import { SavedSessions } from './SavedSessions';
+import { HistorySidebar, type HistoryTab } from './HistorySidebar';
 import { DigitalClock } from './DigitalClock';
 import { TransitionTips } from './TransitionTips';
 import { CheckInModal } from '../checkin/CheckInModal';
@@ -25,7 +25,7 @@ import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 
 export function Dashboard() {
-    const { plan, settings, dispatch } = useDayPlan();
+    const { plan, settings, life, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const { showCheckin, dismiss } = useHourlyCheckin(
         settings.sessionSlots,
@@ -39,6 +39,17 @@ export function Dashboard() {
     const [showNewDayModal, setShowNewDayModal] = useState(false);
     const [newDaySaveName, setNewDaySaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
+    const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
+    const backlogCount = life.backlog?.length ?? 0;
+    const openPanel = (next: HistoryTab) => {
+        // Toggle off if already open on the same tab; otherwise open + switch tab.
+        if (panelOpen && panelTab === next) {
+            setPanelOpen(false);
+        } else {
+            setPanelTab(next);
+            setPanelOpen(true);
+        }
+    };
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const [calendarOpen, setCalendarOpen] = useState(false);
     const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -119,9 +130,19 @@ export function Dashboard() {
                         <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setPanelOpen(!panelOpen)}
+                            onClick={() => openPanel('sessions')}
                         >
-                            {panelOpen ? 'Hide Saved' : 'Saved Sessions'}
+                            {panelOpen && panelTab === 'sessions' ? 'Hide Saved' : 'Saved Sessions'}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openPanel('backlog')}
+                            title="Intentions backlog"
+                        >
+                            {panelOpen && panelTab === 'backlog'
+                                ? 'Hide Backlog'
+                                : <>📥 Backlog{backlogCount > 0 ? ` (${backlogCount})` : ''}</>}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => setShowSettingsModal(true)}>
                             Settings
@@ -151,10 +172,7 @@ export function Dashboard() {
                             className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
                         />
                         <div className="p-5 pt-6">
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                    Saved Sessions
-                                </h3>
+                            <div className="flex items-center justify-end mb-3">
                                 <button
                                     onClick={() => setPanelOpen(false)}
                                     className="text-text-light hover:text-text transition-colors text-lg leading-none cursor-pointer"
@@ -163,7 +181,7 @@ export function Dashboard() {
                                     &times;
                                 </button>
                             </div>
-                            <SavedSessions hideHeading />
+                            <HistorySidebar tab={panelTab} onTabChange={setPanelTab} />
                         </div>
                     </aside>
                 )}

@@ -203,4 +203,19 @@ export interface LifeContext {
     habits: Habit[];
     activeSeasonId: string | null;       // denormalized for fast lookup; mirrors seasons[].active
     restCues?: RestCue[];                // user-customized list; undefined = use built-in defaults
+    backlog?: BacklogEntry[];            // v6.2: parked intentions awaiting reuse; undefined = treated as []
+}
+
+/**
+ * v6.2: a parked intention. Created when the user moves an intention to the backlog
+ * (manual discard during planning) or when an unfinished intention auto-rolls over
+ * at date-change. Brought back into today's plan via `RESTORE_FROM_BACKLOG`.
+ */
+export interface BacklogEntry {
+    id: string;                              // uuid for the entry itself (distinct from intention.id)
+    intention: Intention;                    // preserved verbatim — title, linkedTaskIds, completed, brokenDown
+    archivedAt: string;                      // ISO timestamp
+    archivedFromDate: string;                // YYYY-MM-DD — plan.date the intention came from
+    reason: 'manual' | 'rollover';
+    taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot at archive time
 }
