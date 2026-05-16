@@ -18,9 +18,11 @@ export const restCues: RestCue[] = [
 
 /**
  * Pick a cue deterministically (when `seed` is provided) or randomly (otherwise).
+ * Pass a custom `cues` array to override the built-in catalog.
  * Deterministic mode is useful for surfaces that should not jitter on re-render.
  */
-export function pickRestCue(seed?: number): RestCue {
-    if (seed === undefined) return restCues[Math.floor(Math.random() * restCues.length)];
-    return restCues[((seed % restCues.length) + restCues.length) % restCues.length];
+export function pickRestCue(seed?: number, cues: RestCue[] = restCues): RestCue {
+    const pool = cues.length > 0 ? cues : restCues;
+    if (seed === undefined) return pool[Math.floor(Math.random() * pool.length)];
+    return pool[((seed % pool.length) + pool.length) % pool.length];
 }

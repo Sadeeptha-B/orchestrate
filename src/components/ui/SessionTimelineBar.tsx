@@ -36,8 +36,6 @@ interface SessionTimelineBarProps {
     currentSessionId?: string | null;
     /** v6: optional per-session capacity data. When provided, each block shows a capacity badge. */
     capacities?: Record<string, SessionCapacity>;
-    /** v6: intention ids whose tasks render with the 🔁 habit emoji (parent intention has sourceHabitId). */
-    habitDerivedIntentionIds?: Set<string>;
 }
 
 export function SessionTimelineBar({
@@ -49,7 +47,6 @@ export function SessionTimelineBar({
     onSelectSession,
     currentSessionId,
     capacities,
-    habitDerivedIntentionIds,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -174,7 +171,7 @@ export function SessionTimelineBar({
                                     </span>
                                 ))}
                                 {sessionBg.map((lt) => {
-                                    const isHabitDerived = habitDerivedIntentionIds?.has(lt.intentionId) ?? false;
+                                    const isHabitDerived = Boolean(lt.sourceHabitId);
                                     return (
                                         <span
                                             key={lt.todoistId}

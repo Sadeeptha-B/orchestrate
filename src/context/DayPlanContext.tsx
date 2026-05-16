@@ -15,11 +15,13 @@ import type {
     Season,
     Habit,
     HabitLogEntry,
+    HabitTaskInjection,
+    RestCue,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
-import { habitMatchesDate } from '../lib/habits';
 import { todayISO } from '../lib/time';
 import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../lib/capacity';
+import { restCues as defaultRestCues } from '../data/restCues';
 
 // --------------- helpers ---------------
 
@@ -27,7 +29,7 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 6.1;
 /** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
 const WIZARD_STEPS_COUNT = 4;
 
@@ -44,7 +46,7 @@ function freshPlan(): DayPlan {
     };
 }
 
-/** Migrate a plan through the version chain: v1 (tasks) → v2 (intentions) → v4 (linkedTasks). */
+/** Migrate a plan through the version chain: v1 (tasks) → v2 (intentions) → v4 (linkedTasks) → v6.1 (habit-as-task decoupling). */
 function migratePlan(raw: Record<string, unknown>): DayPlan {
     // Wizard was reduced from 6 steps to 5 (old Step 1 & 2 merged).
     // Old step 2+ maps to step N-1; step 1 stays 1.
@@ -63,21 +65,34 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         return Math.min(s, 4);
     };
 
+    // v6 → v6.1: identify habit-derived intentions (to be dropped) and the habit ID per intention,
+    // so any LinkedTasks under them can be re-anchored as orphan habit-tasks with `sourceHabitId`.
+    const habitIdByIntentionId = new Map<string, string>();
+    if (Array.isArray(raw.intentions)) {
+        for (const i of raw.intentions as Array<Record<string, unknown>>) {
+            if (i.sourceHabitId) {
+                habitIdByIntentionId.set(i.id as string, i.sourceHabitId as string);
+            }
+        }
+    }
+
     // --- v1 → v2: convert tasks to intentions ---
     let intentions: Intention[];
     let intentionSessions: Record<string, string[]>;
 
     if (Array.isArray(raw.intentions)) {
-        // Already v2+ shape — extract intentions. v5→v6: drop the deprecated `isHabit` flag.
-        intentions = (raw.intentions as Array<Record<string, unknown>>).map((i) => ({
-            id: i.id as string,
-            title: i.title as string,
-            linkedTaskIds: (i.linkedTaskIds as string[]) ?? [],
-            completed: (i.completed as boolean) ?? false,
-            brokenDown: (i.brokenDown as boolean) ?? false,
-            ...(i.sourceHabitId ? { sourceHabitId: i.sourceHabitId as string } : {}),
-            ...(i.skippedForToday ? { skippedForToday: i.skippedForToday as boolean } : {}),
-        }));
+        // Already v2+ shape — extract intentions. v6.1: drop habit-derived intentions entirely
+        // (their tasks become orphan habit-tasks below). Strip the deprecated sourceHabitId /
+        // skippedForToday fields from any remaining entries.
+        intentions = (raw.intentions as Array<Record<string, unknown>>)
+            .filter((i) => !habitIdByIntentionId.has(i.id as string))
+            .map((i) => ({
+                id: i.id as string,
+                title: i.title as string,
+                linkedTaskIds: (i.linkedTaskIds as string[]) ?? [],
+                completed: (i.completed as boolean) ?? false,
+                brokenDown: (i.brokenDown as boolean) ?? false,
+            }));
         intentionSessions = (raw.intentionSessions ?? {}) as Record<string, string[]>;
     } else {
         // v1: tasks → intentions
@@ -94,11 +109,28 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
 
     // --- v2/v3 → v4: if plan has intentionSessions but no taskSessions/linkedTasks ---
     if (Array.isArray(raw.linkedTasks) && raw.taskSessions !== undefined) {
-        // Already v4 shape — ensure estimatedMinutes exists on all LinkedTask entries (v4.1 migration)
-        const migratedLinkedTasks = (raw.linkedTasks as Array<Record<string, unknown>>).map((lt) => ({
-            ...(lt as unknown as LinkedTask),
-            estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
-        }));
+        // Already v4 shape — ensure estimatedMinutes exists on all LinkedTask entries (v4.1 migration).
+        // v6.1: re-anchor any tasks under a (now removed) habit-derived intention as orphans
+        // with `sourceHabitId` set + type 'background'.
+        const migratedLinkedTasks = (raw.linkedTasks as Array<Record<string, unknown>>).map((lt) => {
+            const intentionId = lt.intentionId as string | undefined;
+            const habitId = intentionId ? habitIdByIntentionId.get(intentionId) : undefined;
+            if (habitId) {
+                return {
+                    todoistId: lt.todoistId as string,
+                    sourceHabitId: habitId,
+                    type: 'background' as const,
+                    assignedSessions: (lt.assignedSessions as string[]) ?? [],
+                    completed: (lt.completed as boolean) ?? false,
+                    estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
+                    ...(lt.titleSnapshot ? { titleSnapshot: lt.titleSnapshot as string } : {}),
+                } satisfies LinkedTask;
+            }
+            return {
+                ...(lt as unknown as LinkedTask),
+                estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
+            };
+        });
         return {
             date: raw.date as string,
             intentions,
@@ -188,16 +220,31 @@ function loadLifeContext(): LifeContext {
         const raw = localStorage.getItem(LIFE_KEY);
         if (!raw) return emptyLifeContext();
         const parsed = JSON.parse(raw) as Partial<LifeContext> & { _schemaVersion?: number };
-        const habits = (parsed.habits ?? []).map((h) => ({
-            ...h,
-            // v5 → v6: every habit gets a kind. Existing habits default to 'stabilizer'
-            // because that matches their current behavior (auto-injected, locked to background).
-            kind: h.kind ?? 'stabilizer',
-        }));
+        const habits = (parsed.habits ?? []).map((h) => {
+            // v5 → v6: every habit gets a kind. Existing habits default to 'stabilizer'.
+            const kind = h.kind ?? 'stabilizer';
+            const migrated: Habit = { ...h, kind };
+            // v6 → v6.1: stabilizer fields previously stored elsewhere fold into the new schedule
+            // shape. autoLinkTodoistId becomes the habit's primary Todoist task; maxBlockMinutes
+            // becomes targetDurationMinutes; windowBehavior defaults to 'lenient'.
+            if (kind === 'stabilizer') {
+                if (h.autoLinkTodoistId && !h.todoistTaskId) {
+                    migrated.todoistTaskId = h.autoLinkTodoistId;
+                }
+                if (h.maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
+                    migrated.targetDurationMinutes = h.maxBlockMinutes;
+                }
+                if (!h.windowBehavior) {
+                    migrated.windowBehavior = 'lenient';
+                }
+            }
+            return migrated;
+        });
         return {
             seasons: parsed.seasons ?? [],
             habits,
             activeSeasonId: parsed.activeSeasonId ?? null,
+            restCues: parsed.restCues,
         };
     } catch {
         return emptyLifeContext();
@@ -240,17 +287,22 @@ type Action =
     | { type: 'UPDATE_SEASON'; season: Season }
     | { type: 'DELETE_SEASON'; seasonId: string }
     | { type: 'ACTIVATE_SEASON'; seasonId: string | null }
-    | { type: 'ADD_HABIT'; habit: Omit<Habit, 'id' | 'createdAt'> }
+    | { type: 'ADD_HABIT'; habit: Habit }
     | { type: 'UPDATE_HABIT'; habit: Habit }
     | { type: 'DELETE_HABIT'; habitId: string }
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
-    | { type: 'INJECT_HABIT_INTENTIONS' }
-    | { type: 'SKIP_HABIT_INTENTION'; intentionId: string }
+    | { type: 'INJECT_HABIT_TASKS'; entries: HabitTaskInjection[] }
+    | { type: 'SKIP_HABIT_TASK'; todoistId: string }
     | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
     // ---- v6: Light Pool log actions ----
     | { type: 'LOG_HABIT_START'; habitId: string; sessionId?: string }
     | { type: 'LOG_HABIT_COMPLETE'; entryId: string; durationMinutes?: number }
-    | { type: 'DELETE_HABIT_LOG_ENTRY'; entryId: string };
+    | { type: 'DELETE_HABIT_LOG_ENTRY'; entryId: string }
+    // ---- True Rest cue customization ----
+    | { type: 'ADD_REST_CUE'; cue: Omit<RestCue, 'id'> }
+    | { type: 'UPDATE_REST_CUE'; cue: RestCue }
+    | { type: 'DELETE_REST_CUE'; cueId: string }
+    | { type: 'REPLACE_REST_CUES'; cues: RestCue[] | undefined };
 
 interface State {
     plan: DayPlan;
@@ -313,9 +365,11 @@ function reducer(state: State, action: Action): State {
             const intentions = plan.intentions.map((i) =>
                 i.id === action.intentionId ? { ...i, completed: newCompleted } : i,
             );
-            // Also toggle all linked tasks
+            // Also toggle all linked tasks belonging to this intention (orphan habit-tasks are untouched).
             const linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.intentionId === action.intentionId ? { ...lt, completed: newCompleted } : lt,
+                lt.intentionId !== undefined && lt.intentionId === action.intentionId
+                    ? { ...lt, completed: newCompleted }
+                    : lt,
             );
             return { ...state, plan: { ...plan, intentions, linkedTasks } };
         }
@@ -331,14 +385,9 @@ function reducer(state: State, action: Action): State {
 
         case 'LINK_TASK': {
             const { intentionId, todoistId } = action;
-            // Habit-derived intentions force their tasks to 'background'.
-            const targetIntention = plan.intentions.find((i) => i.id === intentionId);
-            const lockToBackground = Boolean(targetIntention?.sourceHabitId);
-            // If already linked to another intention, move it (and re-apply the lock).
+            // If already linked to another intention, move it.
             let linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === todoistId
-                    ? { ...lt, intentionId, ...(lockToBackground ? { type: 'background' as const } : {}) }
-                    : lt,
+                lt.todoistId === todoistId ? { ...lt, intentionId } : lt,
             );
             const intentions = plan.intentions.map((i) => {
                 if (i.id === intentionId) {
@@ -357,7 +406,7 @@ function reducer(state: State, action: Action): State {
                 linkedTasks = [...linkedTasks, {
                     todoistId,
                     intentionId,
-                    type: lockToBackground ? 'background' : 'unclassified',
+                    type: 'unclassified',
                     assignedSessions: [],
                     completed: false,
                     estimatedMinutes: null,
@@ -577,12 +626,10 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'ADD_HABIT': {
-            const habit: Habit = {
-                ...action.habit,
-                id: crypto.randomUUID(),
-                createdAt: new Date().toISOString(),
+            return {
+                ...state,
+                life: { ...state.life, habits: [...state.life.habits, action.habit] },
             };
-            return { ...state, life: { ...state.life, habits: [...state.life.habits, habit] } };
         }
 
         case 'UPDATE_HABIT': {
@@ -597,14 +644,23 @@ function reducer(state: State, action: Action): State {
             // Anchor habits cannot be deleted while active — caller must deactivate first.
             if (habit?.isAnchor && habit.active) return state;
             const habits = state.life.habits.filter((h) => h.id !== action.habitId);
-            // Also clear sourceHabitId from any intentions that referenced it
-            const intentions = plan.intentions.map((i) =>
-                i.sourceHabitId === action.habitId ? { ...i, sourceHabitId: undefined } : i,
+            // v6.1: also drop any orphan habit-tasks belonging to this habit from today's plan.
+            const orphanTaskIds = new Set(
+                plan.linkedTasks
+                    .filter((lt) => lt.sourceHabitId === action.habitId)
+                    .map((lt) => lt.todoistId),
             );
+            const linkedTasks = plan.linkedTasks.filter((lt) => lt.sourceHabitId !== action.habitId);
+            const taskSessions = { ...plan.taskSessions };
+            if (orphanTaskIds.size > 0) {
+                for (const sid of Object.keys(taskSessions)) {
+                    taskSessions[sid] = taskSessions[sid].filter((id) => !orphanTaskIds.has(id));
+                }
+            }
             return {
                 ...state,
                 life: { ...state.life, habits },
-                plan: { ...plan, intentions },
+                plan: { ...plan, linkedTasks, taskSessions },
             };
         }
 
@@ -615,42 +671,57 @@ function reducer(state: State, action: Action): State {
             return { ...state, life: { ...state.life, habits } };
         }
 
-        case 'INJECT_HABIT_INTENTIONS': {
-            // Idempotent: skip habits that already have an intention today.
+        case 'INJECT_HABIT_TASKS': {
+            // v6.1: append habit-tasks pre-computed by `computeHabitTasksToInject`. Idempotent —
+            // any entry whose `habitId` is already present in `plan.linkedTasks` is skipped.
             const existingHabitIds = new Set(
-                plan.intentions
-                    .map((i) => i.sourceHabitId)
+                plan.linkedTasks
+                    .map((lt) => lt.sourceHabitId)
                     .filter((id): id is string => Boolean(id)),
             );
-            const toInject = state.life.habits
-                .filter((h) => h.active)
-                // v6: only stabilizer habits auto-inject as intentions. Light-coherent habits
-                // are pulled opportunistically from the Light Pool and never become intentions.
-                .filter((h) => h.kind === 'stabilizer')
-                .filter((h) => !existingHabitIds.has(h.id))
-                .filter((h) => habitMatchesDate(h, plan.date));
-            if (toInject.length === 0) return state;
-            const newIntentions: Intention[] = toInject.map((h) => ({
-                id: crypto.randomUUID(),
-                title: h.name,
-                linkedTaskIds: [],
+            const fresh = action.entries.filter((e) => !existingHabitIds.has(e.habitId));
+            if (fresh.length === 0) return state;
+            const newTasks: LinkedTask[] = fresh.map((e) => ({
+                todoistId: e.todoistId,
+                sourceHabitId: e.habitId,
+                type: 'background',
+                assignedSessions: e.sessionId ? [e.sessionId] : [],
                 completed: false,
-                brokenDown: false,
-                sourceHabitId: h.id,
+                estimatedMinutes: e.estimatedMinutes,
+                titleSnapshot: e.name,
             }));
+            const taskSessions = { ...plan.taskSessions };
+            for (const e of fresh) {
+                if (e.sessionId) {
+                    const current = taskSessions[e.sessionId] ?? [];
+                    if (!current.includes(e.todoistId)) {
+                        taskSessions[e.sessionId] = [...current, e.todoistId];
+                    }
+                }
+            }
             return {
                 ...state,
-                plan: { ...plan, intentions: [...newIntentions, ...plan.intentions] },
+                plan: {
+                    ...plan,
+                    linkedTasks: [...plan.linkedTasks, ...newTasks],
+                    taskSessions,
+                },
             };
         }
 
-        case 'SKIP_HABIT_INTENTION': {
-            const intentions = plan.intentions.map((i) =>
-                i.id === action.intentionId
-                    ? { ...i, completed: true, skippedForToday: true, brokenDown: true }
-                    : i,
+        case 'SKIP_HABIT_TASK': {
+            // v6.1: mark a habit-task as skipped for today (kept in linkedTasks for idempotency,
+            // removed from session assignments so it disappears from session views).
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.todoistId === action.todoistId && lt.sourceHabitId
+                    ? { ...lt, skippedForToday: true, completed: true, assignedSessions: [] }
+                    : lt,
             );
-            return { ...state, plan: { ...plan, intentions } };
+            const taskSessions = { ...plan.taskSessions };
+            for (const sid of Object.keys(taskSessions)) {
+                taskSessions[sid] = taskSessions[sid].filter((id) => id !== action.todoistId);
+            }
+            return { ...state, plan: { ...plan, linkedTasks, taskSessions } };
         }
 
         // ---- v6: Light Pool log actions ----
@@ -687,6 +758,27 @@ function reducer(state: State, action: Action): State {
                 plan: { ...plan, habitLog: plan.habitLog.filter((e) => e.id !== action.entryId) },
             };
         }
+
+        case 'ADD_REST_CUE': {
+            const newCue: RestCue = { ...action.cue, id: crypto.randomUUID() };
+            const base = state.life.restCues ?? defaultRestCues;
+            return { ...state, life: { ...state.life, restCues: [...base, newCue] } };
+        }
+
+        case 'UPDATE_REST_CUE': {
+            const base = state.life.restCues ?? defaultRestCues;
+            const restCues = base.map((c) => (c.id === action.cue.id ? action.cue : c));
+            return { ...state, life: { ...state.life, restCues } };
+        }
+
+        case 'DELETE_REST_CUE': {
+            const base = state.life.restCues ?? defaultRestCues;
+            const restCues = base.filter((c) => c.id !== action.cueId);
+            return { ...state, life: { ...state.life, restCues } };
+        }
+
+        case 'REPLACE_REST_CUES':
+            return { ...state, life: { ...state.life, restCues: action.cues } };
 
         case 'IMPORT_BACKUP': {
             const next: State = { ...state };

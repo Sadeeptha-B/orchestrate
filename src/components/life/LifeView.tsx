@@ -6,6 +6,7 @@ import { LifeShell } from './LifeShell';
 import { LightPoolSection } from './LightPoolSection';
 import { findActiveSeason } from '../../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../../lib/habits';
+import { restCues as defaultRestCues } from '../../data/restCues';
 
 export function LifeView() {
     const { life } = useDayPlan();
@@ -13,6 +14,8 @@ export function LifeView() {
     const activeSeason = findActiveSeason(life);
     const activeHabits = getActiveHabits(life);
     const anchorHabits = getAnchorHabits(activeHabits);
+    const isCustomized = life.restCues !== undefined;
+    const restCueCount = (life.restCues ?? defaultRestCues).length;
 
     return (
         <LifeShell
@@ -91,9 +94,23 @@ export function LifeView() {
                     )}
                 </Card>
 
-                <div className="md:col-span-2">
-                    <LightPoolSection />
-                </div>
+                <LightPoolSection />
+
+                <Card>
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-medium">True Rest cues</h3>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/rest-cues')}>
+                            Manage
+                        </Button>
+                    </div>
+                    <p className="text-sm text-text-light">
+                        {restCueCount} {restCueCount === 1 ? 'cue' : 'cues'}
+                        {!isCustomized && ' · using defaults'}
+                    </p>
+                    <p className="text-xs text-text-light mt-1">
+                        Recovery prompts surfaced on the dashboard and during low-energy check-ins.
+                    </p>
+                </Card>
 
                 <Card className="md:col-span-2">
                     <div className="flex items-center justify-between mb-3">

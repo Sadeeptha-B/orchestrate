@@ -73,8 +73,8 @@ export function CapacitySettings() {
                     </div>
                 </div>
                 <p className="text-[11px] text-text-light mt-1">
-                    Caps applied in Step 2. Habit-derived tasks may override with a per-habit
-                    maxBlockMinutes set on the habit itself.
+                    Caps applied in Step 2 to manually-categorized background tasks. Stabilizer
+                    habit-tasks use the per-habit <code>targetDurationMinutes</code> instead.
                 </p>
             </div>
         </div>

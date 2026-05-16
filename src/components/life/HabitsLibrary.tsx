@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { HabitForm, type HabitDraft } from './HabitForm';
 import { getActiveHabits } from '../../lib/habits';
+import { syncHabitToTodoist } from '../../lib/habitsTodoistSync';
 import type { Habit } from '../../types';
 
 interface HabitsLocationState {
@@ -30,7 +32,9 @@ function recurrenceSummary(h: Habit): string {
 }
 
 export function HabitsLibrary() {
-    const { life, dispatch } = useDayPlan();
+    const { life, settings, dispatch } = useDayPlan();
+    const todoistActions = useTodoistActions();
+    const { projects, taskMap, isConfigured: isTodoistConfigured } = useTodoistData();
     const location = useLocation();
     const navigate = useNavigate();
     const locationState = location.state as HabitsLocationState | null;
@@ -41,6 +45,8 @@ export function HabitsLibrary() {
     );
     const [editing, setEditing] = useState<Habit | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
+    const [syncError, setSyncError] = useState<string | null>(null);
+    const [migrating, setMigrating] = useState(false);
     const activeHabitCount = getActiveHabits(life).length;
 
     useEffect(() => {
@@ -54,6 +60,11 @@ export function HabitsLibrary() {
         if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
         return a.name.localeCompare(b.name);
     });
+
+    const unsyncedStabilizers = useMemo(
+        () => life.habits.filter((h) => h.kind === 'stabilizer' && h.active && !h.todoistTaskId),
+        [life.habits],
+    );
 
     const tryDelete = (habit: Habit) => {
         if (habit.isAnchor && habit.active) {
@@ -73,11 +84,103 @@ export function HabitsLibrary() {
         setCreateInitial(undefined);
     };
 
+    const onUpdateSettings = (updates: Partial<typeof settings>) =>
+        dispatch({ type: 'UPDATE_SETTINGS', settings: updates });
+
+    /** Push a stabilizer to Todoist and persist the resulting taskId on the habit. No-op for non-stabilizers. */
+    const syncStabilizer = async (habit: Habit): Promise<boolean> => {
+        if (habit.kind !== 'stabilizer' || !isTodoistConfigured) return false;
+        const taskId = await syncHabitToTodoist({
+            habit,
+            actions: todoistActions,
+            settings,
+            projects,
+            taskMap,
+            onUpdateSettings,
+        });
+        if (!taskId) return false;
+        if (taskId !== habit.todoistTaskId) {
+            dispatch({ type: 'UPDATE_HABIT', habit: { ...habit, todoistTaskId: taskId } });
+        }
+        return true;
+    };
+
+    const handleCreate = async (draft: HabitDraft) => {
+        const newHabit: Habit = {
+            ...draft,
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+        };
+        dispatch({ type: 'ADD_HABIT', habit: newHabit });
+        closeCreate();
+        if (newHabit.kind === 'stabilizer' && isTodoistConfigured) {
+            const ok = await syncStabilizer(newHabit);
+            if (!ok) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
+        }
+    };
+
+    const handleEdit = async (target: Habit, draft: HabitDraft) => {
+        const updated: Habit = { ...draft, id: target.id, createdAt: target.createdAt };
+        dispatch({ type: 'UPDATE_HABIT', habit: updated });
+        setEditing(null);
+        if (updated.kind === 'stabilizer' && isTodoistConfigured) {
+            const ok = await syncStabilizer(updated);
+            if (!ok) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
+        }
+    };
+
+    const handleMigrate = async () => {
+        if (!isTodoistConfigured || unsyncedStabilizers.length === 0) return;
+        setMigrating(true);
+        setSyncError(null);
+        let failures = 0;
+        for (const habit of unsyncedStabilizers) {
+            const ok = await syncStabilizer(habit);
+            if (!ok) failures += 1;
+        }
+        setMigrating(false);
+        if (failures > 0) {
+            setSyncError(
+                `Migrated ${unsyncedStabilizers.length - failures} of ${unsyncedStabilizers.length}. Try again to retry the rest.`,
+            );
+        }
+    };
+
     return (
         <LifeShell
             title="Habits"
-            subtitle="Stabilizers auto-inject as daily intentions; light-coherent habits surface in the Light Pool for opportunistic pulls."
+            subtitle="Stabilizers sync to Todoist as recurring tasks and surface as session-assigned tasks each day they're due. Light-coherent habits live in the Light Pool."
         >
+            {unsyncedStabilizers.length > 0 && (
+                <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
+                    <div className="text-sm">
+                        <strong>
+                            {unsyncedStabilizers.length} stabilizer{unsyncedStabilizers.length === 1 ? '' : 's'}
+                        </strong>{' '}
+                        need to be synced as recurring Todoist tasks.
+                        {!isTodoistConfigured && (
+                            <span className="text-text-light">
+                                {' '}Connect Todoist in Settings first.
+                            </span>
+                        )}
+                    </div>
+                    {isTodoistConfigured && (
+                        <Button size="sm" disabled={migrating} onClick={handleMigrate}>
+                            {migrating ? 'Migrating…' : 'Migrate'}
+                        </Button>
+                    )}
+                </div>
+            )}
+
+            {syncError && (
+                <div className="mb-4 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 p-3 text-sm flex items-center justify-between gap-3">
+                    <span>{syncError}</span>
+                    <Button variant="ghost" size="sm" onClick={() => setSyncError(null)}>
+                        Dismiss
+                    </Button>
+                </div>
+            )}
+
             <div className="flex items-center justify-between mb-4">
                 <p className="text-sm text-text-light">
                     {life.habits.length === 0
@@ -103,7 +206,7 @@ export function HabitsLibrary() {
                                                 : 'bg-surface-dark text-text-light'
                                             }`}
                                         title={h.kind === 'stabilizer'
-                                            ? 'Auto-injects as a daily intention'
+                                            ? 'Synced to Todoist as a recurring task; surfaces as a session-assigned task each day it is due'
                                             : 'Surfaces in the Light Pool; never enters the day plan'}
                                     >
                                         {h.kind === 'stabilizer' ? 'STABILIZER' : 'LIGHT'}
@@ -118,9 +221,19 @@ export function HabitsLibrary() {
                                             INACTIVE
                                         </span>
                                     )}
+                                    {h.kind === 'stabilizer' && !h.todoistTaskId && h.active && (
+                                        <span
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                                            title="Not yet synced to Todoist"
+                                        >
+                                            UNSYNCED
+                                        </span>
+                                    )}
                                 </div>
                                 <p className="text-xs text-text-light">
                                     {recurrenceSummary(h)}
+                                    {h.targetTime && ` · ${h.targetTime}`}
+                                    {h.targetDurationMinutes && ` · ${h.targetDurationMinutes}m`}
                                     {h.minimumViable && ` · MVP: ${h.minimumViable}`}
                                     {h.triggerCue && ` · cue: ${h.triggerCue}`}
                                 </p>
@@ -158,10 +271,7 @@ export function HabitsLibrary() {
                     seasons={life.seasons}
                     submitLabel="Create"
                     onCancel={closeCreate}
-                    onSubmit={(draft) => {
-                        dispatch({ type: 'ADD_HABIT', habit: draft });
-                        closeCreate();
-                    }}
+                    onSubmit={handleCreate}
                 />
             </Modal>
 
@@ -176,13 +286,7 @@ export function HabitsLibrary() {
                         initial={editing}
                         submitLabel="Save"
                         onCancel={() => setEditing(null)}
-                        onSubmit={(draft) => {
-                            dispatch({
-                                type: 'UPDATE_HABIT',
-                                habit: { ...draft, id: editing.id, createdAt: editing.createdAt },
-                            });
-                            setEditing(null);
-                        }}
+                        onSubmit={(draft) => handleEdit(editing, draft)}
                     />
                 )}
             </Modal>

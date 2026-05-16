@@ -1,7 +1,9 @@
 > **Start here.** This is the canonical context document for the current state of Orchestrate. Deeper references: [user-guide.md](./user-guide.md) (mental model & how to use the entities — habits, intentions, tasks, Light Pool, True Rest, capacity), [vision.md](./vision.md) (durable "why"), [architecture.md](./architecture.md), [data-model.md](./data-model.md), [backlog.md](./backlog.md) (forward-looking proposals). Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
 >
-> **Last updated:** 2026-05-11
-> **Reflects:** v6 — **Micro-gap refinement + capacity intelligence**. Splits Habits into `stabilizer` and `light-coherent`; adds a logged-only Light Pool (Dashboard panel + `/life` section + check-in surfacing); introduces a static True Rest cue track (Dashboard side rail, low-energy check-in slot, between-session banner); replaces the hard 30-min background cap with per-kind defaults in AppSettings plus per-habit `maxBlockMinutes`; ships advisory session capacity arithmetic (banner only when load > 150%); drops the deprecated `isHabit` flags, `TOGGLE_TASK_HABIT` action, and `backfillHabitsFromLegacy`. Iteration 7 (modes/rituals/recovery) and iteration 8 (reviews/drift) remain sketched in [history/plan_v5.md](./history/plan_v5.md).
+> **Last updated:** 2026-05-16
+> **Reflects:** v6.1 — **Habit-as-task decoupling**. Stabilizer habits are no longer auto-injected as intentions and force-mapped to tasks; instead, creating a stabilizer syncs a recurring Todoist task in a dedicated Habits project (`AppSettings.habitsTodoistProjectId`, lazily created), and during planning the habit's task is surfaced **directly as an orphan LinkedTask** (no `intentionId`) and auto-assigned to whichever session contains its Todoist `due.datetime`. Per-habit `targetTime` / `targetDurationMinutes` / `windowBehavior` (`'strict'` hides the task once the window has passed; `'lenient'` keeps it surfaced while due in Todoist) replace the deprecated `autoLinkTodoistId` / `maxBlockMinutes` (kept readable for migration). `LinkedTask.intentionId` becomes optional + `sourceHabitId` is added; `Intention.sourceHabitId` / `skippedForToday` are removed; `INJECT_HABIT_INTENTIONS` / `SKIP_HABIT_INTENTION` become `INJECT_HABIT_TASKS` / `SKIP_HABIT_TASK`. Schema bumps to `6.1`. Iteration 7 (modes/rituals/recovery) and iteration 8 (reviews/drift) remain sketched in [history/plan_v5.md](./history/plan_v5.md).
+>
+> **v6** (the baseline this builds on) split Habits into `stabilizer` / `light-coherent`, shipped the Light Pool + True Rest cue catalog (Dashboard side rail / inline check-in / between-session banner), replaced the hard 30-min background cap with per-kind defaults in AppSettings, and introduced advisory session capacity arithmetic.
 
 # Orchestrate — Purpose & Current Feature Set
 
@@ -44,31 +46,31 @@ Welcome is a multi-purpose home hub (since v5.1): a "Today" card with the wizard
 
 | Term | Meaning |
 |---|---|
-| **Intention** | A high-level goal for *today* (e.g. "Finish assignment 3"). Not a todo-list epic — a today-scoped focus area. Owned by Orchestrate. May carry a `sourceHabitId` if auto-injected from a Habit. |
-| **LinkedTask** | A specific Todoist task that has been bound to an intention inside Orchestrate's plan. The unit that gets categorized and scheduled. |
+| **Intention** | A high-level goal for *today* (e.g. "Finish assignment 3"). Not a todo-list epic — a today-scoped focus area. Owned by Orchestrate. v6.1: intentions only come from the user; stabilizer habits no longer auto-inject as intentions. |
+| **LinkedTask** | A Todoist task surfaced inside Orchestrate's plan. Either bound to an intention (`intentionId`) or an **orphan habit-task** (`sourceHabitId`, no parent intention — v6.1). The unit that gets scheduled. |
 | **Main task** | A primary work thread. Exclusive to one session. |
-| **Background task** | A habit/nudge task. Can be assigned to multiple sessions in the same day. Capped at 30 min per estimate. |
+| **Background task** | A small/recurring task. Can be assigned to multiple sessions in the same day. Cap resolved from `Habit.targetDurationMinutes` (stabilizers, v6.1) or `AppSettings.taskCapDefaults` per kind (defaults: stabilizer 30 / lightCoherent 20 / manualBackground 30). |
 | **Season** | A medium-horizon focus period (typically 4–12 weeks) with a primary theme, supporting goals, non-goals, success criteria, and an optional capacity budget. Exactly one season is active at a time. |
-| **Habit** | A first-class recurring entity. v6: discriminated by `kind` into **stabilizer** and **light-coherent**. Owns its recurrence rule, minimum-viable form, trigger cue, anchor flag, optional auto-link Todoist task, and optional per-habit `maxBlockMinutes`. |
-| **Stabilizer** | A `kind: 'stabilizer'` habit. Anchor-style ritual (sleep, meditation, gym, shutdown). Auto-injects as an intention each day it matches; its linked task is locked to `background` in Step 2. |
+| **Habit** | A first-class recurring entity. v6: discriminated by `kind` into **stabilizer** and **light-coherent**. Owns its recurrence rule, minimum-viable form, trigger cue, anchor flag, season scope, and (stabilizers only, v6.1) `todoistTaskId` + `targetTime` + `targetDurationMinutes` + `windowBehavior`. |
+| **Stabilizer** | A `kind: 'stabilizer'` habit. Anchor-style ritual (sleep, meditation, gym, shutdown). v6.1: synced to Todoist as a recurring task in the dedicated Habits project (lazily created via `AppSettings.habitsTodoistProjectId`); each day it's due + unchecked the task is surfaced **directly as a session-assigned orphan LinkedTask** (no intention). Auto-assignment uses Todoist `due.datetime` → SessionSlot lookup; if `windowBehavior === 'strict'` and current time exceeds `targetTime + targetDurationMinutes`, the task is hidden for the day. |
 | **Light-coherent** | A `kind: 'light-coherent'` habit. Small, resumable micro-gap filler (flashcards, short reading, idea capture). Never auto-injects as an intention — surfaces in the **Light Pool**, logged opportunistically via `plan.habitLog`. |
 | **Light Pool** | Dashboard panel + `/life` section listing today's active light-coherent habits scoped to the active season. Start/Complete writes a `HabitLogEntry`; never enters today's task plan. |
-| **True Rest** | A static catalog of non-task recovery cues (walk, breathe, look out window). Surfaced on the Dashboard side rail, inside the check-in modal for low-energy states, and between sessions when the next slot is within 60 min. |
+| **True Rest** | A catalog of non-task recovery cues (walk, breathe, look out window). Defaults to 8 built-in cues; user can add/edit/delete via `/rest-cues`. Custom cues are stored in `life.restCues`. Surfaced on the Dashboard side rail (with a `›` skip button to cycle through), inside the check-in modal for low-energy states, and between sessions when the next slot is within 60 min. |
 | **Anchor habit** | A habit flagged as foundational (`isAnchor: true`) — typically (but not necessarily) a stabilizer. Protected from accidental deletion while active; surfaced as the "protect these" set on `/life` and the Welcome Life card. `isAnchor` is **orthogonal to `kind`**: it answers "how protected?", not "what behavior?". See [user-guide.md](./user-guide.md) §6 for the full table. |
 | **Session** | A configurable time block in the day (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
-| **Session capacity** | v6 advisory arithmetic: `(session length − sessionBufferMinutes) − Σ estimatedMinutes` for assigned tasks. Background tasks count once per assignment. Status flips to `over` only at >150% load — a non-blocking banner appears, the wizard always advances. |
+| **Session capacity** | v6 advisory arithmetic: `(session length − sessionBufferMinutes) − Σ estimatedMinutes` for assigned tasks. Background tasks count once per assignment; orphan habit-tasks count via their `targetDurationMinutes`. Status flips to `over` only at >150% load — a non-blocking banner appears, the wizard always advances. |
 | **Check-in** | An hourly prompt during active sessions asking how the user feels and what kind of work they're doing. Suggests a playlist. When feeling is `struggling`/`stuck` (or work is low-energy/restless), the modal also surfaces 1–2 Light Pool rows and a True Rest cue. `feeling === 'stuck'` adds an "avoidance note" capture. |
 
 ### 2.2 The Wizard (4 steps)
 
 Sequential setup that captures the day's plan:
 
-1. **Step 1 — Intentions.** Two phases: (a) write down intentions for the day, (b) sequentially walk through each intention and *map* it to specific Todoist tasks via the embedded TodoistPanel ("Link"/"Unlink" buttons). Mapped intentions become collapsible panels showing their linked tasks; users can remap individually or restart mapping wholesale.
+1. **Step 1 — Intentions.** Two phases: (a) write down intentions for the day, (b) sequentially walk through each intention and *map* it to specific Todoist tasks via the embedded TodoistPanel ("Link"/"Unlink" buttons). Mapped intentions become collapsible panels showing their linked tasks; users can remap individually or restart mapping wholesale. **v6.1:** stabilizer habits no longer appear in the intention list — instead, the step mounts an injection effect (`INJECT_HABIT_TASKS`) that surfaces today's stabilizer Todoist tasks as orphan LinkedTasks with auto-assigned sessions. An informational chip ("N habit tasks scheduled for today — see Step 3") appears in Phase 1 when any are present. The TodoistPanel renders a non-actionable "🔁 Habit" label in place of the Link button on rows backed by a habit-task.
 
-2. **Step 2 — Refine.** Per-intention sequential flow. For each linked task: categorize as **main** or **background**, optionally toggle **habit**, and set an **estimate** (preset pills: 15m / 30m / 45m / 1hr, or custom). Background tasks clamp to 30 min. Tasks > 60 min trigger a non-blocking nudge to break down via the TodoistPanel (collapsed by default; auto-opens on >60min estimates). Cannot advance until every (non-completed) task is categorized AND estimated.
+2. **Step 2 — Refine.** Per-intention sequential flow. For each linked task: categorize as **main** or **background**, and set an **estimate** (preset pills: 15m / 30m / 45m / 1hr, or custom). Background tasks clamp to `taskCapDefaults.manualBackground` (default 30 min). Tasks > 60 min trigger a non-blocking nudge to break down via the TodoistPanel (collapsed by default; auto-opens on >60min estimates). **v6.1:** orphan habit-tasks (no `intentionId`) bypass Step 2 entirely — they arrive pre-typed (`background`) and pre-estimated from injection.
 
 3. **Step 3 — Schedule.** Two phases:
-   - **Phase 1 (Assign):** A proportional `SessionTimelineBar` shows sessions as blocks. User clicks a session and assigns tasks to it. Main tasks are exclusive to one session; background tasks can be assigned to multiple. Cannot advance until at least one task is assigned.
+   - **Phase 1 (Assign):** A proportional `SessionTimelineBar` shows sessions as blocks. User clicks a session and assigns tasks to it. Main tasks are exclusive to one session; background tasks can be assigned to multiple. **v6.1:** habit-tasks already arrive pre-assigned to sessions whose time range covers their Todoist `due.datetime`; any habit-tasks without a resolvable session land in an "Unassigned habits" tray above the timeline (drag/drop into a session). The selected-session detail panel groups assigned habit-tasks under a "🔁 Habits" header. Cannot advance until at least one task is assigned.
    - **Phase 2 (Time):** Side-by-side TodoistPanel + Google Calendar embed. User schedules concrete times in Todoist (which sync to Google Calendar via the user's existing Todoist↔Calendar sync). Estimate-based auto-fill: entering a start time auto-computes end time from `estimatedMinutes`.
 
 4. **Step 4 — Start Music.** Plays the "Start Work" Spotify playlist as a ramp-in trigger, then transitions to the Dashboard.
@@ -126,17 +128,17 @@ Important nuance: Orchestrate has **no backend**. All persistence is `localStora
 
 Three interlocking ideas:
 
-**Intentions own LinkedTasks.** An intention has `linkedTaskIds: string[]` (ordered Todoist IDs). A `LinkedTask` has `intentionId` back-reference + `type` + `estimatedMinutes` + `assignedSessions[]` + `completed` + `titleSnapshot?`. The flat `linkedTasks` array on `DayPlan` is the denormalized list across all intentions.
+**Intentions own (manually linked) LinkedTasks.** An intention has `linkedTaskIds: string[]` (ordered Todoist IDs). A `LinkedTask` has either an `intentionId` back-reference (manual link) **or** a `sourceHabitId` (orphan habit-task, v6.1) — never both. Plus `type` + `estimatedMinutes` + `assignedSessions[]` + `completed` + `titleSnapshot?` + `skippedForToday?`. The flat `linkedTasks` array on `DayPlan` is the denormalized list.
 
 **Tasks (not intentions) are scheduled.** `DayPlan.taskSessions: Record<sessionId, todoistId[]>` is the source of truth for what runs in each session. `LinkedTask.assignedSessions` is a derived mirror kept in sync by the reducer.
 
-**LifeContext sits above the day.** A separate persistent state slice (`life: LifeContext` on the provider, persisted to `orchestrate-life-context`) holds `seasons[]`, `habits[]`, and `activeSeasonId`. When an intention has `sourceHabitId` set, it was auto-injected from a habit at Step 1 entry; the corresponding linked task's category is locked to `background` in Step 2.
+**LifeContext sits above the day.** A separate persistent state slice (`life: LifeContext` on the provider, persisted to `orchestrate-life-context`) holds `seasons[]`, `habits[]`, and `activeSeasonId`. **v6.1:** stabilizer habits carry `todoistTaskId` (the persistent recurring Todoist task), `targetTime`, `targetDurationMinutes`, and `windowBehavior`. The `INJECT_HABIT_TASKS` action (fired on Step 1 mount, re-fired when the Todoist cache grows) consumes `computeHabitTasksToInject(...)` from `lib/habitsTodoistSync.ts` to surface eligible orphan habit-tasks for the day.
 
-Consequence: **a single intention can have both main and background tasks.** This was the v4 fix — earlier versions categorized at the intention level, which didn't match real workflows.
+Consequence: **a single intention can have both main and background tasks** (the v4 fix), and **habit-tasks live alongside intention-bound tasks in the same `linkedTasks` array** — distinguished by which of `intentionId` / `sourceHabitId` is set.
 
-The plan auto-resets daily (`loadPlan()` checks `parsed.date !== todayISO()`). User preferences (Todoist token, session slots, calendar IDs) survive in `AppSettings`. Completed days can be saved to `history` and restored later.
+The plan auto-resets daily (`loadPlan()` checks `parsed.date !== todayISO()`). User preferences (Todoist token, session slots, calendar IDs, **`habitsTodoistProjectId`** in v6.1) survive in `AppSettings`. Completed days can be saved to `history` and restored later.
 
-A migration chain (v1 → v2 → v3 → v4 → v4.1 → v5) handles old saved sessions on load. v3 → v4 cannot reconstruct task links (v3 stored none) so it shows a one-time notice prompting re-mapping. v5 stamps an explicit `_schemaVersion` marker on plan, settings, life, and saved-session payloads. A one-time backfill scans existing intentions/saved-sessions for legacy `isHabit: true` entries and surfaces them as inactive `Habit` candidates in the library.
+A migration chain (v1 → v2 → v3 → v4 → v4.1 → v5 → v6 → **v6.1**) handles old saved sessions on load. v6 → v6.1 drops habit-derived intentions and re-anchors their LinkedTasks as orphans with `sourceHabitId`; in `loadLifeContext`, stabilizers' `autoLinkTodoistId` migrates to `todoistTaskId` and `maxBlockMinutes` migrates to `targetDurationMinutes`. Schema marker is now `6.1` (a JSON float) on plan, settings, life, and saved-session payloads.
 
 Stale task handling is well-developed: completed tasks stay visible (strikethrough + 🎉) using `titleSnapshot`; deleted tasks auto-unlink; externally-completed tasks are detected and marked complete (not unlinked) so session tracking is preserved.
 
@@ -165,9 +167,9 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - Multi-calendar Google Calendar configuration with colors and view mode
 
 **Wizard**
-- Step 1: intention entry, sequential mapping to Todoist tasks, individual or wholesale remap, collapsible mapped-intention panels showing linked tasks. **Season focus banner** at the top of Phase 1 surfaces the active season's name + theme and renders each `supportingGoal` as a clickable chip — clicking adds it as an intention via `ADD_INTENTION` (already-added goals render as disabled `✓` chips). Empty-state nudge with "Set up a season" link when no season is active.
-- Step 2: per-intention categorization + estimation, preset + custom estimate input, background 30min cap, >60min breakdown nudge with auto-opening task manager, horizontal task cards when panel collapsed
-- Step 3: two-phase scheduling — proportional timeline assignment + side-by-side Todoist/Calendar time scheduling with estimate-based end-time auto-fill, phase gating, completed-task short-circuit
+- Step 1: intention entry, sequential mapping to Todoist tasks, individual or wholesale remap, collapsible mapped-intention panels showing linked tasks. **Season focus banner** at the top of Phase 1 surfaces the active season's name + theme and renders each `supportingGoal` as a clickable chip — clicking adds it as an intention via `ADD_INTENTION` (already-added goals render as disabled `✓` chips). Empty-state nudge with "Set up a season" link when no season is active. **v6.1:** mounts `INJECT_HABIT_TASKS` (idempotent; re-fires when Todoist `taskMap` grows) so today's stabilizer habit-tasks land in `plan.linkedTasks` as orphan tasks; an inline chip shows the count.
+- Step 2: per-intention categorization + estimation, preset + custom estimate input, background `manualBackground` cap (v6.1: orphan habit-tasks bypass this step), >60min breakdown nudge with auto-opening task manager, horizontal task cards when panel collapsed
+- Step 3: two-phase scheduling — proportional timeline assignment + side-by-side Todoist/Calendar time scheduling with estimate-based end-time auto-fill, phase gating, completed-task short-circuit. **v6.1:** orphan habit-tasks render under a "🔁 Habits" group inside the selected-session detail; an "Unassigned habits" tray sits above the timeline for any habit-tasks without a resolvable session.
 - Step 4: Spotify start-work playback + setup completion
 
 **Dashboard**
@@ -187,21 +189,22 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - OS notification support (with user preference: in-app / browser / both)
 - Recontextualize jump back to Step 3 from check-in
 
-**Life scaffolding (v5–v6)**
+**Life scaffolding (v5–v6.1)**
 - First-class `Season` entity: name, theme, supporting goals, non-goals, success criteria, optional capacity budget. Exactly one active.
-- First-class `Habit` entity (v6 discriminated): `kind: 'stabilizer' | 'light-coherent'`, recurrence, minimum-viable, trigger cue, completion rule, failure tolerance, anchor flag, optional persistent Todoist auto-link, season membership, optional `maxBlockMinutes` per-habit cap.
+- First-class `Habit` entity (v6 discriminated): `kind: 'stabilizer' | 'light-coherent'`, recurrence, minimum-viable, trigger cue, completion rule, failure tolerance, anchor flag, season membership. **v6.1 (stabilizers only):** `todoistTaskId` (the synced recurring task), `targetTime` (`"HH:mm"`), `targetDurationMinutes`, `windowBehavior` (`'strict' | 'lenient'`).
 - Anchor habits get protection from accidental deletion (must deactivate first).
-- Stabilizer habits auto-promote as intentions in Step 1 (idempotent on re-entry); habit-derived intentions render with a 🔁 Habit badge and a "Skip for today" affordance. **Light-coherent habits never auto-inject** — they live in the Light Pool instead.
-- Habit-derived linked tasks have category locked to `background` in Step 2; the per-task cap resolves from `Habit.maxBlockMinutes` → kind default → `taskCapDefaults.manualBackground` for manually-categorized backgrounds.
-- New routes: `/life` (hub, now includes a Light Pool section with weekly cadence rollup), `/season` (list), `/season/:id` (detail), `/habits` (library).
+- **Stabilizers (v6.1):** saving a stabilizer in `HabitsLibrary`/`HabitForm` calls `syncHabitToTodoist(...)` which lazily creates the Habits project (`AppSettings.habitsTodoistProjectId`) and pushes a recurring task with a `due_string` derived from `Habit.recurrence` + `targetTime` (e.g. `"every weekday at 7:00"`). On planning, the habit's task surfaces as an orphan LinkedTask (no intention) auto-assigned to the session containing its `due.datetime`. Active stabilizers without a `todoistTaskId` show an inline "Migrate" banner in `/habits` that bulk-syncs them.
+- **Light-coherent habits never enter the task plan** — they live in the Light Pool, logged via `plan.habitLog`.
+- Per-task duration caps: stabilizer habit-tasks use `Habit.targetDurationMinutes ?? taskCapDefaults.stabilizer`; manually-categorized backgrounds use `taskCapDefaults.manualBackground`.
+- New routes: `/life` (hub, includes a Light Pool section with weekly cadence rollup), `/season` (list), `/season/:id` (detail), `/habits` (library), `/rest-cues`.
 - `ActiveSeasonBadge` in Dashboard + Wizard headers.
 - "Life" button in Dashboard header.
 
 **Day-level intelligence (v6)**
 - **Light Pool panel** on the Dashboard (between Current Session and Task Manager) — per-row Start/Complete writes to `plan.habitLog`, never enters the task plan.
-- **True Rest card** on the Dashboard side rail (rotating cue) + inline cue in the check-in modal when feeling/work-type indicates low resources + a between-session banner when next slot is within 60 min.
+- **True Rest card** on the Dashboard side rail — sequential cycling (index-based) with a `›` skip button that resets the 5-min auto-rotate timer, plus a `Manage →` link to `/rest-cues`. Also surfaces as an inline cue in the check-in modal for low-resource states and as a between-session banner when the next slot is within 60 min. The cue catalog is user-configurable via the dedicated `/rest-cues` page (`RestCuesManager`): filterable by category (All / Physical / Breath / Sensory), with per-row inline add/edit/delete. Custom cues are stored in `life.restCues`; when unset, the 8 built-in defaults from `src/data/restCues.ts` are used. First edit auto-seeds from defaults so no explicit "Customize" step is needed.
 - **Session capacity arithmetic** in `src/lib/capacity.ts` — surfaces a per-session `SessionCapacityBadge` on the Step 3 timeline and the Dashboard Current Session card, plus a `SessionCapacityBanner` above the Step 3 timeline when any session is `over` (> 150%). Mid-session calc uses remaining minutes. Background tasks count once per assignment.
-- **Per-task duration caps** — `AppSettings.taskCapDefaults` (stabilizer 30 / lightCoherent 20 / manualBackground 30, all tunable in Settings) replace the old hard 30-min background clamp; `Habit.maxBlockMinutes` overrides per-habit.
+- **Per-task duration caps** — `AppSettings.taskCapDefaults` (stabilizer 30 / lightCoherent 20 / manualBackground 30, all tunable in Settings) replace the old hard 30-min background clamp; **v6.1:** stabilizers override per-habit via `Habit.targetDurationMinutes` (was `maxBlockMinutes`).
 - **Check-in upgrades** — `feeling === 'stuck'` adds a "What exactly are you avoiding?" capture (persisted as `CheckIn.avoidanceNote`); low-resource states reveal 1–2 Light Pool rows + a True Rest cue.
 
 **Persistence & history**
@@ -228,7 +231,7 @@ Full type catalog and reducer action list: [data-model.md](./data-model.md). His
 - **Modes, rituals, recovery mode.** No `DayPlan.mode` field, no ritual templates / `RitualPlayer`, no Minimum Viable Day. (Targeted for v7.)
 - **Reviews and drift detection.** No `/review` route, no weekly/seasonal review flows, no drift-signal aggregation. (Targeted for v8.)
 
-Treat these as future work, not current behavior. **First-class habits and Seasons shipped in v5; the Habit.kind split, Light Pool, True Rest, capacity arithmetic, and the legacy `isHabit` purge shipped in v6** (see [history/plan_v5.md](./history/plan_v5.md) and [history/plan_v6.md](./history/plan_v6.md)).
+Treat these as future work, not current behavior. **First-class habits and Seasons shipped in v5; the Habit.kind split, Light Pool, True Rest, capacity arithmetic, and the legacy `isHabit` purge shipped in v6; the habit-as-task decoupling shipped in v6.1** (see [history/plan_v5.md](./history/plan_v5.md), [history/plan_v6.md](./history/plan_v6.md), and the forthcoming `history/plan_v6_1.md`).
 
 ---
 

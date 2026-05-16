@@ -12,7 +12,6 @@ import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
-import { getHabitDerivedIntentionIds } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 export function Step3Schedule() {
@@ -33,23 +32,27 @@ export function Step3Schedule() {
         [plan.intentions],
     );
 
-    const habitDerivedIntentionIds = useMemo(
-        () => getHabitDerivedIntentionIds(plan.intentions),
-        [plan.intentions],
-    );
-
-    /** v6: replaces the old `lt.isHabit` read — a task is "habit-derived" when its parent intention came from a Habit. */
-    const isHabitDerived = (lt: LinkedTask) => habitDerivedIntentionIds.has(lt.intentionId);
+    /** v6.1: orphan habit-tasks have no intention — `sourceHabitId` is the new "habit-derived" marker. */
+    const isHabitDerived = (lt: LinkedTask) => Boolean(lt.sourceHabitId);
 
     const mainTasksByIntention = useMemo(() => {
         const groups = new Map<string, LinkedTask[]>();
         for (const lt of mainTasks) {
+            if (lt.intentionId === undefined) continue;
             const list = groups.get(lt.intentionId) ?? [];
             list.push(lt);
             groups.set(lt.intentionId, list);
         }
         return groups;
     }, [mainTasks]);
+
+    /** v6.1: orphan habit-tasks not yet assigned to any session live in this tray. */
+    const unassignedHabitTasks = useMemo(
+        () => plan.linkedTasks.filter(
+            (lt) => lt.sourceHabitId && !lt.completed && !lt.skippedForToday && lt.assignedSessions.length === 0,
+        ),
+        [plan.linkedTasks],
+    );
 
     const titleFor = (todoistId: string) => getTaskTitle(todoistId, plan.linkedTasks, taskMap);
 
@@ -95,7 +98,7 @@ export function Step3Schedule() {
                                     <span
                                         key={lt.todoistId}
                                         className="px-3 py-1.5 text-xs rounded-full bg-success/10 text-text-light border border-success/20 line-through"
-                                        title={intentionMap.get(lt.intentionId)?.title}
+                                        title={lt.intentionId ? intentionMap.get(lt.intentionId)?.title : 'Habit'}
                                     >
                                         🎉 {titleFor(lt.todoistId)}
                                     </span>
@@ -115,11 +118,31 @@ export function Step3Schedule() {
                                         <span
                                             key={lt.todoistId}
                                             className="px-3 py-1.5 text-xs rounded-full bg-accent-subtle text-accent border border-accent/20"
-                                            title={intentionMap.get(lt.intentionId)?.title}
+                                            title={lt.intentionId ? intentionMap.get(lt.intentionId)?.title : undefined}
                                         >
                                             {getTaskLabel(lt)}
                                         </span>
                                     ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* v6.1: Unassigned habit-tasks tray (orphan tasks with no session yet) */}
+                    {unassignedHabitTasks.length > 0 && (
+                        <div className="rounded-lg border border-accent/20 bg-accent-subtle/30 px-3 py-2">
+                            <h3 className="text-xs font-medium text-text-light mb-1.5 flex items-center gap-1">
+                                <span aria-hidden>🔁</span>
+                                <span>Unassigned habits — pick a session to drop them in</span>
+                            </h3>
+                            <div className="flex flex-wrap gap-1.5">
+                                {unassignedHabitTasks.map((lt) => (
+                                    <span
+                                        key={lt.todoistId}
+                                        className="px-2.5 py-1 text-xs rounded-full bg-accent-subtle text-accent border border-accent/30"
+                                    >
+                                        {getTaskLabel(lt)}
+                                    </span>
+                                ))}
                             </div>
                         </div>
                     )}
@@ -133,7 +156,7 @@ export function Step3Schedule() {
                                     <span
                                         key={lt.todoistId}
                                         className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
-                                        title={intentionMap.get(lt.intentionId)?.title}
+                                        title={lt.intentionId ? intentionMap.get(lt.intentionId)?.title : 'Habit'}
                                     >
                                         {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
                                         {lt.assignedSessions.length > 0 && (
@@ -157,7 +180,6 @@ export function Step3Schedule() {
                         selectedSessionId={selectedSessionId}
                         onSelectSession={setSelectedSessionId}
                         capacities={capacities}
-                        habitDerivedIntentionIds={habitDerivedIntentionIds}
                     />
 
                     {/* ── Selected session detail panel ── */}
@@ -166,10 +188,14 @@ export function Step3Schedule() {
                         const assignedMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));
                         const unassignedMain = mainTasks.filter((lt) => lt.assignedSessions.length === 0);
                         const assignedBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
+                        // v6.1: split assigned background by source — habit-derived render under a 🔁 Habits group.
+                        const assignedHabitBg = assignedBg.filter((lt) => lt.sourceHabitId);
+                        const assignedManualBg = assignedBg.filter((lt) => !lt.sourceHabitId);
                         const unassignedBg = backgroundTasks.filter((lt) => !assignedIds.includes(lt.todoistId));
 
                         const assignedByIntention = new Map<string, LinkedTask[]>();
                         for (const lt of assignedMain) {
+                            if (lt.intentionId === undefined) continue;
                             const list = assignedByIntention.get(lt.intentionId) ?? [];
                             list.push(lt);
                             assignedByIntention.set(lt.intentionId, list);
@@ -220,10 +246,37 @@ export function Step3Schedule() {
                                     </div>
                                 )}
 
-                                {/* Assigned background tasks */}
-                                {assignedBg.length > 0 && (
+                                {/* Assigned habit-derived background tasks (🔁 Habits group) */}
+                                {assignedHabitBg.length > 0 && (
+                                    <div>
+                                        <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
+                                            🔁 Habits
+                                        </span>
+                                        <div className="flex flex-wrap gap-1.5 mt-1">
+                                            {assignedHabitBg.map((lt) => (
+                                                <button
+                                                    key={lt.todoistId}
+                                                    onClick={() =>
+                                                        dispatch({
+                                                            type: 'UNASSIGN_TASK',
+                                                            todoistId: lt.todoistId,
+                                                            sessionId: selectedSession.id,
+                                                        })
+                                                    }
+                                                    className="px-3 py-1.5 text-xs rounded-full bg-accent text-white cursor-pointer hover:bg-accent/80 transition-colors"
+                                                    title="Click to remove from this session"
+                                                >
+                                                    {getTaskLabel(lt)} ×
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Assigned manual background tasks */}
+                                {assignedManualBg.length > 0 && (
                                     <div className="flex flex-wrap gap-2">
-                                        {assignedBg.map((lt) => (
+                                        {assignedManualBg.map((lt) => (
                                             <button
                                                 key={lt.todoistId}
                                                 onClick={() =>
@@ -236,7 +289,7 @@ export function Step3Schedule() {
                                                 className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
                                                 title="Click to remove from this session"
                                             >
-                                                {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)} ×
+                                                {getTaskLabel(lt)} ×
                                             </button>
                                         ))}
                                     </div>

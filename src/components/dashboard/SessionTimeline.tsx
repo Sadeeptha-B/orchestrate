@@ -5,11 +5,13 @@ import { SessionCapacityBadge } from './SessionCapacityBadge';
 import { SessionCapacityBanner } from './SessionCapacityBanner';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoistData, type TodoistTask } from '../../hooks/useTodoist';
+import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks/useTodoist';
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
-import { getHabitDerivedIntentionIds } from '../../lib/habits';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
+
+/** v6.1: synthetic group key used by SessionCard to render orphan habit-tasks under a "🔁 Habits" header. */
+const HABIT_GROUP_KEY = '__habits__';
 
 /** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
 function getScheduledRange(task: TodoistTask | undefined): string | null {
@@ -90,8 +92,18 @@ interface TaskRowProps {
 
 function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, isHabitDerived }: TaskRowProps) {
     const { dispatch } = useDayPlan();
+    const { completeTask, reopenTask } = useTodoistActions();
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
+
+    const handleToggle = () => {
+        dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title });
+        if (linkedTask.completed) {
+            reopenTask(linkedTask.todoistId);
+        } else {
+            completeTask(linkedTask.todoistId);
+        }
+    };
 
     return (
         <li
@@ -122,7 +134,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, 
             </span>
 
             <button
-                onClick={() => dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title })}
+                onClick={handleToggle}
                 className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${linkedTask.completed
                     ? 'bg-success border-success text-white'
                     : 'border-border hover:border-accent'
@@ -192,12 +204,13 @@ function SessionCard({
         .map((id) => linkedTasks.find((lt) => lt.todoistId === id))
         .filter((lt): lt is LinkedTask => lt !== undefined);
 
-    // Group by intention
+    // Group by intention; orphan habit-tasks fall into the synthetic 🔁 Habits group.
     const tasksByIntention = new Map<string, LinkedTask[]>();
     for (const lt of tasksInSession) {
-        const list = tasksByIntention.get(lt.intentionId) ?? [];
+        const key = lt.intentionId ?? HABIT_GROUP_KEY;
+        const list = tasksByIntention.get(key) ?? [];
         list.push(lt);
-        tasksByIntention.set(lt.intentionId, list);
+        tasksByIntention.set(key, list);
     }
 
     // Background nudge banner for active session
@@ -235,34 +248,38 @@ function SessionCard({
 
             {tasksByIntention.size > 0 ? (
                 <div className="space-y-3">
-                    {[...tasksByIntention.entries()].map(([intId, tasks]) => (
-                        <div key={intId}>
-                            <span className="text-[10px] font-medium text-text-light uppercase tracking-wider px-2">
-                                {intentions.get(intId)?.title ?? 'Unknown'}
-                            </span>
-                            <ul className="space-y-1.5 mt-1">
-                                {tasks.map((lt) => {
-                                    const todoistTask = taskMap.get(lt.todoistId);
-                                    const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
-                                    // Only truly stale if not in Todoist AND not completed (completed tasks are expected to be absent)
-                                    const isStale = !todoistTask && !lt.completed;
-                                    const intent = intentions.get(lt.intentionId);
-                                    return (
-                                        <TaskRow
-                                            key={lt.todoistId}
-                                            linkedTask={lt}
-                                            title={title}
-                                            isStale={isStale}
-                                            sessionId={session.id}
-                                            drag={drag}
-                                            scheduledRange={getScheduledRange(todoistTask)}
-                                            isHabitDerived={Boolean(intent?.sourceHabitId)}
-                                        />
-                                    );
-                                })}
-                            </ul>
-                        </div>
-                    ))}
+                    {[...tasksByIntention.entries()].map(([intId, tasks]) => {
+                        const groupTitle = intId === HABIT_GROUP_KEY
+                            ? '🔁 Habits'
+                            : intentions.get(intId)?.title ?? 'Unknown';
+                        return (
+                            <div key={intId}>
+                                <span className="text-[10px] font-medium text-text-light uppercase tracking-wider px-2">
+                                    {groupTitle}
+                                </span>
+                                <ul className="space-y-1.5 mt-1">
+                                    {tasks.map((lt) => {
+                                        const todoistTask = taskMap.get(lt.todoistId);
+                                        const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
+                                        // Only truly stale if not in Todoist AND not completed (completed tasks are expected to be absent)
+                                        const isStale = !todoistTask && !lt.completed;
+                                        return (
+                                            <TaskRow
+                                                key={lt.todoistId}
+                                                linkedTask={lt}
+                                                title={title}
+                                                isStale={isStale}
+                                                sessionId={session.id}
+                                                drag={drag}
+                                                scheduledRange={getScheduledRange(todoistTask)}
+                                                isHabitDerived={Boolean(lt.sourceHabitId)}
+                                            />
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+                        );
+                    })}
                 </div>
             ) : (
                 <p className="text-xs text-text-light">No tasks scheduled</p>
@@ -360,10 +377,6 @@ export function SessionTimeline() {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
-    const habitDerivedIntentionIds = useMemo(
-        () => getHabitDerivedIntentionIds(plan.intentions),
-        [plan.intentions],
-    );
 
     return (
         <SessionTimelineBar
@@ -372,7 +385,6 @@ export function SessionTimeline() {
             linkedTasks={plan.linkedTasks}
             taskMap={taskMap}
             currentSessionId={currentSession?.id}
-            habitDerivedIntentionIds={habitDerivedIntentionIds}
         />
     );
 }

@@ -40,6 +40,7 @@ StrictMode
                     ├── SeasonsManager (at /season)
                     ├── SeasonDetail (at /season/:id)
                     ├── HabitsLibrary (at /habits)
+                    ├── RestCuesManager (at /rest-cues)
                     └── UserGuide    (at /guide)
 ```
 
@@ -61,6 +62,7 @@ Orchestrate has eight routes, all defined in the `AppRoutes` component inside `A
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits with anchor protection |
+| `/rest-cues` | `RestCuesManager` | Always reachable. CRUD True Rest cues with category filter pills (All / Physical / Breath / Sensory); inline add/edit forms; Reset to defaults |
 | `/guide` | `UserGuide` | Always reachable. In-app rendering of the v6 user guide (mental model + how-to). Linked from the About modal across Welcome / Dashboard / Wizard. |
 | `*` | Redirect to `/` | Catch-all |
 
@@ -102,9 +104,9 @@ The wizard is a 4-step sequential flow. The current step is stored in `plan.wiza
 
 | Step | Component | Purpose |
 |---|---|---|
-| 1 | `Step1Intentions` | Define intentions, then sequentially map each to Todoist tasks |
-| 2 | `Step2Refine` | Categorize linked tasks as *main* or *background*, set time estimates |
-| 3 | `Step3Schedule` | Two-phase: assign tasks to sessions, then schedule times with Todoist + Calendar |
+| 1 | `Step1Intentions` | Define intentions, then sequentially map each to Todoist tasks. **v6.1:** also dispatches `INJECT_HABIT_TASKS` on mount (and re-fires when the Todoist `taskMap` size changes) so today's stabilizer habit-tasks land as orphan LinkedTasks. |
+| 2 | `Step2Refine` | Categorize linked tasks as *main* or *background*, set time estimates. **v6.1:** orphan habit-tasks (no `intentionId`) are filtered out — they arrive pre-typed and pre-estimated. |
+| 3 | `Step3Schedule` | Two-phase: assign tasks to sessions, then schedule times with Todoist + Calendar. **v6.1:** orphan habit-tasks render under a "🔁 Habits" group inside the selected-session detail; an "Unassigned habits" tray sits above the timeline for any habit-tasks without a resolvable session. |
 | 4 | `Step4StartMusic` | Play the "Start Work" playlist and transition to dashboard |
 
 **WizardLayout** wraps every step and provides:
@@ -122,7 +124,7 @@ The dashboard (`Dashboard.tsx`) is the main operational view. It is organized in
 3. **Player row** — `SpotifyPlayer` (embedded iframe) + `TransitionTips` (static music protocol card).
 4. **Timeline + side rail** — `SessionTimeline` (visual bar with assigned tasks). Side rail: `SeasonContextCard` + `TrueRestCard` (v6).
 5. **Between-session True Rest banner** (v6) — `TrueRestCard variant='banner'` when no session is active AND the next slot is within 60 min.
-6. **Current Session** — `CurrentSession` card with drag-to-reorder tasks, completion checkboxes, plus the v6 remaining-time `SessionCapacityBadge` and (if over-capacity) `SessionCapacityBanner`.
+6. **Current Session** — `CurrentSession` card with drag-to-reorder tasks, completion checkboxes, plus the v6 remaining-time `SessionCapacityBadge` and (if over-capacity) `SessionCapacityBanner`. v6.1: tasks group by intention, with orphan habit-tasks falling into a synthetic "🔁 Habits" header at the top of the card.
 7. **Light Pool (v6)** — collapsible `LightPoolPanel` listing today's light-coherent habits scoped to the active season; Start/Complete writes to `plan.habitLog`.
 8. **Task Manager** — Collapsible `TodoistPanel` in full mode.
 9. **Calendar** — Collapsible `GoogleCalendarEmbed`.
@@ -152,14 +154,15 @@ This is the heart of the application. It manages:
 
 **Plan date freshness:** `loadPlan()` checks `parsed.date !== todayISO()`. If the stored plan is from a previous day, a fresh plan is returned. This means the plan auto-resets daily.
 
-**Migration chain:** Plans are stored with a `_wizardSteps` marker (legacy) and, since v5, an explicit `_schemaVersion` marker (now `6`). On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions) → v4.1 (estimatedMinutes) → v5 (no plan-shape change; `LifeContext` is loaded separately) → **v6** (strips the deprecated `Intention.isHabit` / `LinkedTask.isHabit` flags on read; initializes `plan.habitLog: []` if missing; `loadLifeContext` defaults each habit's `kind` to `'stabilizer'` when missing; `loadSettings` injects `taskCapDefaults` and `sessionBufferMinutes` when absent). Schema v6 stamps `_schemaVersion: 6` onto plan, settings, life, and saved-session payloads on every persist. The v5 one-time `backfillHabitsFromLegacy` and the `LifeContext.backfilledFromIsHabit` flag were removed in v6.
+**Migration chain:** Plans are stored with a `_wizardSteps` marker (legacy) and, since v5, an explicit `_schemaVersion` marker (now `6.1`, a JSON float). On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions) → v4.1 (estimatedMinutes) → v5 (no plan-shape change; `LifeContext` is loaded separately) → v6 (strips the deprecated `Intention.isHabit` / `LinkedTask.isHabit` flags on read; initializes `plan.habitLog: []` if missing; `loadLifeContext` defaults each habit's `kind` to `'stabilizer'` when missing; `loadSettings` injects `taskCapDefaults` and `sessionBufferMinutes` when absent) → **v6.1** (drops habit-derived intentions and re-anchors their LinkedTasks as orphans with `sourceHabitId` set + `type: 'background'`; strips `Intention.sourceHabitId` / `skippedForToday`; in `loadLifeContext`, stabilizers' `autoLinkTodoistId` migrates to `todoistTaskId`, `maxBlockMinutes` migrates to `targetDurationMinutes`, `windowBehavior` defaults to `'lenient'`). Schema `6.1` stamps `_schemaVersion: 6.1` onto plan, settings, life, and saved-session payloads on every persist.
 
-**Cross-slice invariants** the reducer enforces (v5 + v6):
+**Cross-slice invariants** the reducer enforces (v5 + v6 + v6.1):
 - Activating a season auto-deactivates the previously active one.
 - Deleting a season clears its id from any habit's `seasonIds`.
 - Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; the UI offers to deactivate first).
-- Deleting a habit clears `sourceHabitId` from any intentions still referencing it.
-- `INJECT_HABIT_INTENTIONS` is idempotent — it skips habits that already have an intention with the matching `sourceHabitId` for today. **v6:** the action also filters to `kind === 'stabilizer'`; light-coherent habits never auto-inject.
+- Deleting a habit also drops any orphan habit-tasks for that habit from today's `plan.linkedTasks` and clears their session assignments.
+- `INJECT_HABIT_TASKS` (v6.1, replaces `INJECT_HABIT_INTENTIONS`) is idempotent — it skips habits whose `id` is already present as a `LinkedTask.sourceHabitId`. The action's payload (`HabitTaskInjection[]`) is precomputed by `lib/habitsTodoistSync.ts → computeHabitTasksToInject(...)` from the live Todoist `taskMap` + active session slots; only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify. Light-coherent habits never appear here.
+- `SKIP_HABIT_TASK` (v6.1) marks a habit-task `skippedForToday + completed` and clears it from session assignments — the LinkedTask itself is kept so re-injection won't duplicate it for the day.
 - Light-coherent habits surface only via the Light Pool, which writes to `plan.habitLog` and never touches `intentions`/`linkedTasks`/`taskSessions`.
 
 See the [Data Model](data-model.md) document for the full action catalog and type definitions.
@@ -171,7 +174,7 @@ See the [Data Model](data-model.md) document for the full action catalog and typ
 Manages all Todoist API data and mutations. Split into two contexts for render optimization:
 
 - **`TodoistDataContext`** — read-only values: `tasks`, `projects`, `sections`, `taskMap`, `loading`, `error`, `isConfigured`.
-- **`TodoistActionsContext`** — mutation functions: `createTask`, `updateTask`, `completeTask`, `reopenTask`, `deleteTask`, `createProject`, `deleteProject`, `refreshTasks`, `refreshProjects`, `refreshSections`.
+- **`TodoistActionsContext`** — mutation functions: `createTask` (returns the created `TodoistTask | null`), `updateTask`, `completeTask`, `reopenTask`, `deleteTask`, `createProject` (returns the created `TodoistProject | null`), `deleteProject`, `refreshTasks`, `refreshProjects`, `refreshSections`. v6.1: `createTask` / `updateTask` accept Todoist's native `due_string` + `due_lang` + `duration` / `duration_unit` (used by `lib/habitsTodoistSync.ts` to push recurrence to the Habits project task).
 
 **Key behaviors:**
 1. **Stale-while-revalidate**: On mount, if a cached copy exists in `localStorage` (key: `orchestrate-todoist-cache`) and is less than 5 minutes old, it is used without fetching. Otherwise, a fresh fetch is triggered.
@@ -233,7 +236,7 @@ The most complex component. Used in four places with different configurations:
 
 **Capabilities:**
 - Renders a project → section → task tree hierarchy.
-- **Linking mode** — when `linking` prop is provided, each task shows Link/Unlink buttons to associate with an intention.
+- **Linking mode** — when `linking` prop is provided, each task shows Link/Unlink buttons to associate with an intention. v6.1: rows whose `todoistId` matches an orphan habit-task's `LinkedTask.sourceHabitId` render a non-actionable "🔁 Habit" label instead, since habit-tasks aren't bound to user intentions.
 - **Inline editing** — click a task title to edit, Enter to commit (calls `updateTask`).
 - **Completion** — checkbox with confetti animation via `canvas-confetti`. Wraps the Todoist API call with local state updates for linked tasks.
 - **Filter toggle** — switches between showing all tasks or only linked tasks.
@@ -261,16 +264,22 @@ The most complex component. Used in four places with different configurations:
 - Log entries (`HabitLogEntry`) live on `plan.habitLog` and never touch `intentions` / `linkedTasks` / `taskSessions`. They are wiped daily with the rest of the plan.
 - `LightPoolSection` on `/life` shows today's roster plus a weekly cadence count per habit, computed from `plan.habitLog` + the last 7 days of `history[].plan.habitLog`. The soft target is `habit.recurrence.timesPerWeek` when set.
 
-### 6.5 True Rest (v6)
+### 6.5 True Rest (v6+)
 
-**Files:** `src/data/restCues.ts` (static catalog + `pickRestCue`), `src/components/dashboard/TrueRestCard.tsx` (three variants).
+**Files:** `src/data/restCues.ts` (built-in catalog + `pickRestCue(seed?, cues?)`), `src/components/dashboard/TrueRestCard.tsx` (three variants), `src/components/life/RestCuesManager.tsx` (management page at `/rest-cues`).
 
-**Catalog:** ~8 cues across `physical | breath | sensory` categories. Pure data, no completion semantics.
+**Catalog:** 8 built-in cues across `physical | breath | sensory` categories, defined in `src/data/restCues.ts`. User-configurable: custom cues are stored as `life.restCues?: RestCue[]` in `LifeContext`. When `life.restCues` is `undefined`, the built-in defaults are used. On the first add/edit/delete, the reducer auto-seeds `life.restCues` from the defaults so no explicit "Customize" step is needed.
+
+**`TrueRestCard` cycling:** The `card` variant tracks a `cueIndex` (initialized to a random position) rather than storing a random cue object. Auto-advances every `rotateMs` (default 5 min) via `setInterval`. A `›` button lets the user manually step to the next cue; clicking it also resets the auto-rotate timer. The `banner` and `inline` variants are read-only (no skip button).
+
+**Management page (`/rest-cues`):** `RestCuesManager` uses `LifeShell` with a breadcrumb. A single `Card` hosts filter pills (All / Physical / Breath / Sensory) and a flat list of cues. Each category has a distinct left-border accent color. Edit/Delete actions are hover-revealed per row. Add form appears inline at the top of the list. "Reset to defaults" (only shown when customized) dispatches `REPLACE_REST_CUES(undefined)`.
+
+**Dashboard link:** The `card` variant footer includes a `Manage →` link to `/rest-cues`. The `/life` summary card for True Rest also has a `Manage` button.
 
 **Three surfaces:**
-- `variant='card'` — Dashboard side rail, rotates every 5 min. Always visible.
+- `variant='card'` — Dashboard side rail, sequential cycling with `›` skip. Always visible.
 - `variant='inline'` — embedded inside `CheckInModal` when the user signals a low-resource state.
-- `variant='banner'` — between-session prompt on the Dashboard. Gated by `useCurrentSession().nextSessionStartsWithin(60)` (extended in v6 to expose this helper).
+- `variant='banner'` — between-session prompt on the Dashboard. Gated by `useCurrentSession().nextSessionStartsWithin(60)`.
 
 True Rest is intentionally not a Habit: no logging, no streak, no completion. It's a gentle prompt and nothing else.
 
@@ -287,6 +296,22 @@ True Rest is intentionally not a Habit: no logging, no streak, no completion. It
 - Dashboard `CurrentSession`: remaining-time `SessionCapacityBadge` pill + banner when the active session is `over`. Calculation uses `now`, so the badge ticks down as the user works.
 
 Background tasks count once per assignment: a 20-min background task assigned to two sessions counts 20 min against each.
+
+### 6.7 Habit-Task Sync (v6.1)
+
+**Files:** `src/lib/habitsTodoistSync.ts`, `src/components/life/HabitForm.tsx`, `src/components/life/HabitsLibrary.tsx`, `src/components/wizard/Step1Intentions.tsx`.
+
+**Three responsibilities, three exports:**
+
+- **`buildDueString(habit)`** — translates `Habit.recurrence` + `Habit.targetTime` into a Todoist `due_string`. Examples: `"every day at 7:00"`, `"every weekday"`, `"every mon, wed, fri at 18:30"`. `weekly` with only `timesPerWeek` (no `daysOfWeek`) falls back to `"every day"` and relies on user-side skip semantics.
+- **`ensureHabitsProject({ actions, settings, projects, onUpdateSettings })`** — resolves `AppSettings.habitsTodoistProjectId`, falling back to a search for an existing project named `"Habits"`, otherwise lazily creates one. Persists the resulting id back to settings.
+- **`syncHabitToTodoist({ habit, actions, settings, projects, taskMap, onUpdateSettings })`** — for stabilizers only. Updates the existing Todoist task (when `habit.todoistTaskId` is set and the task is in cache) with the latest content / `due_string` / `duration`, or creates a new task in the Habits project. Returns the resulting `todoistTaskId | null`. Errors are swallowed and surface to the caller via the null return.
+- **`computeHabitTasksToInject({ life, plan, taskMap, sessionSlots, now, taskCaps })`** — produces the `HabitTaskInjection[]` consumed by `INJECT_HABIT_TASKS`. Filters: active stabilizer + recurrence matches today + season scope OK + `todoistTaskId` set + Todoist task is due today + unchecked + (if `windowBehavior === 'strict'`) current time ≤ `targetTime + duration`. Auto-assigns the session whose `[startTime, endTime)` window contains the Todoist `due.datetime` (falls back to `Habit.targetTime` when the Todoist due has no time-of-day component).
+
+**Lifecycle:**
+- **On habit save** (`HabitsLibrary` → `handleCreate` / `handleEdit`): dispatches `ADD_HABIT` / `UPDATE_HABIT` first, then awaits `syncHabitToTodoist`; if a new `todoistTaskId` comes back, dispatches a follow-up `UPDATE_HABIT`. Sync failures show a non-blocking inline message; the habit stays saved locally.
+- **On `/habits` page load**: `HabitsLibrary` shows a "N stabilizers need to be synced" banner when any active stabilizer lacks `todoistTaskId`. The Migrate button bulk-runs `syncHabitToTodoist` over them.
+- **On Step 1 wizard mount**: `Step1Intentions` calls `computeHabitTasksToInject(...)` and dispatches `INJECT_HABIT_TASKS`. Re-fires when the Todoist `taskMap.size`, `life.habits`, or `life.activeSeasonId` changes (idempotent at the reducer level).
 
 ---
 
@@ -400,7 +425,8 @@ src/
 ├── lib/
 │   ├── crypto.ts               # AES-256-GCM encryption/decryption
 │   ├── time.ts                 # timeToMinutes, minutesToTime, addMinutesToTime, formatDuration, todayISO
-│   ├── habits.ts               # v5: habitMatchesDate; v6: getLightPoolHabits, getActiveHabits, getAnchorHabits
+│   ├── habits.ts               # v5: habitMatchesDate; v6: getLightPoolHabits, getActiveHabits, getAnchorHabits; v6.1: isHabitDerivedTask, getHabitTasksForDay
+│   ├── habitsTodoistSync.ts    # v6.1: buildDueString, ensureHabitsProject, syncHabitToTodoist, computeHabitTasksToInject
 │   ├── seasons.ts              # v5: findActiveSeason, getSeasonProgress
 │   ├── tasks.ts                # getTaskTitle (Todoist content → titleSnapshot → ID), collectDescendantIds (cascade-delete BFS)
 │   ├── capacity.ts             # v6: computeSessionCapacity / computeAllSessionCapacities
@@ -453,6 +479,7 @@ src/
 │   │   ├── HabitsLibrary.tsx   # /habits — CRUD with anchor protection
 │   │   ├── HabitForm.tsx       # Reusable create/edit form (v6: kind + maxBlockMinutes inputs)
 │   │   ├── LightPoolSection.tsx# v6: /life section — today's pool + weekly cadence
+│   │   ├── RestCuesManager.tsx  # /rest-cues — True Rest cue CRUD with category filter pills
 │   │   └── ActiveSeasonBadge.tsx # Badge in Dashboard + Wizard headers
 │   └── ui/
 │       ├── Button.tsx
