@@ -67,7 +67,7 @@ export function UserGuide() {
                    └────────────────────────────────┘
 
       Deep Track       → Your main work: big tasks in dedicated session blocks
-      Stabilizer       → Your recurring rituals: auto-injected, slotted, protected
+      Stabilizer       → Your recurring rituals: synced to Todoist, session-slotted
       Light Pool       → Your micro-gap fillers: logged when you pull them, never scheduled
 
       + Manual background  → Small today-only nudges inside an intention
@@ -311,7 +311,7 @@ export function UserGuide() {
                                 <Tr>
                                     <Td>Stabilizer</Td>
                                     <Td>No</Td>
-                                    <Td>Recurring ritual you want injected daily, but might retire quietly.</Td>
+                                    <Td>Recurring ritual that lands in a session daily, but might retire quietly.</Td>
                                     <Td>Daily standup, journal, evening planning.</Td>
                                 </Tr>
                                 <Tr>
@@ -378,7 +378,7 @@ export function UserGuide() {
                                     <Td>Stabilizer</Td>
                                     <Td>No</Td>
                                     <Td>Yes</Td>
-                                    <Td><strong>A season's ritual.</strong> Auto-injects while the season is active. E.g., daily research log during a "Research push" season.</Td>
+                                    <Td><strong>A season's ritual.</strong> Lands in a session daily while the season is active. E.g., daily research log during a "Research push" season.</Td>
                                 </Tr>
                                 <Tr>
                                     <Td>Light-coherent</Td>

@@ -28,7 +28,7 @@ On top of that, there are **three ways work can flow** through your day, plus a 
                    └────────────────────────────────┘
 
       Deep Track       → Your main work: big tasks in dedicated session blocks
-      Stabilizer       → Your recurring rituals: auto-injected, slotted, protected
+      Stabilizer       → Your recurring rituals: synced to Todoist, session-slotted
       Light Pool       → Your micro-gap fillers: logged when you pull them, never scheduled
 
       + Manual background  → Small today-only nudges inside an intention
@@ -196,7 +196,7 @@ This is worth spelling out because the two labels look similar but answer differ
 
 | Setting | What it controls | Question it answers |
 |---|---|---|
-| `kind: 'stabilizer'` | **Behavior** — auto-injects as an intention, locks to background | *"How does this habit show up each day?"* |
+| `kind: 'stabilizer'` | **Behavior** — syncs to Todoist as a recurring task and surfaces directly as a session-assigned task each day it's due | *"How does this habit show up each day?"* |
 | `isAnchor: true` | **Protection** — can't be deleted while active | *"Would my day collapse without this?"* |
 
 All four combinations make sense:
@@ -204,7 +204,7 @@ All four combinations make sense:
 | Kind | Anchor? | What it means | Examples |
 |---|---|---|---|
 | Stabilizer | Yes | The foundation — non-negotiable, the day collapses without it | Sleep, meditation, gym, shutdown, medication |
-| Stabilizer | No | Recurring ritual you want injected daily, but might retire quietly | Daily standup, journal, evening planning |
+| Stabilizer | No | Recurring ritual that lands in a session daily, but might retire quietly | Daily standup, journal, evening planning |
 | Light-coherent | Yes | Unusual but valid — a micro-gap practice you want to protect | Long-form weekly reading you don't want to delete on a whim |
 | Light-coherent | No | The typical Light Pool activity | Flashcards, idea capture, language drills |
 
@@ -233,7 +233,7 @@ Conversely, **season-scoped habits usually shouldn't be anchors.** The season en
 | Kind | Anchor? | Season-scoped? | What it is | Example |
 |---|---|---|---|---|
 | Stabilizer | Yes | No (always-on) | **Your foundation.** 3–6 of these, cross-season. | Sleep, meditation, gym, shutdown |
-| Stabilizer | No | Yes | **A season's ritual.** Auto-injects while the season is active. | Daily research log during a "Research push" season |
+| Stabilizer | No | Yes | **A season's ritual.** Lands in a session daily while the season is active. | Daily research log during a "Research push" season |
 | Light-coherent | No | Yes | **A season's micro-practice.** In the Light Pool only while that season is active. | Spanish flashcards during a "Language sprint" season |
 | Light-coherent | No | No (always-on) | **General curiosity.** Survives every season change. | Idea capture, general reading, Duolingo |
 
