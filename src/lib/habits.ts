@@ -1,4 +1,4 @@
-import type { Habit, Intention, LifeContext } from '../types';
+import type { DayPlan, Habit, LifeContext, LinkedTask } from '../types';
 
 export function getActiveHabits(life: LifeContext): Habit[] {
     return life.habits.filter((habit) => habit.active);
@@ -8,9 +8,14 @@ export function getAnchorHabits(habits: Habit[]): Habit[] {
     return habits.filter((habit) => habit.isAnchor);
 }
 
-/** Return the set of intention IDs whose parent intention was auto-injected from a Habit. */
-export function getHabitDerivedIntentionIds(intentions: Intention[]): Set<string> {
-    return new Set(intentions.filter((i) => i.sourceHabitId).map((i) => i.id));
+/** v6.1: true when the LinkedTask came from a stabilizer Habit (no parent intention). */
+export function isHabitDerivedTask(lt: LinkedTask): boolean {
+    return Boolean(lt.sourceHabitId);
+}
+
+/** v6.1: every habit-derived LinkedTask in the given plan. */
+export function getHabitTasksForDay(plan: DayPlan): LinkedTask[] {
+    return plan.linkedTasks.filter(isHabitDerivedTask);
 }
 
 /**

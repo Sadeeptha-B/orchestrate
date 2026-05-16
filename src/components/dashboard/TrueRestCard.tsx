@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { pickRestCue } from '../../data/restCues';
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { restCues as defaultRestCues } from '../../data/restCues';
+import { useDayPlan } from '../../hooks/useDayPlan';
 import type { RestCue } from '../../types';
 
 type Variant = 'card' | 'inline' | 'banner';
@@ -30,16 +32,31 @@ export function TrueRestCard({
     rotateMs = DEFAULT_ROTATE_MS,
     heading,
 }: TrueRestCardProps) {
-    const [rotatingCue, setRotatingCue] = useState<RestCue>(pickRestCue);
+    const { life } = useDayPlan();
+    const navigate = useNavigate();
+    const effectiveCues = (life.restCues && life.restCues.length > 0) ? life.restCues : defaultRestCues;
 
-    useEffect(() => {
+    const [index, setIndex] = useState(() => Math.floor(Math.random() * effectiveCues.length));
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const startInterval = useCallback(() => {
+        if (intervalRef.current) clearInterval(intervalRef.current);
         if (cueProp || rotateMs <= 0) return;
-        const id = setInterval(() => setRotatingCue(pickRestCue()), rotateMs);
-        return () => clearInterval(id);
+        intervalRef.current = setInterval(() => setIndex((i) => i + 1), rotateMs);
     }, [cueProp, rotateMs]);
 
-    const cue = cueProp ?? rotatingCue;
+    useEffect(() => {
+        startInterval();
+        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    }, [startInterval]);
 
+    const handleNext = () => {
+        setIndex((i) => i + 1);
+        startInterval();
+    };
+
+    const rotatingCue = effectiveCues[index % effectiveCues.length];
+    const cue = cueProp ?? rotatingCue;
     const eyebrow = heading ?? (variant === 'banner' ? 'Between sessions' : 'True Rest');
 
     if (variant === 'banner') {
@@ -72,14 +89,33 @@ export function TrueRestCard({
 
     return (
         <div className="bg-surface-dark rounded-lg p-4 text-xs text-text-light space-y-1.5">
-            <p className="font-medium text-text text-[11px] uppercase tracking-wider mb-2">
-                {eyebrow}
-            </p>
+            <div className="flex items-center justify-between mb-2">
+                <p className="font-medium text-text text-[11px] uppercase tracking-wider">
+                    {eyebrow}
+                </p>
+                <button
+                    type="button"
+                    onClick={handleNext}
+                    title="Next cue"
+                    className="text-text-light hover:text-accent transition-colors cursor-pointer leading-none p-0.5 -mr-0.5"
+                >
+                    ›
+                </button>
+            </div>
             <p className="text-sm text-text">{cue.label}</p>
             <p className="text-text-light">{cue.durationHint} · {cue.category}</p>
             <p className="text-[10px] pt-2 italic text-text-light">
                 Recovery, not productivity. No completion required.
             </p>
+            <div className="flex justify-end pt-1">
+                <button
+                    type="button"
+                    onClick={() => navigate('/rest-cues')}
+                    className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
+                >
+                    Manage →
+                </button>
+            </div>
         </div>
     );
 }

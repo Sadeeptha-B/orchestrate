@@ -193,7 +193,7 @@ export function Dashboard() {
                         </MusicProvider>
 
                         {/* Timeline + Season side rail */}
-                        <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+                        <div className="flex flex-col lg:flex-row gap-4 lg:gap-8 lg:items-start">
                             <div className="flex-1 min-w-0">
                                 <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
                                     Timeline

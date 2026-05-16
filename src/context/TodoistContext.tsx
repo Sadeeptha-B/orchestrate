@@ -77,7 +77,14 @@ function saveCache(tasks: TodoistTask[], projects: TodoistProject[], sections: T
 
 interface CreateTaskOpts {
     description?: string; project_id?: string; due_date?: string;
-    due_datetime?: string; priority?: number; labels?: string[];
+    due_datetime?: string; due_string?: string; due_lang?: string;
+    priority?: number; labels?: string[]; duration?: number; duration_unit?: string;
+}
+
+interface UpdateTaskOpts {
+    content?: string; due_datetime?: string; due_date?: string;
+    due_string?: string; due_lang?: string;
+    duration?: number; duration_unit?: string;
 }
 
 interface CreateProjectOpts {
@@ -97,12 +104,12 @@ export interface TodoistDataValue {
 }
 
 export interface TodoistActionsValue {
-    createTask: (content: string, opts?: CreateTaskOpts) => Promise<void>;
-    updateTask: (taskId: string, updates: { content?: string; due_datetime?: string; due_date?: string; duration?: number; duration_unit?: string }) => Promise<void>;
+    createTask: (content: string, opts?: CreateTaskOpts) => Promise<TodoistTask | null>;
+    updateTask: (taskId: string, updates: UpdateTaskOpts) => Promise<void>;
     completeTask: (taskId: string) => Promise<void>;
     reopenTask: (taskId: string) => Promise<void>;
     deleteTask: (taskId: string) => Promise<void>;
-    createProject: (name: string, opts?: CreateProjectOpts) => Promise<void>;
+    createProject: (name: string, opts?: CreateProjectOpts) => Promise<TodoistProject | null>;
     deleteProject: (projectId: string) => Promise<void>;
     refreshTasks: (opts?: RefreshOpts) => Promise<void>;
     refreshProjects: (opts?: RefreshOpts) => Promise<void>;
@@ -307,17 +314,19 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── CRUD mutations ──
 
-    const createTask = useCallback(async (content: string, opts?: CreateTaskOpts) => {
+    const createTask = useCallback(async (content: string, opts?: CreateTaskOpts): Promise<TodoistTask | null> => {
         const token = await resolveToken();
-        if (!token) return;
+        if (!token) return null;
         setError(null);
         try {
             const task = await apiFetch<TodoistTask>(token, '/tasks', {
                 method: 'POST', body: JSON.stringify({ content, ...opts }),
             });
             setTasks((prev) => [...prev, task]);
+            return task;
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to create task');
+            return null;
         }
     }, [resolveToken]);
 
@@ -355,7 +364,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [resolveToken, refreshTasks]);
 
-    const updateTask = useCallback(async (taskId: string, updates: { content?: string; due_datetime?: string; due_date?: string; duration?: number; duration_unit?: string }) => {
+    const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts) => {
         const token = await resolveToken();
         if (!token) return;
         setError(null);
@@ -383,17 +392,19 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [resolveToken]);
 
-    const createProject = useCallback(async (name: string, opts?: CreateProjectOpts) => {
+    const createProject = useCallback(async (name: string, opts?: CreateProjectOpts): Promise<TodoistProject | null> => {
         const token = await resolveToken();
-        if (!token) return;
+        if (!token) return null;
         setError(null);
         try {
             const project = await apiFetch<TodoistProject>(token, '/projects', {
                 method: 'POST', body: JSON.stringify({ name, ...opts }),
             });
             setProjects((prev) => [...prev, project]);
+            return project;
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to create project');
+            return null;
         }
     }, [resolveToken]);
 

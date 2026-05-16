@@ -6,7 +6,6 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { Modal } from '../ui/Modal';
 import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
-import { getHabitDerivedIntentionIds } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 /**
@@ -27,7 +26,7 @@ const ESTIMATE_PRESETS = [15, 30, 45, 60];
 const LONG_TASK_THRESHOLD = 60;
 
 export function Step2Refine() {
-    const { plan, life, settings, dispatch } = useDayPlan();
+    const { plan, settings, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const [currentIntentionIndex, setCurrentIntentionIndex] = useState(0);
     const [showSetup, setShowSetup] = useState(false);
@@ -35,44 +34,24 @@ export function Step2Refine() {
 
     const intentions = plan.intentions;
     const currentIntention = intentions[currentIntentionIndex];
-    // Habit-derived linked tasks are locked to 'background' at LINK_TASK time;
-    // this set drives the UI affordance only.
-    const habitLockedIntentionIds = useMemo(
-        () => getHabitDerivedIntentionIds(plan.intentions),
-        [plan.intentions],
+
+    // v6.1: Step 2 only refines tasks attached to user intentions. Orphan habit-tasks
+    // arrive pre-typed/estimated from injection and bypass this step entirely.
+    const manualLinkedTasks = useMemo(
+        () => plan.linkedTasks.filter((lt) => lt.intentionId !== undefined),
+        [plan.linkedTasks],
     );
 
-    // v6: per-task background cap. Habit-derived → habit.maxBlockMinutes ?? per-kind default.
-    // Manually-categorized background → taskCapDefaults.manualBackground.
-    const habitById = useMemo(
-        () => new Map(life.habits.map((h) => [h.id, h])),
-        [life.habits],
-    );
-    const intentionById = useMemo(
-        () => new Map(plan.intentions.map((i) => [i.id, i])),
-        [plan.intentions],
-    );
-    const resolveBackgroundCap = useCallback(
-        (lt: LinkedTask): number => {
-            const caps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
-            const intention = intentionById.get(lt.intentionId);
-            const habit = intention?.sourceHabitId ? habitById.get(intention.sourceHabitId) : undefined;
-            if (habit?.maxBlockMinutes !== undefined) return habit.maxBlockMinutes;
-            if (habit) {
-                return habit.kind === 'stabilizer' ? caps.stabilizer : caps.lightCoherent;
-            }
-            return caps.manualBackground;
-        },
-        [settings.taskCapDefaults, intentionById, habitById],
-    );
+    // Manually-categorized backgrounds use the manualBackground cap.
+    const backgroundCap = (settings.taskCapDefaults ?? DEFAULT_TASK_CAPS).manualBackground;
 
     const intentionTitleMap = useMemo(
         () => Object.fromEntries(plan.intentions.map((i) => [i.id, i.title])),
         [plan.intentions],
     );
 
-    const canAdvanceStep = plan.linkedTasks.length > 0 &&
-        plan.linkedTasks.every((lt) => lt.completed || (lt.type !== 'unclassified' && lt.estimatedMinutes !== null));
+    const canAdvanceStep = manualLinkedTasks.length > 0 &&
+        manualLinkedTasks.every((lt) => lt.completed || (lt.type !== 'unclassified' && lt.estimatedMinutes !== null));
 
     const currentLinkedTasks = currentIntention
         ? plan.linkedTasks.filter((lt) => lt.intentionId === currentIntention.id)
@@ -182,8 +161,7 @@ export function Step2Refine() {
                                 linkedTask={lt}
                                 taskMap={taskMap}
                                 horizontal={!taskPanelOpen}
-                                lockedToBackground={habitLockedIntentionIds.has(lt.intentionId)}
-                                backgroundCap={resolveBackgroundCap(lt)}
+                                backgroundCap={backgroundCap}
                                 onCategorize={(taskType) =>
                                     dispatch({ type: 'CATEGORIZE_TASK', todoistId: lt.todoistId, taskType })
                                 }
@@ -287,7 +265,6 @@ function TaskCard({
     linkedTask: lt,
     taskMap,
     horizontal,
-    lockedToBackground,
     backgroundCap,
     onCategorize,
     onSetEstimate,
@@ -297,7 +274,6 @@ function TaskCard({
     linkedTask: LinkedTask;
     taskMap: Map<string, { id: string; content: string }>;
     horizontal?: boolean;
-    lockedToBackground?: boolean;
     backgroundCap: number;
     onCategorize: (taskType: LinkedTask['type']) => void;
     onSetEstimate: (minutes: number) => void;
@@ -349,17 +325,7 @@ function TaskCard({
 
     const isCustom = lt.estimatedMinutes !== null && !ESTIMATE_PRESETS.includes(lt.estimatedMinutes);
 
-    const categoryPills = lockedToBackground ? (
-        <div className="flex items-center gap-1.5 flex-wrap">
-            <span
-                className="px-2.5 py-1 text-xs rounded-full bg-accent text-white border border-accent"
-                title="Habit-derived task — locked to background"
-            >
-                Background
-            </span>
-            <span className="text-[10px] text-text-light">🔁 Habit task — category locked</span>
-        </div>
-    ) : (
+    const categoryPills = (
         <div className="flex items-center gap-1.5 flex-wrap">
             {TYPE_OPTIONS.map((opt) => (
                 <button

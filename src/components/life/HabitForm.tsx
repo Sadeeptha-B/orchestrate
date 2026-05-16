@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { inputClass, labelClass } from '../ui/formStyles';
-import type { Habit, HabitKind, HabitRecurrence, HabitRecurrenceKind, Season } from '../../types';
+import type {
+    Habit,
+    HabitKind,
+    HabitRecurrence,
+    HabitRecurrenceKind,
+    HabitWindowBehavior,
+    Season,
+} from '../../types';
 
 export type HabitDraft = Omit<Habit, 'id' | 'createdAt'>;
 
@@ -27,11 +34,19 @@ export function HabitForm({
     const [recurrenceKind, setRecurrenceKind] = useState<HabitRecurrenceKind>(
         initial?.recurrence?.kind ?? 'daily',
     );
-    const [maxBlockMinutes, setMaxBlockMinutes] = useState<string>(
-        initial?.maxBlockMinutes !== undefined ? String(initial.maxBlockMinutes) : '',
-    );
     const [daysOfWeek, setDaysOfWeek] = useState<number[]>(
         initial?.recurrence?.daysOfWeek ?? [],
+    );
+    const [targetTime, setTargetTime] = useState<string>(initial?.targetTime ?? '');
+    const [targetDurationMinutes, setTargetDurationMinutes] = useState<string>(
+        initial?.targetDurationMinutes !== undefined
+            ? String(initial.targetDurationMinutes)
+            : initial?.maxBlockMinutes !== undefined
+                ? String(initial.maxBlockMinutes)
+                : '',
+    );
+    const [windowBehavior, setWindowBehavior] = useState<HabitWindowBehavior>(
+        initial?.windowBehavior ?? 'lenient',
     );
     const [minimumViable, setMinimumViable] = useState(initial?.minimumViable ?? '');
     const [triggerCue, setTriggerCue] = useState(initial?.triggerCue ?? '');
@@ -44,7 +59,6 @@ export function HabitForm({
     const [isAnchor, setIsAnchor] = useState(initial?.isAnchor ?? false);
     const [active, setActive] = useState(initial?.active ?? true);
     const [seasonIds, setSeasonIds] = useState<string[]>(initial?.seasonIds ?? []);
-    const [autoLinkTodoistId, setAutoLinkTodoistId] = useState(initial?.autoLinkTodoistId ?? '');
 
     const toggleDay = (d: number) =>
         setDaysOfWeek((prev) =>
@@ -55,6 +69,7 @@ export function HabitForm({
         setSeasonIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
     const showDayPicker = recurrenceKind === 'weekly' || recurrenceKind === 'custom';
+    const isStabilizer = kind === 'stabilizer';
     const canSubmit = name.trim().length > 0;
 
     const handleSubmit = () => {
@@ -63,7 +78,8 @@ export function HabitForm({
             kind: recurrenceKind,
             ...(showDayPicker ? { daysOfWeek } : {}),
         };
-        const parsedMax = Number(maxBlockMinutes);
+        const parsedDuration = Number(targetDurationMinutes);
+        const trimmedTime = targetTime.trim();
         onSubmit({
             name: name.trim(),
             kind,
@@ -75,12 +91,16 @@ export function HabitForm({
             isAnchor,
             seasonIds,
             active,
-            ...(autoLinkTodoistId.trim()
-                ? { autoLinkTodoistId: autoLinkTodoistId.trim() }
+            // v6.1: schedule fields preserve `todoistTaskId` from initial (set by the sync layer).
+            ...(initial?.todoistTaskId ? { todoistTaskId: initial.todoistTaskId } : {}),
+            ...(isStabilizer && trimmedTime ? { targetTime: trimmedTime } : {}),
+            ...(isStabilizer
+                && targetDurationMinutes.trim()
+                && Number.isFinite(parsedDuration)
+                && parsedDuration > 0
+                ? { targetDurationMinutes: Math.round(parsedDuration) }
                 : {}),
-            ...(maxBlockMinutes.trim() && Number.isFinite(parsedMax) && parsedMax > 0
-                ? { maxBlockMinutes: Math.round(parsedMax) }
-                : {}),
+            ...(isStabilizer ? { windowBehavior } : {}),
         });
     };
 
@@ -116,23 +136,8 @@ export function HabitForm({
                 </div>
                 <p className="text-[11px] text-text-light mt-1">
                     {kind === 'stabilizer'
-                        ? 'Anchor-style ritual — auto-injects as an intention each day and locks its task to background.'
+                        ? 'Anchor-style ritual — synced to Todoist as a recurring task. Surfaces directly as a session-assigned task each day it is due.'
                         : 'Micro-gap filler — surfaces in the Light Pool and is logged opportunistically. Never enters the day plan.'}
-                </p>
-            </div>
-
-            <div>
-                <label className={labelClass}>Max block (minutes, optional)</label>
-                <input
-                    type="number"
-                    min={1}
-                    className={inputClass}
-                    value={maxBlockMinutes}
-                    onChange={(e) => setMaxBlockMinutes(e.target.value)}
-                    placeholder="Leave blank to use the per-kind default in Settings"
-                />
-                <p className="text-[11px] text-text-light mt-1">
-                    Overrides the per-task duration cap in Step 2 for this habit's tasks.
                 </p>
             </div>
 
@@ -174,6 +179,72 @@ export function HabitForm({
                     </div>
                 )}
             </div>
+
+            {isStabilizer && (
+                <div className="rounded-lg border border-border p-3 space-y-3 bg-surface-dark/20">
+                    <div className="text-xs font-medium text-text-light uppercase tracking-wide">Schedule</div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className={labelClass}>Target time (optional)</label>
+                            <input
+                                type="time"
+                                className={inputClass}
+                                value={targetTime}
+                                onChange={(e) => setTargetTime(e.target.value)}
+                            />
+                            <p className="text-[11px] text-text-light mt-1">
+                                Pushed to Todoist; drives session auto-assignment.
+                            </p>
+                        </div>
+                        <div>
+                            <label className={labelClass}>Duration (minutes)</label>
+                            <input
+                                type="number"
+                                min={1}
+                                className={inputClass}
+                                value={targetDurationMinutes}
+                                onChange={(e) => setTargetDurationMinutes(e.target.value)}
+                                placeholder="e.g. 10"
+                            />
+                            <p className="text-[11px] text-text-light mt-1">
+                                Used as the task estimate.
+                            </p>
+                        </div>
+                    </div>
+                    <div>
+                        <label className={labelClass}>If I'm planning past the target window</label>
+                        <div className="flex gap-1 flex-wrap">
+                            {([
+                                ['lenient', 'Surface anyway'],
+                                ['strict', 'Hide for today'],
+                            ] as Array<[HabitWindowBehavior, string]>).map(([value, label]) => (
+                                <button
+                                    key={value}
+                                    type="button"
+                                    onClick={() => setWindowBehavior(value)}
+                                    className={`px-3 py-1.5 text-xs rounded-lg border transition-colors cursor-pointer ${
+                                        windowBehavior === value
+                                            ? 'bg-accent-subtle border-accent/30 text-accent'
+                                            : 'border-border hover:bg-surface-dark/50'
+                                    }`}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[11px] text-text-light mt-1">
+                            {windowBehavior === 'strict'
+                                ? 'Hidden from today if the current time is past the target window.'
+                                : 'Always surfaced as long as the Todoist task is due today and unchecked.'}
+                        </p>
+                    </div>
+                    {initial?.todoistTaskId && (
+                        <div className="text-[11px] text-text-light">
+                            Synced to Todoist · task <code className="font-mono">{initial.todoistTaskId}</code>
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div>
                 <label className={labelClass}>Minimum viable version</label>
@@ -243,20 +314,6 @@ export function HabitForm({
                     </div>
                 </div>
             )}
-
-            <div>
-                <label className={labelClass}>Auto-link Todoist task ID (optional)</label>
-                <input
-                    className={inputClass}
-                    value={autoLinkTodoistId}
-                    onChange={(e) => setAutoLinkTodoistId(e.target.value)}
-                    placeholder="Leave blank to map manually each day"
-                />
-                <p className="text-[11px] text-text-light mt-1">
-                    Set this to make Step 1 auto-pre-select the same Todoist task each day this
-                    habit appears.
-                </p>
-            </div>
 
             <div className="space-y-2">
                 <label className="flex items-center gap-2 text-sm">

@@ -831,3 +831,17 @@ The underlying goal is to help the user build a sustainable life with strong anc
 
 That is the path from a good daily planner to a fully fledged executive-function companion.
 
+Ideas
+session management
+-> setting sessions -> block schedule
+-> setting templates
+-> managing external events
+
+wizard improvements
+-> back handling
+-> intention history
+
+streamline habits system
+-> bg habits, light coherent, stabilizer, anchor, seasons
+
+-> season week by week review, hourly contextualization logs, energy level integrations, trends

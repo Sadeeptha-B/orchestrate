@@ -139,11 +139,13 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
 
     const { plan, dispatch } = useDayPlan();
 
-    // Persistent map: todoistId → intention title (always available, not just in linking mode)
+    // Persistent map: todoistId → intention title (always available, not just in linking mode).
+    // v6.1: orphan habit-tasks (intentionId === undefined) are skipped — they have no intention to label.
     const persistentLinks = useMemo(() => {
         const map = new Map<string, string>();
         const intentionMap = new Map(plan.intentions.map((i) => [i.id, i.title]));
         for (const lt of plan.linkedTasks) {
+            if (lt.intentionId === undefined) continue;
             const title = intentionMap.get(lt.intentionId);
             if (title) map.set(lt.todoistId, title);
         }
@@ -463,7 +465,7 @@ function ProjectTreeNode({
     node: ProjectNode;
     depth: number;
     onComplete: (id: string) => void;
-    onCreateTask: (content: string, opts?: { project_id?: string }) => Promise<void>;
+    onCreateTask: (content: string, opts?: { project_id?: string }) => Promise<unknown>;
     onDeleteTask: (id: string) => void;
     onDeleteProject: (id: string) => void;
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
@@ -855,12 +857,19 @@ function TaskRow({
 
     // Linking mode state
     const isLinkedToCurrentIntention = linking?.linkedTaskIds.includes(task.id) ?? false;
+    // v6.1: detect orphan habit-tasks so the Link affordance hides in favor of a 🔁 Habit label.
+    const habitRecord = linking?.allLinkedTasks.find(
+        (lt) => lt.todoistId === task.id && lt.sourceHabitId,
+    );
     const linkedToOther = linking
         ? linking.allLinkedTasks.find(
-            (lt) => lt.todoistId === task.id && lt.intentionId !== linking.linkingIntentionId,
+            (lt) => lt.todoistId === task.id
+                && !lt.sourceHabitId
+                && lt.intentionId !== undefined
+                && lt.intentionId !== linking.linkingIntentionId,
         )
         : null;
-    const linkedToOtherTitle = linkedToOther
+    const linkedToOtherTitle = linkedToOther && linkedToOther.intentionId
         ? linking!.intentionTitles[linkedToOther.intentionId]
         : null;
 
@@ -956,24 +965,33 @@ function TaskRow({
                         </span>
                     )}
                 </div>
-                {/* Link/Unlink button (when in linking mode) */}
+                {/* Link/Unlink button (when in linking mode); habit-tasks render a non-actionable 🔁 Habit label instead. */}
                 {linking && (
-                    <button
-                        onClick={() => {
-                            if (isLinkedToCurrentIntention) {
-                                linking.onUnlinkTask(task.id);
-                            } else {
-                                linking.onLinkTask(task.id);
-                            }
-                        }}
-                        className={`text-xs flex-shrink-0 mt-0.5 cursor-pointer transition-colors font-medium ${isLinkedToCurrentIntention
-                            ? 'text-accent hover:text-red-500'
-                            : 'text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent'
-                            }`}
-                        title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
-                    >
-                        {isLinkedToCurrentIntention ? 'Unlink' : 'Link'}
-                    </button>
+                    habitRecord ? (
+                        <span
+                            className="text-[10px] flex-shrink-0 mt-0.5 px-1.5 py-0.5 rounded-full bg-accent-subtle text-accent font-medium"
+                            title="Habit-derived task — managed via the Habits library"
+                        >
+                            🔁 Habit
+                        </span>
+                    ) : (
+                        <button
+                            onClick={() => {
+                                if (isLinkedToCurrentIntention) {
+                                    linking.onUnlinkTask(task.id);
+                                } else {
+                                    linking.onLinkTask(task.id);
+                                }
+                            }}
+                            className={`text-xs flex-shrink-0 mt-0.5 cursor-pointer transition-colors font-medium ${isLinkedToCurrentIntention
+                                ? 'text-accent hover:text-red-500'
+                                : 'text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent'
+                                }`}
+                            title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
+                        >
+                            {isLinkedToCurrentIntention ? 'Unlink' : 'Link'}
+                        </button>
+                    )
                 )}
                 {/* Schedule button (hover) */}
                 <button
