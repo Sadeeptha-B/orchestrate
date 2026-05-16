@@ -21,6 +21,7 @@ When making changes that affect long-term context, update the relevant doc(s) **
 | Provider tree, routing, integrations, persistence layer | `docs/architecture.md` |
 | Type definitions, reducer actions, migration chain, localStorage shape | `docs/data-model.md` |
 | User-visible feature set or current-state summary | `docs/synthesis.md` (and bump `Last updated:` + `Reflects:` in the header) |
+| Mental model for habits / intentions / tasks / Light Pool / True Rest / capacity (anything user-facing in the day-to-day flow) | `docs/user-guide.md` **and** [src/components/guide/UserGuide.tsx](./src/components/guide/UserGuide.tsx) — the in-app guide at `/guide` mirrors the markdown and must be kept in sync. |
 | Durable "why" / principles / constraints | `docs/vision.md` |
 | New forward-looking proposals | `docs/backlog.md` |
 | A backlog item ships | Remove from `docs/backlog.md`; append a narrative entry to `docs/history/iterations.md`; drop the implementation plan into `docs/history/plan_v{N}.md` |

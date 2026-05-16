@@ -276,6 +276,7 @@ interface Habit {
     seasonIds: string[];                 // [] = always-on
     active: boolean;
     todoistTaskId?: string;              // v6.1: persistent recurring Todoist task ID (stabilizers only)
+    todoistProjectId?: string;           // v6.1: per-habit project override; falls back to AppSettings.habitsTodoistProjectId
     targetTime?: string;                 // v6.1: "HH:mm" — pushed to Todoist; drives session auto-assignment
     targetDurationMinutes?: number;      // v6.1: pushed to Todoist `duration`; used as LinkedTask estimate + cap
     windowBehavior?: HabitWindowBehavior;// v6.1: 'strict' hides past-window habit-tasks; default 'lenient'
@@ -302,7 +303,7 @@ interface Habit {
 
 **Habit-task injection (v6.1, stabilizer only):** on Step 1 entry, `Step1Intentions` calls `computeHabitTasksToInject(...)` from `lib/habitsTodoistSync.ts` and dispatches `INJECT_HABIT_TASKS` with the resulting `HabitTaskInjection[]`. The helper filters to active stabilizers with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; applies `windowBehavior === 'strict'` to drop past-window tasks. The reducer is idempotent against any habit already represented in `plan.linkedTasks` via `sourceHabitId`. Light-coherent habits never appear here.
 
-**Habit ↔ Todoist sync (v6.1):** when a stabilizer is created or edited via `HabitForm`, `HabitsLibrary` calls `syncHabitToTodoist(...)` which: (a) calls `ensureHabitsProject(...)` to lazily create a project named `"Habits"` (stored on `AppSettings.habitsTodoistProjectId`), (b) creates or updates the recurring task with `due_string` from `buildDueString(habit)` (e.g. `"every weekday at 7:00"`) and `duration` from `targetDurationMinutes`, (c) returns the resulting `todoistTaskId` so a follow-up `UPDATE_HABIT` can persist it on the habit. Sync failures are non-blocking — the habit remains saved locally.
+**Habit ↔ Todoist sync (v6.1):** when a stabilizer is created or edited via `HabitForm`, `HabitsLibrary` (a) calls `ensureHabitsProject(...)` once to resolve / lazily-create the workspace default project (`AppSettings.habitsTodoistProjectId`; falls back to a project literally named `"Habits"`), then (b) calls `resolveHabitProjectId(habit, defaultProjectId, projects)` to honor the per-habit `todoistProjectId` override, then (c) calls `syncHabitToTodoist(...)` which creates or updates the recurring task with `due_string` from `buildDueString(habit)` (e.g. `"every weekday at 7:00"`) and `duration` from `targetDurationMinutes`. If the existing task lives in a different project, it is moved via the Sync API (`item_move`). The bulk Migrate path in `HabitsLibrary` resolves the default project once before iterating to avoid a stale-closure bug that previously re-created a duplicate project per habit. Sync failures are non-blocking — the habit remains saved locally.
 
 ### 1.14 RestCue (v6)
 
@@ -538,7 +539,7 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
   - If `windowBehavior` is unset, default to `'lenient'`.
   - The deprecated fields are kept on the type as `@deprecated` — `loadLifeContext` reads them once and the runtime no longer touches them after that.
 - **AppSettings:** `habitsTodoistProjectId` is left undefined; created lazily when the user first saves a stabilizer (or hits "Migrate" on the `/habits` page banner).
-- **Removed**: `Intention.sourceHabitId`, `Intention.skippedForToday`, the `INJECT_HABIT_INTENTIONS` and `SKIP_HABIT_INTENTION` actions, the `getHabitDerivedIntentionIds` helper. **Renamed**: `INJECT_HABIT_INTENTIONS` → `INJECT_HABIT_TASKS` (new payload), `SKIP_HABIT_INTENTION` → `SKIP_HABIT_TASK`. **Added**: `HabitTaskInjection` type, `LinkedTask.sourceHabitId` / `LinkedTask.skippedForToday`, `Habit.todoistTaskId` / `targetTime` / `targetDurationMinutes` / `windowBehavior`, `AppSettings.habitsTodoistProjectId`, `lib/habitsTodoistSync.ts` (`buildDueString`, `ensureHabitsProject`, `syncHabitToTodoist`, `computeHabitTasksToInject`).
+- **Removed**: `Intention.sourceHabitId`, `Intention.skippedForToday`, the `INJECT_HABIT_INTENTIONS` and `SKIP_HABIT_INTENTION` actions, the `getHabitDerivedIntentionIds` helper. **Renamed**: `INJECT_HABIT_INTENTIONS` → `INJECT_HABIT_TASKS` (new payload), `SKIP_HABIT_INTENTION` → `SKIP_HABIT_TASK`. **Added**: `HabitTaskInjection` type, `LinkedTask.sourceHabitId` / `LinkedTask.skippedForToday`, `Habit.todoistTaskId` / `todoistProjectId` / `targetTime` / `targetDurationMinutes` / `windowBehavior`, `AppSettings.habitsTodoistProjectId`, `TodoistActionsValue.moveTask` (Sync API `item_move`), `lib/habitsTodoistSync.ts` (`buildDueString`, `ensureHabitsProject`, `resolveHabitProjectId`, `syncHabitToTodoist`, `computeHabitTasksToInject`).
 - **Persistence** stamps `_schemaVersion: 6.1` onto plan, settings, life-context, and saved-session payloads on every write.
 
 ### Wizard step migration
@@ -640,6 +641,7 @@ The `_wizardSteps` field is not part of the `DayPlan` type — it is injected du
             "seasonIds": [],
             "active": true,
             "todoistTaskId": "9123456789",
+            "todoistProjectId": "2304567890",
             "targetTime": "07:00",
             "targetDurationMinutes": 10,
             "windowBehavior": "lenient",

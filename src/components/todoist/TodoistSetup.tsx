@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useTodoistData } from '../../hooks/useTodoist';
 import { encryptToken } from '../../lib/crypto';
 import { validateTodoistToken } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
+import { inputClass } from '../ui/formStyles';
 import type { GoogleCalendarEntry } from '../../types';
 
 // Google Calendar embed accepted color palette
@@ -26,6 +28,7 @@ const GCAL_COLORS: { hex: string; label: string }[] = [
 
 export function TodoistSetup() {
     const { settings, dispatch } = useDayPlan();
+    const { projects } = useTodoistData();
     const [token, setToken] = useState('');
     const [calendarEntries, setCalendarEntries] = useState<GoogleCalendarEntry[]>(settings.googleCalendarIds ?? []);
     const [newCalendarId, setNewCalendarId] = useState('');
@@ -163,6 +166,32 @@ export function TodoistSetup() {
                     </div>
                 )}
             </div>
+
+            {/* Default Habits Project (v6.1) — only meaningful when Todoist is connected */}
+            {isConnected && (
+                <div>
+                    <h3 className="text-sm font-semibold mb-2">Default Habits Project</h3>
+                    <p className="text-xs text-text-light mb-2">
+                        Where new stabilizer habits get synced as recurring tasks. Each habit can override
+                        this from its own form. Leave on auto-create to use a project named "Habits".
+                    </p>
+                    <select
+                        className={inputClass}
+                        value={settings.habitsTodoistProjectId ?? ''}
+                        onChange={(e) =>
+                            dispatch({
+                                type: 'UPDATE_SETTINGS',
+                                settings: { habitsTodoistProjectId: e.target.value || undefined },
+                            })
+                        }
+                    >
+                        <option value="">Auto-create "Habits" project</option>
+                        {projects.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             {/* Google Calendar IDs */}
             <div>

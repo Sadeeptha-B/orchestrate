@@ -7,8 +7,9 @@ import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { HabitForm, type HabitDraft } from './HabitForm';
+import { SettingsModal } from '../settings/SettingsModal';
 import { getActiveHabits } from '../../lib/habits';
-import { syncHabitToTodoist } from '../../lib/habitsTodoistSync';
+import { ensureHabitsProject, resolveHabitProjectId, syncHabitToTodoist } from '../../lib/habitsTodoistSync';
 import type { Habit } from '../../types';
 
 interface HabitsLocationState {
@@ -47,6 +48,7 @@ export function HabitsLibrary() {
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
     const [syncError, setSyncError] = useState<string | null>(null);
     const [migrating, setMigrating] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
     const activeHabitCount = getActiveHabits(life).length;
 
     useEffect(() => {
@@ -65,6 +67,12 @@ export function HabitsLibrary() {
         () => life.habits.filter((h) => h.kind === 'stabilizer' && h.active && !h.todoistTaskId),
         [life.habits],
     );
+
+    const defaultProjectName = useMemo(() => {
+        const id = settings.habitsTodoistProjectId;
+        if (!id) return undefined;
+        return projects.find((p) => p.id === id)?.name;
+    }, [settings.habitsTodoistProjectId, projects]);
 
     const tryDelete = (habit: Habit) => {
         if (habit.isAnchor && habit.active) {
@@ -87,22 +95,35 @@ export function HabitsLibrary() {
     const onUpdateSettings = (updates: Partial<typeof settings>) =>
         dispatch({ type: 'UPDATE_SETTINGS', settings: updates });
 
-    /** Push a stabilizer to Todoist and persist the resulting taskId on the habit. No-op for non-stabilizers. */
-    const syncStabilizer = async (habit: Habit): Promise<boolean> => {
+    /**
+     * Push a stabilizer to Todoist using a pre-resolved default project id and persist the resulting
+     * taskId on the habit. No-op for non-stabilizers. The caller resolves the default project once
+     * (avoids a stale-closure loop where each iteration would re-create the project).
+     */
+    const syncStabilizer = async (habit: Habit, defaultProjectId: string): Promise<boolean> => {
         if (habit.kind !== 'stabilizer' || !isTodoistConfigured) return false;
+        const projectId = resolveHabitProjectId(habit, defaultProjectId, projects);
         const taskId = await syncHabitToTodoist({
             habit,
+            projectId,
             actions: todoistActions,
-            settings,
-            projects,
             taskMap,
-            onUpdateSettings,
         });
         if (!taskId) return false;
         if (taskId !== habit.todoistTaskId) {
             dispatch({ type: 'UPDATE_HABIT', habit: { ...habit, todoistTaskId: taskId } });
         }
         return true;
+    };
+
+    /** Resolve (or lazily create) the workspace default Habits project. Returns null on failure. */
+    const resolveDefaultProject = async (): Promise<string | null> => {
+        return ensureHabitsProject({
+            actions: todoistActions,
+            settings,
+            projects,
+            onUpdateSettings,
+        });
     };
 
     const handleCreate = async (draft: HabitDraft) => {
@@ -114,7 +135,12 @@ export function HabitsLibrary() {
         dispatch({ type: 'ADD_HABIT', habit: newHabit });
         closeCreate();
         if (newHabit.kind === 'stabilizer' && isTodoistConfigured) {
-            const ok = await syncStabilizer(newHabit);
+            const defaultProjectId = await resolveDefaultProject();
+            if (!defaultProjectId) {
+                setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
+                return;
+            }
+            const ok = await syncStabilizer(newHabit, defaultProjectId);
             if (!ok) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
         }
     };
@@ -124,7 +150,12 @@ export function HabitsLibrary() {
         dispatch({ type: 'UPDATE_HABIT', habit: updated });
         setEditing(null);
         if (updated.kind === 'stabilizer' && isTodoistConfigured) {
-            const ok = await syncStabilizer(updated);
+            const defaultProjectId = await resolveDefaultProject();
+            if (!defaultProjectId) {
+                setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
+                return;
+            }
+            const ok = await syncStabilizer(updated, defaultProjectId);
             if (!ok) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
         }
     };
@@ -133,9 +164,17 @@ export function HabitsLibrary() {
         if (!isTodoistConfigured || unsyncedStabilizers.length === 0) return;
         setMigrating(true);
         setSyncError(null);
+        // Resolve the default project ONCE — `syncStabilizer` re-uses this id across iterations
+        // so we never re-create a project mid-loop (the bug fixed in v6.1).
+        const defaultProjectId = await resolveDefaultProject();
+        if (!defaultProjectId) {
+            setMigrating(false);
+            setSyncError("Couldn't reach the Habits project in Todoist. Try again.");
+            return;
+        }
         let failures = 0;
         for (const habit of unsyncedStabilizers) {
-            const ok = await syncStabilizer(habit);
+            const ok = await syncStabilizer(habit, defaultProjectId);
             if (!ok) failures += 1;
         }
         setMigrating(false);
@@ -158,16 +197,34 @@ export function HabitsLibrary() {
                             {unsyncedStabilizers.length} stabilizer{unsyncedStabilizers.length === 1 ? '' : 's'}
                         </strong>{' '}
                         need to be synced as recurring Todoist tasks.
-                        {!isTodoistConfigured && (
+                        {isTodoistConfigured ? (
+                            <span className="text-text-light">
+                                {' '}Will sync to{' '}
+                                <strong className="text-text">
+                                    {defaultProjectName ?? 'a new "Habits" project'}
+                                </strong>
+                                .
+                            </span>
+                        ) : (
                             <span className="text-text-light">
                                 {' '}Connect Todoist in Settings first.
                             </span>
                         )}
                     </div>
                     {isTodoistConfigured && (
-                        <Button size="sm" disabled={migrating} onClick={handleMigrate}>
-                            {migrating ? 'Migrating…' : 'Migrate'}
-                        </Button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowSettings(true)}
+                                disabled={migrating}
+                            >
+                                Choose project
+                            </Button>
+                            <Button size="sm" disabled={migrating} onClick={handleMigrate}>
+                                {migrating ? 'Migrating…' : 'Migrate'}
+                            </Button>
+                        </div>
                     )}
                 </div>
             )}
@@ -269,6 +326,8 @@ export function HabitsLibrary() {
                 <HabitForm
                     initial={createInitial}
                     seasons={life.seasons}
+                    todoistProjects={isTodoistConfigured ? projects : []}
+                    defaultProjectName={defaultProjectName}
                     submitLabel="Create"
                     onCancel={closeCreate}
                     onSubmit={handleCreate}
@@ -283,6 +342,8 @@ export function HabitsLibrary() {
                 {editing && (
                     <HabitForm
                         seasons={life.seasons}
+                        todoistProjects={isTodoistConfigured ? projects : []}
+                        defaultProjectName={defaultProjectName}
                         initial={editing}
                         submitLabel="Save"
                         onCancel={() => setEditing(null)}
@@ -290,6 +351,11 @@ export function HabitsLibrary() {
                     />
                 )}
             </Modal>
+
+            <SettingsModal
+                open={showSettings}
+                onClose={() => setShowSettings(false)}
+            />
 
             <Modal
                 open={confirmDelete !== null}

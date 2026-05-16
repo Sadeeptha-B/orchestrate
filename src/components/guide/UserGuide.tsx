@@ -4,9 +4,9 @@ import { Logo } from '../ui/Logo';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
 /**
- * v6 User Guide — mental model and how-to for the three execution pathways
+ * v6.1 User Guide — mental model and how-to for the three execution pathways
  * (Deep Track / Stabilizer / Light Pool) plus manual background, True Rest,
- * and capacity arithmetic. Mirrors docs/user-guide.md.
+ * and capacity arithmetic. **Mirrors docs/user-guide.md** — keep these in sync.
  */
 export function UserGuide() {
     const navigate = useNavigate();
@@ -116,7 +116,7 @@ export function UserGuide() {
 
                         <SubHeading>What kind of habit is it?</SubHeading>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Stabilizer</strong> — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate will automatically add these to your intentions each morning and lock them as background tasks.</li>
+                            <li><strong>Stabilizer</strong> — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate syncs these to Todoist as recurring tasks (in a project you pick) and surfaces them directly as session-assigned tasks each day they're due.</li>
                             <li><strong>Light-coherent</strong> — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. These show up in the Light Pool on your dashboard — you pull from them when you're ready, and they're logged but never scheduled.</li>
                         </ul>
 
@@ -157,14 +157,30 @@ export function UserGuide() {
 
                         <SubHeading id="pathway-b">4.2 Stabilizer — your daily rituals</SubHeading>
                         <p>
-                            These are habits that automatically show up as intentions every day their recurrence rule
-                            matches. You don't have to remember to add "morning meditation" — Orchestrate does it for you.
+                            These are habits that automatically show up as tasks every day their recurrence rule matches.
+                            You don't have to remember to add "morning meditation" — Orchestrate creates a recurring
+                            Todoist task once, and from then on it surfaces in your plan whenever it's due.
                         </p>
-                        <Flow>{`You set up a stabilizer Habit once (e.g., "Morning meditation", daily)
-  → each matching day, it auto-injects as an Intention in Step 1
-  → you link a Todoist task (or it auto-links if you've set one up)
-  → the task is locked to 'background' — you can't change it to 'main'
-  → assign to one or many sessions in Step 3`}</Flow>
+                        <Flow>{`You set up a stabilizer Habit once (e.g., "Morning meditation", daily, 07:00, 10 min)
+  → Orchestrate creates a recurring Todoist task in the Habits project
+     (with due_string like "every day at 7:00" and duration 10 min)
+  → each matching day, if the task is due and unchecked, it appears in your plan
+     as a session-assigned task — auto-placed in the session containing 07:00
+  → if it can't resolve a session, it lands in the "Unassigned habits" tray on Step 3
+  → completing it on the Dashboard syncs back to Todoist; tomorrow's recurrence
+     is auto-created by Todoist`}</Flow>
+                        <p>A few knobs in the form:</p>
+                        <ul className="list-disc pl-5 space-y-1.5">
+                            <li><strong>Target time</strong> (optional but recommended) — drives session auto-assignment.</li>
+                            <li><strong>Duration</strong> — pushed to Todoist as the task duration and used as the in-plan estimate.</li>
+                            <li><strong>Todoist project</strong> — pick which project this habit's recurring task lives in. Leave on "Use default" to use the workspace default in <strong>Settings → Integrations → Default Habits Project</strong> (which itself defaults to a lazily-created project named "Habits"). Changing the project on an already-synced habit moves the recurring task.</li>
+                            <li><strong>Window behavior</strong>:
+                                <ul className="list-disc pl-5 space-y-1 mt-1">
+                                    <li><em>Surface anyway</em> (lenient, default) — show it whenever the Todoist task is due + unchecked, even if you're planning late.</li>
+                                    <li><em>Hide for today</em> (strict) — if your planning time is already past <Code>targetTime + duration</Code>, drop it from today's plan. Streaks are preserved.</li>
+                                </ul>
+                            </li>
+                        </ul>
                         <p><strong>Good for:</strong> anchor-style rituals that need to live in a time slot.</p>
                         <ExampleList heading="Anchor stabilizers — the non-negotiables">
                             <li><em>Morning meditation</em> — daily, 5–15 min.</li>
@@ -264,7 +280,7 @@ export function UserGuide() {
                             <tbody>
                                 <Tr>
                                     <Td><Code>kind: 'stabilizer'</Code></Td>
-                                    <Td><strong>Behavior</strong> — auto-injects as an intention, locks to background</Td>
+                                    <Td><strong>Behavior</strong> — synced to Todoist as a recurring task and surfaced as a session-assigned task each day it's due</Td>
                                     <Td><em>"How does this habit show up each day?"</em></Td>
                                 </Tr>
                                 <Tr>
@@ -445,8 +461,10 @@ Is X today-only?
 └─ NO  (X is recurring) ↓
     Does X need a slot in the day to anchor your structure?
     ├─ YES → create a stabilizer Habit.
+    │        Set targetTime + duration so Orchestrate can drop it in the right session.
     │        Mark as anchor ONLY if dropping it would let the day collapse.
     │        Set seasonIds = [] for always-on, [seasonId] for season-scoped.
+    │        (Saving will create a recurring Todoist task in the chosen project.)
     └─ NO  (X is opportunistic, pulled when you have a gap)
         → create a light-coherent Habit.
           Set seasonIds = [seasonId] if tied to current focus,
@@ -467,27 +485,26 @@ Is X today-only?
 
                         <SubHeading>Step 1 — Intentions</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Auto-injected from stabilizers: <em>Morning meditation</em>, <em>Gym</em>, <em>Daily planning ritual</em>. Each shows the 🔁 Habit badge and a "Skip for today" option.</li>
+                            <li>Stabilizer habit-tasks are <em>not</em> in the intention list. Instead, an inline chip says: <em>"4 habit tasks scheduled for today — see Step 3."</em></li>
                             <li>You add manually: <em>"Finish v6 capacity arithmetic"</em>, <em>"Read paper on session scheduling"</em>.</li>
-                            <li>Light-coherent habits don't appear here — they live in the Light Pool.</li>
+                            <li>Light-coherent habits don't appear here either — they live in the Light Pool.</li>
                         </ul>
 
                         <SubHeading>Step 2 — Refine</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li><em>Morning meditation</em> → background, locked, capped at 15 min (habit setting).</li>
-                            <li><em>Gym</em> → background, locked, capped at 45 min.</li>
-                            <li><em>Daily planning ritual</em> → background, locked, capped at 30 min (per-kind default).</li>
                             <li><em>Finish v6 capacity arithmetic</em> → main, 120 min.</li>
                             <li><em>Read paper on session scheduling</em> → main, 60 min.</li>
                             <li>You add a manual background: <em>"Push WIP commit before lunch"</em>, 10 min.</li>
+                            <li>Stabilizer habit-tasks bypass this step entirely — they already arrived as background tasks with their <Code>targetDurationMinutes</Code> estimate from injection.</li>
                         </ul>
 
                         <SubHeading>Step 3 — Schedule</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Early morning: <em>Morning meditation</em> + <em>Gym</em>.</li>
+                            <li>Early morning: 🔁 <em>Morning meditation</em> + 🔁 <em>Gym</em> (auto-assigned via Todoist due time).</li>
                             <li>Morning: <em>Finish v6 capacity arithmetic</em> (main).</li>
-                            <li>Afternoon: <em>Read paper</em> (main) + <em>Daily planning ritual</em> + <em>Push WIP commit</em> (background).</li>
-                            <li>Night: <em>Evening shutdown</em>.</li>
+                            <li>Afternoon: <em>Read paper</em> (main) + 🔁 <em>Daily planning ritual</em> + <em>Push WIP commit</em> (background).</li>
+                            <li>Night: 🔁 <em>Evening shutdown</em>.</li>
+                            <li>Habit-tasks render under a "🔁 Habits" group inside each session card; if any habit-task lacks a Todoist time, it would sit in the "Unassigned habits" tray above the timeline for you to drop into a session.</li>
                         </ul>
                         <p className="text-text-light text-sm">
                             Capacity badge shows the morning session is <em>tight</em> at 110%. You proceed — it's advisory.
@@ -503,7 +520,7 @@ Is X today-only?
 
                         <SubHeading>End of day</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Stabilizer tasks: 3/3 completed (synced to Todoist).</li>
+                            <li>Stabilizer habit-tasks: 4/4 completed (synced to Todoist; tomorrow's recurrences auto-created by Todoist).</li>
                             <li>Main tasks: 1.5/2 completed.</li>
                             <li>Light Pool log: 2 entries (algorithms warm-up and Duolingo; flashcards and reading skipped today).</li>
                             <li>True Rest: surfaced but untracked, as intended.</li>
@@ -520,7 +537,7 @@ Is X today-only?
                             </thead>
                             <tbody>
                                 <Tr><Td>A today-only big work thread</Td><Td>Main task (Deep Track)</Td></Tr>
-                                <Tr><Td>A recurring ritual that needs a slot</Td><Td>Stabilizer Habit. Add <Code>isAnchor</Code> if foundational.</Td></Tr>
+                                <Tr><Td>A recurring ritual that needs a slot</Td><Td>Stabilizer Habit (set <Code>targetTime</Code> + duration so it auto-lands in the right session). Add <Code>isAnchor</Code> if foundational.</Td></Tr>
                                 <Tr><Td>A small recurring practice you pull opportunistically</Td><Td>Light-coherent Habit (Light Pool)</Td></Tr>
                                 <Tr><Td>A today-only small chore tied to an intention</Td><Td>Manual background task</Td></Tr>
                                 <Tr><Td>A non-task recovery prompt</Td><Td>Don't model. True Rest handles it.</Td></Tr>
@@ -538,7 +555,7 @@ Is X today-only?
                             ← Back to Dashboard
                         </button>
                         <span className="text-text-light">
-                            Reflects v6. See <Link to="/life" className="text-accent hover:underline">/life</Link> to manage your seasons and habits.
+                            Reflects v6.1. See <Link to="/life" className="text-accent hover:underline">/life</Link> to manage your seasons and habits.
                         </span>
                     </div>
                 </div>
