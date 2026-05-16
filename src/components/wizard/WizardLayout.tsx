@@ -5,7 +5,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { SavedSessions } from '../dashboard/SavedSessions';
+import { HistorySidebar, type HistoryTab } from '../dashboard/HistorySidebar';
 import { SettingsModal } from '../settings/SettingsModal';
 import { AboutContent } from '../ui/AboutContent';
 import { Logo } from '../ui/Logo';
@@ -33,13 +33,23 @@ export function WizardLayout({
     hideNext = false,
     wide = false,
 }: WizardLayoutProps) {
-    const { plan, editingStep, dispatch } = useDayPlan();
+    const { plan, life, editingStep, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const step = plan.wizardStep;
     const isEditing = editingStep !== null;
     const [showSettings, setShowSettings] = useState(false);
     const [showAbout, setShowAbout] = useState(false);
     const [panelOpen, setPanelOpen] = useState(true);
+    const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
+    const backlogCount = life.backlog?.length ?? 0;
+    const openPanel = (next: HistoryTab) => {
+        if (panelOpen && panelTab === next) {
+            setPanelOpen(false);
+        } else {
+            setPanelTab(next);
+            setPanelOpen(true);
+        }
+    };
     const { panelWidth, onMouseDown } = useResizablePanel();
 
     const goBack = () => {
@@ -77,10 +87,7 @@ export function WizardLayout({
                         className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
                     />
                     <div className="p-5 pt-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                Saved Sessions
-                            </h3>
+                        <div className="flex items-center justify-end mb-3">
                             <button
                                 onClick={() => setPanelOpen(false)}
                                 className="text-text-light hover:text-text transition-colors text-lg leading-none cursor-pointer"
@@ -89,7 +96,7 @@ export function WizardLayout({
                                 &times;
                             </button>
                         </div>
-                        <SavedSessions hideHeading />
+                        <HistorySidebar tab={panelTab} onTabChange={setPanelTab} />
                     </div>
                 </aside>
             )}
@@ -112,15 +119,23 @@ export function WizardLayout({
                             <ActiveSeasonBadge />
                         </div>
                         <div className="flex gap-2">
-                            {!panelOpen && (
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setPanelOpen(true)}
-                                >
-                                    Saved Sessions
-                                </Button>
-                            )}
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openPanel('sessions')}
+                            >
+                                {panelOpen && panelTab === 'sessions' ? 'Hide Saved' : 'Saved Sessions'}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openPanel('backlog')}
+                                title="Intentions backlog"
+                            >
+                                {panelOpen && panelTab === 'backlog'
+                                    ? 'Hide Backlog'
+                                    : <>📥 Backlog{backlogCount > 0 ? ` (${backlogCount})` : ''}</>}
+                            </Button>
                             {isEditing && (
                                 <Button variant="ghost" size="sm" onClick={goToDashboard}>
                                     Back to Dashboard

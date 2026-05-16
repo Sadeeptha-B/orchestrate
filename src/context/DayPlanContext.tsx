@@ -17,11 +17,18 @@ import type {
     HabitLogEntry,
     HabitTaskInjection,
     RestCue,
+    BacklogEntry,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 import { todayISO } from '../lib/time';
 import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../lib/capacity';
 import { restCues as defaultRestCues } from '../data/restCues';
+import {
+    buildAutoSaveEntry,
+    buildBacklogEntry,
+    harvestStalePlan,
+    rebuildLinkedTasksForBacklogEntry,
+} from '../lib/backlog';
 
 // --------------- helpers ---------------
 
@@ -29,7 +36,7 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-const SCHEMA_VERSION = 6.1;
+const SCHEMA_VERSION = 6.2;
 /** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
 const WIZARD_STEPS_COUNT = 4;
 
@@ -160,18 +167,6 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
     };
 }
 
-function loadPlan(): DayPlan {
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return freshPlan();
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        if (parsed.date !== todayISO()) return freshPlan();
-        return migratePlan(parsed);
-    } catch {
-        return freshPlan();
-    }
-}
-
 function withV6SettingsDefaults(s: AppSettings): AppSettings {
     return {
         ...s,
@@ -212,7 +207,7 @@ function loadHistory(): SavedDayPlan[] {
 }
 
 function emptyLifeContext(): LifeContext {
-    return { seasons: [], habits: [], activeSeasonId: null };
+    return { seasons: [], habits: [], activeSeasonId: null, backlog: [] };
 }
 
 /**
@@ -253,10 +248,66 @@ function loadLifeContext(): LifeContext {
             habits: (parsed.habits ?? []).map(migrateHabit),
             activeSeasonId: parsed.activeSeasonId ?? null,
             restCues: parsed.restCues,
+            backlog: parsed.backlog ?? [],
         };
     } catch {
         return emptyLifeContext();
     }
+}
+
+/**
+ * v6.2: peek at the raw persisted plan *without* the date-freshness gate that `loadPlan` applies.
+ * Used by `loadInitialState` so we can harvest a stale plan before discarding it.
+ */
+function peekRawPlan(): DayPlan | null {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        return migratePlan(parsed);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * v6.2: coordinated initial-state loader. Handles the day-rollover migration:
+ * on cold start with a stale persisted plan, auto-saves the stale plan into history
+ * (authoritative — replaces any prior same-date entry) and harvests its unfinished
+ * intentions into `life.backlog`. Returns the four-slice initial state for `useReducer`.
+ */
+function loadInitialState(): State {
+    const settings = loadSettings();
+    const baseHistory = loadHistory();
+    const baseLife = loadLifeContext();
+    const raw = peekRawPlan();
+
+    if (!raw || raw.date === todayISO()) {
+        return {
+            plan: raw ?? freshPlan(),
+            settings,
+            editingStep: null,
+            history: baseHistory,
+            life: baseLife,
+        };
+    }
+
+    // Stale plan: auto-save it (authoritative — replaces any existing same-date entry),
+    // harvest unfinished intentions into the backlog, then return a fresh plan.
+    const autoSave = buildAutoSaveEntry(raw, WIZARD_STEPS_COUNT, SCHEMA_VERSION);
+    const history = [autoSave, ...baseHistory.filter((h) => h.plan.date !== raw.date)];
+    const harvested = harvestStalePlan(raw);
+    const life: LifeContext = harvested.length === 0
+        ? baseLife
+        : { ...baseLife, backlog: [...(baseLife.backlog ?? []), ...harvested] };
+
+    return {
+        plan: freshPlan(),
+        settings,
+        editingStep: null,
+        history,
+        life,
+    };
 }
 
 // v6: `backfillHabitsFromLegacy` was removed — the deprecated `isHabit` flag is no longer
@@ -310,7 +361,12 @@ type Action =
     | { type: 'ADD_REST_CUE'; cue: Omit<RestCue, 'id'> }
     | { type: 'UPDATE_REST_CUE'; cue: RestCue }
     | { type: 'DELETE_REST_CUE'; cueId: string }
-    | { type: 'REPLACE_REST_CUES'; cues: RestCue[] | undefined };
+    | { type: 'REPLACE_REST_CUES'; cues: RestCue[] | undefined }
+    // ---- v6.2: Intentions backlog ----
+    | { type: 'MOVE_INTENTION_TO_BACKLOG'; intentionId: string; reason?: BacklogEntry['reason'] }
+    | { type: 'RESTORE_FROM_BACKLOG'; backlogId: string; taskCache: Record<string, string> }
+    | { type: 'DELETE_BACKLOG_ENTRY'; backlogId: string }
+    | { type: 'BACKLOG_HARVEST'; entries: BacklogEntry[] };
 
 interface State {
     plan: DayPlan;
@@ -798,6 +854,7 @@ function reducer(state: State, action: Action): State {
                 // Imported habits go through `migrateHabit` so a v6 backup picks up the v6.1 shape.
                 const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
                 const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
+                const existingBacklogIds = new Set((state.life.backlog ?? []).map((e) => e.id));
                 next.life = {
                     seasons: [
                         ...state.life.seasons,
@@ -810,6 +867,11 @@ function reducer(state: State, action: Action): State {
                             .map(migrateHabit),
                     ],
                     activeSeasonId: state.life.activeSeasonId ?? action.life.activeSeasonId,
+                    restCues: state.life.restCues ?? action.life.restCues,
+                    backlog: [
+                        ...(state.life.backlog ?? []),
+                        ...(action.life.backlog ?? []).filter((e) => !existingBacklogIds.has(e.id)),
+                    ],
                 };
             }
             if (action.history) {
@@ -820,6 +882,71 @@ function reducer(state: State, action: Action): State {
                 ];
             }
             return next;
+        }
+
+        // ---- v6.2: Intentions backlog ----
+
+        case 'MOVE_INTENTION_TO_BACKLOG': {
+            const intention = plan.intentions.find((i) => i.id === action.intentionId);
+            if (!intention) return state;
+            // Build backlog entry from current LinkedTask state (captures titleSnapshots).
+            const entry = buildBacklogEntry(intention, plan, action.reason ?? 'manual');
+            // Remove the intention + its linked tasks (same logic as REMOVE_INTENTION).
+            const intentions = plan.intentions.filter((i) => i.id !== action.intentionId);
+            const removedTaskIds = new Set(
+                plan.linkedTasks
+                    .filter((lt) => lt.intentionId === action.intentionId)
+                    .map((lt) => lt.todoistId),
+            );
+            const linkedTasks = plan.linkedTasks.filter((lt) => lt.intentionId !== action.intentionId);
+            const taskSessions = { ...plan.taskSessions };
+            for (const sid of Object.keys(taskSessions)) {
+                taskSessions[sid] = taskSessions[sid].filter((id) => !removedTaskIds.has(id));
+            }
+            return {
+                ...state,
+                plan: { ...plan, intentions, linkedTasks, taskSessions },
+                life: { ...state.life, backlog: [...(state.life.backlog ?? []), entry] },
+            };
+        }
+
+        case 'RESTORE_FROM_BACKLOG': {
+            const backlog = state.life.backlog ?? [];
+            const entry = backlog.find((e) => e.id === action.backlogId);
+            if (!entry) return state;
+            // Skip if an intention with the same id is already present (e.g. double-click).
+            if (plan.intentions.some((i) => i.id === entry.intention.id)) {
+                return { ...state, life: { ...state.life, backlog: backlog.filter((e) => e.id !== action.backlogId) } };
+            }
+            const restoredTasks = rebuildLinkedTasksForBacklogEntry(entry, action.taskCache);
+            // Avoid re-introducing a LinkedTask for any todoistId already in the plan (e.g. linked to a different intention).
+            const existingTaskIds = new Set(plan.linkedTasks.map((lt) => lt.todoistId));
+            const freshTasks = restoredTasks.filter((lt) => !existingTaskIds.has(lt.todoistId));
+            return {
+                ...state,
+                plan: {
+                    ...plan,
+                    intentions: [...plan.intentions, entry.intention],
+                    linkedTasks: [...plan.linkedTasks, ...freshTasks],
+                },
+                life: { ...state.life, backlog: backlog.filter((e) => e.id !== action.backlogId) },
+            };
+        }
+
+        case 'DELETE_BACKLOG_ENTRY': {
+            const backlog = (state.life.backlog ?? []).filter((e) => e.id !== action.backlogId);
+            return { ...state, life: { ...state.life, backlog } };
+        }
+
+        case 'BACKLOG_HARVEST': {
+            if (action.entries.length === 0) return state;
+            return {
+                ...state,
+                life: {
+                    ...state.life,
+                    backlog: [...(state.life.backlog ?? []), ...action.entries],
+                },
+            };
         }
 
         default:
@@ -842,15 +969,7 @@ const DayPlanContext = createContext<DayPlanContextValue | null>(null);
 export { DayPlanContext };
 
 export function DayPlanProvider({ children }: { children: ReactNode }) {
-    const [state, dispatch] = useReducer(reducer, null, () => {
-        return {
-            plan: loadPlan(),
-            settings: loadSettings(),
-            editingStep: null,
-            history: loadHistory(),
-            life: loadLifeContext(),
-        };
-    });
+    const [state, dispatch] = useReducer(reducer, null, loadInitialState);
 
     // Persist on every state change (include schema markers for migration detection)
     useEffect(() => {

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
+import { Modal } from '../ui/Modal';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { SessionCapacityBanner } from '../dashboard/SessionCapacityBanner';
 import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
@@ -13,16 +14,19 @@ import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
 import { isHabitDerivedTask } from '../../lib/habits';
-import type { LinkedTask } from '../../types';
+import { useIntentionRemoval } from '../../lib/intentionUnschedule';
+import type { Intention, LinkedTask } from '../../types';
 
 export function Step3Schedule() {
     const { plan, settings, dispatch } = useDayPlan();
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
+    const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [phase, setPhase] = useState<'assign' | 'time'>('assign');
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
         () => remainingSessions[0]?.id ?? null,
     );
+    const [confirmDelete, setConfirmDelete] = useState<Intention | null>(null);
 
     const mainTasks = plan.linkedTasks.filter((lt) => lt.type === 'main' && !lt.completed);
     const backgroundTasks = plan.linkedTasks.filter((lt) => lt.type === 'background' && !lt.completed);
@@ -86,6 +90,51 @@ export function Step3Schedule() {
                             Background tasks can appear in multiple sessions.
                         </p>
                     </div>
+
+                    {/* v6.2: intentions overview — defer or delete intentions when overcommitted */}
+                    {plan.intentions.length > 0 && (
+                        <div className="rounded-lg border border-border bg-subtle/30 px-3 py-2">
+                            <h3 className="text-xs font-medium text-text-light uppercase tracking-wider mb-1.5">
+                                Today&apos;s intentions ({plan.intentions.length})
+                            </h3>
+                            <ul className="space-y-1">
+                                {plan.intentions.map((intention) => {
+                                    const taskCount = plan.linkedTasks.filter(
+                                        (lt) => lt.intentionId === intention.id,
+                                    ).length;
+                                    return (
+                                        <li
+                                            key={intention.id}
+                                            className="flex items-center gap-2 text-sm group"
+                                        >
+                                            <span className="flex-1 min-w-0 truncate">
+                                                {intention.title}
+                                                <span className="ml-2 text-xs text-text-light">
+                                                    {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
+                                                </span>
+                                            </span>
+                                            <button
+                                                onClick={() => void moveToBacklog(intention.id)}
+                                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-sm cursor-pointer opacity-60 group-hover:opacity-100"
+                                                title="Move to backlog"
+                                                aria-label={`Move ${intention.title} to backlog`}
+                                            >
+                                                📥
+                                            </button>
+                                            <button
+                                                onClick={() => setConfirmDelete(intention)}
+                                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors text-sm cursor-pointer opacity-60 group-hover:opacity-100"
+                                                title="Delete"
+                                                aria-label={`Delete ${intention.title}`}
+                                            >
+                                                🗑
+                                            </button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                    )}
 
                     {/* Completed tasks summary */}
                     {completedTasks.length > 0 && (
@@ -456,6 +505,34 @@ export function Step3Schedule() {
                     </div>
                 </div>
             )}
+
+            <Modal
+                open={confirmDelete !== null}
+                onClose={() => setConfirmDelete(null)}
+                title="Delete intention permanently?"
+            >
+                <p className="text-sm text-text-light mb-4">
+                    <strong>{confirmDelete?.title}</strong> will be removed from today.
+                    Any of its linked Todoist tasks that are currently scheduled will be unscheduled.
+                    To park it for later instead, cancel and click 📥.
+                </p>
+                <div className="flex justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(null)}>
+                        Cancel
+                    </Button>
+                    <Button
+                        size="sm"
+                        onClick={async () => {
+                            if (!confirmDelete) return;
+                            const id = confirmDelete.id;
+                            setConfirmDelete(null);
+                            await removeIntention(id);
+                        }}
+                    >
+                        Delete
+                    </Button>
+                </div>
+            </Modal>
         </WizardLayout>
     );
 }
