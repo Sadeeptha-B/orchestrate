@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { inputClass, labelClass } from '../ui/formStyles';
+import type { TodoistProject } from '../../hooks/useTodoist';
 import type {
     Habit,
     HabitKind,
@@ -15,6 +16,10 @@ export type HabitDraft = Omit<Habit, 'id' | 'createdAt'>;
 interface HabitFormProps {
     initial?: Partial<HabitDraft>;
     seasons: Season[];
+    /** v6.1: Todoist projects for the per-habit project picker. Empty when Todoist isn't configured. */
+    todoistProjects?: TodoistProject[];
+    /** v6.1: name of the workspace default project, shown next to the "Use default" option. */
+    defaultProjectName?: string;
     submitLabel?: string;
     onSubmit: (draft: HabitDraft) => void;
     onCancel?: () => void;
@@ -25,6 +30,8 @@ const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 export function HabitForm({
     initial,
     seasons,
+    todoistProjects = [],
+    defaultProjectName,
     submitLabel = 'Save Habit',
     onSubmit,
     onCancel,
@@ -48,6 +55,7 @@ export function HabitForm({
     const [windowBehavior, setWindowBehavior] = useState<HabitWindowBehavior>(
         initial?.windowBehavior ?? 'lenient',
     );
+    const [todoistProjectId, setTodoistProjectId] = useState<string>(initial?.todoistProjectId ?? '');
     const [minimumViable, setMinimumViable] = useState(initial?.minimumViable ?? '');
     const [triggerCue, setTriggerCue] = useState(initial?.triggerCue ?? '');
     const [completionRule, setCompletionRule] = useState<Habit['completionRule']>(
@@ -93,6 +101,7 @@ export function HabitForm({
             active,
             // v6.1: schedule fields preserve `todoistTaskId` from initial (set by the sync layer).
             ...(initial?.todoistTaskId ? { todoistTaskId: initial.todoistTaskId } : {}),
+            ...(isStabilizer && todoistProjectId ? { todoistProjectId } : {}),
             ...(isStabilizer && trimmedTime ? { targetTime: trimmedTime } : {}),
             ...(isStabilizer
                 && targetDurationMinutes.trim()
@@ -211,6 +220,27 @@ export function HabitForm({
                             </p>
                         </div>
                     </div>
+                    {todoistProjects.length > 0 && (
+                        <div>
+                            <label className={labelClass}>Todoist project</label>
+                            <select
+                                className={inputClass}
+                                value={todoistProjectId}
+                                onChange={(e) => setTodoistProjectId(e.target.value)}
+                            >
+                                <option value="">
+                                    Use default{defaultProjectName ? ` (${defaultProjectName})` : ''}
+                                </option>
+                                {todoistProjects.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                            </select>
+                            <p className="text-[11px] text-text-light mt-1">
+                                Pick a specific project for this habit's recurring task. Changing this on
+                                an already-synced habit moves the existing task in Todoist.
+                            </p>
+                        </div>
+                    )}
                     <div>
                         <label className={labelClass}>If I'm planning past the target window</label>
                         <div className="flex gap-1 flex-wrap">

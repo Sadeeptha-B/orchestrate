@@ -175,6 +175,7 @@ export interface Habit {
     seasonIds: string[];                 // which seasons this habit belongs to ([] = always-on)
     active: boolean;                     // user-toggle to pause without deleting
     todoistTaskId?: string;              // v6.1: persistent recurring Todoist task ID synced from this habit (stabilizer only)
+    todoistProjectId?: string;           // v6.1: explicit Todoist project for this habit's task; falls back to AppSettings.habitsTodoistProjectId
     targetTime?: string;                 // v6.1: "HH:mm" target time-of-day; drives session auto-assignment + window-behavior gate
     targetDurationMinutes?: number;      // v6.1: minutes; pushed to Todoist `duration` and used as the LinkedTask estimate
     windowBehavior?: HabitWindowBehavior;// v6.1: 'strict' hides the habit-task if past targetTime + duration; 'lenient' surfaces while still due in Todoist (default 'lenient')

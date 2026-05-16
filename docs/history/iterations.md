@@ -1,6 +1,6 @@
-> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 4. Preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable.
+> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 6.1. Iterations 1–4 are preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable. Iterations 5+ are shipped-iteration narratives written at the time the work landed.
 >
-> Iteration 5 (not yet implemented at the time of refactor) lives in [../backlog.md](../backlog.md) instead. For the durable "why" see [../vision.md](../vision.md); for current implementation state see [../synthesis.md](../synthesis.md).
+> For the durable "why" see [../vision.md](../vision.md); for current implementation state see [../synthesis.md](../synthesis.md). Forward-looking proposals (currently v7+) live in [../backlog.md](../backlog.md).
 >
 > Future shipped iterations should land here as additional entries.
 
@@ -92,3 +92,39 @@ A schema-version marker (`_schemaVersion: 5`) is now stamped on saved plans, set
 Iterations 6–8 (capacity intelligence, modes/rituals/recovery, reviews/drift detection/hierarchical views) are sketched in [plan_v5.md](./plan_v5.md) but deferred for separate plans.
 
 See [plan_v5.md](./plan_v5.md) for the full implementation plan.
+
+## Iteration 6 — Micro-gap refinement + capacity intelligence
+
+Pre-v6, the `LinkedTask.type: 'background'` bucket conflated two distinct uses: anchor-style stabilizer rituals (meditation, gym, shutdown) and small resumable micro-gap fillers (flashcards, short reading). Both shared a hard 30-min cap and the same auto-injection pipeline, which forced the user to model "I want to do flashcards when I have a free 5 minutes" the same way as "I meditate at 7am every morning." Separately, the previously-planned v6 capacity arithmetic was still in the backlog, and the deprecated `isHabit` flags from v5 were waiting for a v7 removal.
+
+v6 collapses all of this into one coherent iteration:
+
+- **Habit kind discriminator** (`'stabilizer' | 'light-coherent'`) — stabilizers keep the auto-injection pipeline; light-coherent gets a new logged-only pathway.
+- **Light Pool** — a Dashboard panel + `/life` section listing today's active light-coherent habits, with per-row Start/Done writing to `plan.habitLog`. The day's task graph stays clean; pulls are opportunistic.
+- **True Rest** — a static catalog (`src/data/restCues.ts`) surfaced contextually via `TrueRestCard` in three variants (Dashboard side rail, low-energy check-in, between-session banner). Deliberately non-trackable.
+- **Per-task duration caps** — `AppSettings.taskCapDefaults` (per-kind defaults, editable in Settings) plus optional per-habit `maxBlockMinutes` override, replacing the old hard 30-min clamp.
+- **Advisory session capacity arithmetic** — `computeSessionCapacity(...)` powering per-session badges and over-capacity banners on Step 3 + Dashboard; banner only at >150% load; never blocks the wizard.
+- **Legacy `isHabit` purge** — pulled forward from v7. The `Intention.isHabit` / `LinkedTask.isHabit` fields, the `TOGGLE_TASK_HABIT` action, and the `backfillHabitsFromLegacy` function were all removed; `intention.sourceHabitId` is now the canonical "habit-derived" check.
+
+Schema bumped to `_schemaVersion: 6`. The migration step is mechanical (default `kind` to `'stabilizer'` for pre-v6 habits; initialize `plan.habitLog: []`; inject `taskCapDefaults` and `sessionBufferMinutes` settings defaults).
+
+See [plan_v6.md](./plan_v6.md) for the full implementation plan.
+
+## Iteration 6.1 — Habit-as-task decoupling
+
+In v6, stabilizer habits were forced through a pipeline that didn't fit their semantics: they auto-injected as **Intentions** in Step 1, the user mapped them to a Todoist task in the embedded `TodoistPanel`, and the reducer locked the task to `'background'` at `LINK_TASK` time. The whole flow treated stabilizers as a special-case intention, which created ceremonial friction for what are conceptually one-and-done daily items — wake, meditate, gym, shutdown. There's no decomposition step for "meditate at 7am for 10 minutes": the habit *is* the task.
+
+v6.1 decouples habits from intentions. Saving a stabilizer now syncs a recurring Todoist task (with `due_string` like `"every weekday at 7:00"` and `duration` matching `targetDurationMinutes`); on each matching day, the habit's task is surfaced **directly as a session-assigned `LinkedTask` without a parent intention** (`intentionId === undefined`, `sourceHabitId` set), auto-assigned to the session whose window contains the Todoist `due.datetime`. Light-coherent habits and True Rest are unchanged.
+
+Key user-facing additions:
+
+- **Project picker** (workspace default in Settings → Integrations + per-habit override in `HabitForm`'s Schedule section). The picker drops habit tasks into an existing Todoist project of the user's choice rather than always creating a new "Habits" project. Editing a habit's project moves the existing recurring task via the Sync API (`item_move`).
+- **Window behavior** (`'strict' | 'lenient'`, default `'lenient'`). Strict hides the habit-task once the planning time is past `targetTime + duration`; lenient surfaces it as long as the Todoist task is due today and unchecked.
+- **"Unassigned habits" tray** above the Step 3 timeline, holding any habit-tasks whose Todoist due time doesn't match a session window.
+- **Migrate banner** in `/habits` for pre-v6.1 stabilizers without a `todoistTaskId`, plus a one-time `migratePlan` step that drops habit-derived intentions and re-anchors their LinkedTasks as orphans.
+
+Schema bumped to `6.1` (a JSON float, kept aligned with the product label rather than jumping to `7`). The reducer renames `INJECT_HABIT_INTENTIONS` → `INJECT_HABIT_TASKS` (precomputed payload from `lib/habitsTodoistSync.ts → computeHabitTasksToInject`) and `SKIP_HABIT_INTENTION` → `SKIP_HABIT_TASK`. `LinkedTask.intentionId` becomes optional; `LinkedTask.sourceHabitId` is added.
+
+The scope was deliberately narrow — a structural correction, not a new iteration — so the user-facing label stays at v6.1 rather than v7.
+
+See [plan_v6.1.md](./plan_v6.1.md) for the full implementation plan.

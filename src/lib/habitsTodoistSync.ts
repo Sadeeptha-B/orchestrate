@@ -42,8 +42,14 @@ export function buildDueString(habit: Habit): string {
 }
 
 /**
- * Resolve (or lazily create) the dedicated "Habits" Todoist project that all
- * stabilizer habit-tasks live under. Returns the project ID, or null on failure.
+ * Resolve (or lazily create) the user's default Todoist project for stabilizer habit-tasks.
+ *
+ * Priority: cached `AppSettings.habitsTodoistProjectId` (if it still exists in `projects`) →
+ * existing project literally named "Habits" → newly created "Habits" project.
+ *
+ * Persists the resolved id back to settings via `onUpdateSettings` so future calls short-circuit.
+ * **Always invoke this once per batch** (e.g. before a migrate loop) to avoid a stale-closure
+ * race that would otherwise re-create the project on every iteration.
  */
 export async function ensureHabitsProject(args: {
     actions: TodoistActionsValue;
@@ -69,22 +75,39 @@ export async function ensureHabitsProject(args: {
 }
 
 /**
- * Sync a stabilizer Habit to Todoist as a recurring task.
- * - If the habit has no `todoistTaskId`: creates a new recurring task in the Habits project.
- * - If it already has one and the task exists in cache: updates due_string / content / duration.
- * - If the cached task is missing (deleted in Todoist): creates a fresh task.
+ * Resolve which Todoist project a habit's task should live in.
+ * Per-habit `todoistProjectId` overrides the workspace default, but only when the project
+ * still exists (otherwise we silently fall back to the default to avoid orphan references).
+ */
+export function resolveHabitProjectId(
+    habit: Habit,
+    defaultProjectId: string,
+    projects: TodoistProject[],
+): string {
+    if (habit.todoistProjectId && projects.some((p) => p.id === habit.todoistProjectId)) {
+        return habit.todoistProjectId;
+    }
+    return defaultProjectId;
+}
+
+/**
+ * Sync a stabilizer Habit to Todoist as a recurring task. Caller resolves the target
+ * project id (via `ensureHabitsProject` + `resolveHabitProjectId`) so a batch operation
+ * can resolve once and reuse the id across iterations.
  *
- * Returns the resulting todoistTaskId (existing or new) on success; null on failure.
+ * - If the habit has no `todoistTaskId`: creates a new recurring task in `projectId`.
+ * - If a task exists but in a different project: moves it via the Sync API.
+ * - Always pushes the latest content / due_string / duration onto the existing task.
+ *
+ * Returns the resulting todoistTaskId on success; null on failure.
  */
 export async function syncHabitToTodoist(args: {
     habit: Habit;
+    projectId: string;
     actions: TodoistActionsValue;
-    settings: AppSettings;
-    projects: TodoistProject[];
     taskMap: Map<string, TodoistTask>;
-    onUpdateSettings: (updates: Partial<AppSettings>) => void;
 }): Promise<string | null> {
-    const { habit, actions, settings, projects, taskMap, onUpdateSettings } = args;
+    const { habit, projectId, actions, taskMap } = args;
     if (habit.kind !== 'stabilizer') return null;
 
     const dueString = buildDueString(habit);
@@ -92,6 +115,10 @@ export async function syncHabitToTodoist(args: {
 
     const existing = habit.todoistTaskId ? taskMap.get(habit.todoistTaskId) : undefined;
     if (existing) {
+        if (existing.project_id !== projectId) {
+            const moved = await actions.moveTask(existing.id, projectId);
+            if (!moved) return null;
+        }
         await actions.updateTask(existing.id, {
             content: habit.name,
             due_string: dueString,
@@ -100,9 +127,6 @@ export async function syncHabitToTodoist(args: {
         });
         return existing.id;
     }
-
-    const projectId = await ensureHabitsProject({ actions, settings, projects, onUpdateSettings });
-    if (!projectId) return null;
 
     const created = await actions.createTask(habit.name, {
         project_id: projectId,

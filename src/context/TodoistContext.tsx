@@ -106,6 +106,7 @@ export interface TodoistDataValue {
 export interface TodoistActionsValue {
     createTask: (content: string, opts?: CreateTaskOpts) => Promise<TodoistTask | null>;
     updateTask: (taskId: string, updates: UpdateTaskOpts) => Promise<void>;
+    moveTask: (taskId: string, projectId: string) => Promise<boolean>;
     completeTask: (taskId: string) => Promise<void>;
     reopenTask: (taskId: string) => Promise<void>;
     deleteTask: (taskId: string) => Promise<void>;
@@ -364,6 +365,26 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [resolveToken, refreshTasks]);
 
+    const moveTask = useCallback(async (taskId: string, projectId: string): Promise<boolean> => {
+        const token = await resolveToken();
+        if (!token) return false;
+        try {
+            await apiFetch(token, '/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `commands=${encodeURIComponent(JSON.stringify([
+                    { type: 'item_move', uuid: crypto.randomUUID(), args: { id: taskId, project_id: projectId } },
+                ]))}`,
+            });
+            // Patch local cache so subsequent reads (e.g. capacity calc) see the new project_id.
+            setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, project_id: projectId } : t)));
+            return true;
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'Failed to move task');
+            return false;
+        }
+    }, [resolveToken]);
+
     const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts) => {
         const token = await resolveToken();
         if (!token) return;
@@ -434,9 +455,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     }), [tasks, projects, sections, taskMap, loading, error, isConfigured]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
-        createTask, updateTask, completeTask, reopenTask, deleteTask,
+        createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask,
         createProject, deleteProject, refreshTasks, refreshProjects, refreshSections,
-    }), [createTask, updateTask, completeTask, reopenTask, deleteTask,
+    }), [createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask,
         createProject, deleteProject, refreshTasks, refreshProjects, refreshSections]);
 
     return (

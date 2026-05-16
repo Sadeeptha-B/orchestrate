@@ -113,6 +113,7 @@ You set up a stabilizer Habit once (e.g., "Morning meditation", daily, 07:00, 10
 A few knobs in the form:
 - **Target time** (optional but recommended) — drives session auto-assignment.
 - **Duration** — pushed to Todoist as the task duration and used as the in-plan estimate.
+- **Todoist project** — pick which project this habit's recurring task lives in. Leave on "Use default" to use the workspace default you set in **Settings → Integrations → Default Habits Project** (which itself defaults to a lazily-created project named "Habits"). Changing the project on an already-synced habit *moves* the recurring task to the new project.
 - **Window behavior**:
   - *Surface anyway* (lenient, default) — show it whenever the Todoist task is due + unchecked, even if you're planning late.
   - *Hide for today* (strict) — if your planning time is already past `targetTime + duration`, drop it from today's plan. Streaks are preserved.
