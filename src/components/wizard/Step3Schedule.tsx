@@ -12,6 +12,7 @@ import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
+import { isHabitDerivedTask } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 export function Step3Schedule() {
@@ -32,9 +33,6 @@ export function Step3Schedule() {
         [plan.intentions],
     );
 
-    /** v6.1: orphan habit-tasks have no intention — `sourceHabitId` is the new "habit-derived" marker. */
-    const isHabitDerived = (lt: LinkedTask) => Boolean(lt.sourceHabitId);
-
     const mainTasksByIntention = useMemo(() => {
         const groups = new Map<string, LinkedTask[]>();
         for (const lt of mainTasks) {
@@ -49,7 +47,7 @@ export function Step3Schedule() {
     /** v6.1: orphan habit-tasks not yet assigned to any session live in this tray. */
     const unassignedHabitTasks = useMemo(
         () => plan.linkedTasks.filter(
-            (lt) => lt.sourceHabitId && !lt.completed && !lt.skippedForToday && lt.assignedSessions.length === 0,
+            (lt) => isHabitDerivedTask(lt) && !lt.completed && !lt.skippedForToday && lt.assignedSessions.length === 0,
         ),
         [plan.linkedTasks],
     );
@@ -158,7 +156,7 @@ export function Step3Schedule() {
                                         className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
                                         title={lt.intentionId ? intentionMap.get(lt.intentionId)?.title : 'Habit'}
                                     >
-                                        {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
+                                        {isHabitDerivedTask(lt) && '🔁 '}{getTaskLabel(lt)}
                                         {lt.assignedSessions.length > 0 && (
                                             <span className="ml-1 text-accent">
                                                 ({lt.assignedSessions.length} session{lt.assignedSessions.length !== 1 ? 's' : ''})
@@ -189,8 +187,8 @@ export function Step3Schedule() {
                         const unassignedMain = mainTasks.filter((lt) => lt.assignedSessions.length === 0);
                         const assignedBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
                         // v6.1: split assigned background by source — habit-derived render under a 🔁 Habits group.
-                        const assignedHabitBg = assignedBg.filter((lt) => lt.sourceHabitId);
-                        const assignedManualBg = assignedBg.filter((lt) => !lt.sourceHabitId);
+                        const assignedHabitBg = assignedBg.filter(isHabitDerivedTask);
+                        const assignedManualBg = assignedBg.filter((lt) => !isHabitDerivedTask(lt));
                         const unassignedBg = backgroundTasks.filter((lt) => !assignedIds.includes(lt.todoistId));
 
                         const assignedByIntention = new Map<string, LinkedTask[]>();
@@ -353,7 +351,7 @@ export function Step3Schedule() {
                                                     }
                                                     className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                 >
-                                                    + {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
+                                                    + {isHabitDerivedTask(lt) && '🔁 '}{getTaskLabel(lt)}
                                                 </button>
                                             ))}
                                         </div>
@@ -431,7 +429,7 @@ export function Step3Schedule() {
                                                 key={lt.todoistId}
                                                 className="px-2 py-0.5 text-[10px] rounded-full bg-surface-dark text-text-light"
                                             >
-                                                {isHabitDerived(lt) && '🔁 '}{getTaskLabel(lt)}
+                                                {isHabitDerivedTask(lt) && '🔁 '}{getTaskLabel(lt)}
                                             </span>
                                         ))}
                                         {sessionMain.length === 0 && sessionBg.length === 0 && (

@@ -3,7 +3,8 @@ import type { RestCue } from '../types';
 /**
  * v6 True Rest catalog — non-stimulating reset cues surfaced during low-energy / struggling
  * check-ins, on the Dashboard side rail, and between sessions. Not Habits: no completion
- * semantics, no streak, no logging. Just gentle prompts.
+ * semantics, no streak, no logging. Just gentle prompts. User-customized cues live in
+ * `LifeContext.restCues`; when that is undefined, these defaults are used.
  */
 export const restCues: RestCue[] = [
     { id: 'walk-5',         label: 'Walk 5 minutes — outside if possible',  durationHint: '5 min',  category: 'physical' },
@@ -15,14 +16,3 @@ export const restCues: RestCue[] = [
     { id: 'window-gaze',    label: 'Look out a window, focus on something far away', durationHint: '2 min',  category: 'sensory' },
     { id: 'silence',        label: 'Sit in silence — no phone, no music',   durationHint: '3 min',  category: 'sensory' },
 ];
-
-/**
- * Pick a cue deterministically (when `seed` is provided) or randomly (otherwise).
- * Pass a custom `cues` array to override the built-in catalog.
- * Deterministic mode is useful for surfaces that should not jitter on re-render.
- */
-export function pickRestCue(seed?: number, cues: RestCue[] = restCues): RestCue {
-    const pool = cues.length > 0 ? cues : restCues;
-    if (seed === undefined) return pool[Math.floor(Math.random() * pool.length)];
-    return pool[((seed % pool.length) + pool.length) % pool.length];
-}

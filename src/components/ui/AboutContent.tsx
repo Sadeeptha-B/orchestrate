@@ -31,8 +31,9 @@ export function AboutContent({ onOpenGuide }: AboutContentProps = {}) {
                 <strong className="text-text">Seasons</strong> are medium-horizon focus periods — a theme, supporting
                 goals, and an optional capacity budget that shape what you take on each day.{' '}
                 <strong className="text-text">Habits</strong> come in two kinds — <em>stabilizers</em> (sleep, gym,
-                deep-work rituals) that auto-inject into your daily intentions, and <em>light-coherent</em> habits
-                that surface in the <strong className="text-text">Light Pool</strong> as resumable micro-gap fillers.
+                deep-work rituals) that sync to Todoist as recurring tasks and land directly in the session containing
+                their target time, and <em>light-coherent</em> habits that surface in the{' '}
+                <strong className="text-text">Light Pool</strong> as resumable micro-gap fillers.
             </p>
             <p>
                 Together, they counter <strong className="text-text">task blindness and time blindness</strong>:{' '}

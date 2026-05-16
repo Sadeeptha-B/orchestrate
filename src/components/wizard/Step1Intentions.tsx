@@ -9,6 +9,7 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
+import { getHabitTasksForDay } from '../../lib/habits';
 import { computeHabitTasksToInject } from '../../lib/habitsTodoistSync';
 import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
 import type { LinkedTask } from '../../types';
@@ -106,8 +107,8 @@ export function Step1Intentions() {
 
     // v6.1: count today's habit-tasks for an informational chip in Phase 1.
     const habitTaskCount = useMemo(
-        () => plan.linkedTasks.filter((lt) => lt.sourceHabitId).length,
-        [plan.linkedTasks],
+        () => getHabitTasksForDay(plan).length,
+        [plan],
     );
 
     const addIntention = () => {

@@ -121,7 +121,8 @@ export function LifeView() {
                     </div>
                     {activeHabits.length === 0 ? (
                         <p className="text-sm text-text-light italic">
-                            None active. Active habits appear as intentions in your daily wizard.
+                            None active. Stabilizers surface as session-assigned tasks each day they're due;
+                            light-coherent habits live in the Light Pool.
                         </p>
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">

@@ -5,6 +5,7 @@ import type { TodoistTask, TodoistProject, TodoistSection } from '../../hooks/us
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { addMinutesToTime, timeToMinutes, todayISO } from '../../lib/time';
 import { collectDescendantIds } from '../../lib/tasks';
+import { isHabitDerivedTask } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 // --- Todoist color map (color name → hex) ---
@@ -859,12 +860,12 @@ function TaskRow({
     const isLinkedToCurrentIntention = linking?.linkedTaskIds.includes(task.id) ?? false;
     // v6.1: detect orphan habit-tasks so the Link affordance hides in favor of a 🔁 Habit label.
     const habitRecord = linking?.allLinkedTasks.find(
-        (lt) => lt.todoistId === task.id && lt.sourceHabitId,
+        (lt) => lt.todoistId === task.id && isHabitDerivedTask(lt),
     );
     const linkedToOther = linking
         ? linking.allLinkedTasks.find(
             (lt) => lt.todoistId === task.id
-                && !lt.sourceHabitId
+                && !isHabitDerivedTask(lt)
                 && lt.intentionId !== undefined
                 && lt.intentionId !== linking.linkingIntentionId,
         )

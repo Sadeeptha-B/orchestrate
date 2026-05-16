@@ -140,7 +140,8 @@ export function Step2Refine() {
                     <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                         <p className="text-xs text-blue-900 dark:text-blue-200">
                             <strong>💡 Tip:</strong> Main tasks are primary work threads (30+ min).
-                            Background tasks are habits/nudges with a short cap (per-kind default, override per habit) — they can be scheduled multiple times.
+                            Background tasks are small nudges with a short cap — they can be scheduled across multiple sessions.
+                            Stabilizer habits skip this step entirely.
                         </p>
                     </div>
 

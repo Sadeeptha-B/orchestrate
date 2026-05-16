@@ -20,6 +20,10 @@ interface HabitFormProps {
     todoistProjects?: TodoistProject[];
     /** v6.1: name of the workspace default project, shown next to the "Use default" option. */
     defaultProjectName?: string;
+    /** Optional: trigger a refresh of the Todoist project list. When provided, renders a refresh affordance. */
+    onRefreshProjects?: () => void;
+    /** True while a project-list refresh is in flight; disables the refresh affordance and shows a label. */
+    refreshingProjects?: boolean;
     submitLabel?: string;
     onSubmit: (draft: HabitDraft) => void;
     onCancel?: () => void;
@@ -32,6 +36,8 @@ export function HabitForm({
     seasons,
     todoistProjects = [],
     defaultProjectName,
+    onRefreshProjects,
+    refreshingProjects,
     submitLabel = 'Save Habit',
     onSubmit,
     onCancel,
@@ -79,6 +85,14 @@ export function HabitForm({
     const showDayPicker = recurrenceKind === 'weekly' || recurrenceKind === 'custom';
     const isStabilizer = kind === 'stabilizer';
     const canSubmit = name.trim().length > 0;
+
+    // v6.1: detect a stale per-habit override — the project this habit previously pointed at
+    // no longer exists in Todoist (deleted out-of-band). We only flag once a project list is loaded.
+    const overrideIsStale = Boolean(
+        todoistProjectId
+            && todoistProjects.length > 0
+            && !todoistProjects.some((p) => p.id === todoistProjectId),
+    );
 
     const handleSubmit = () => {
         if (!canSubmit) return;
@@ -222,10 +236,29 @@ export function HabitForm({
                     </div>
                     {todoistProjects.length > 0 && (
                         <div>
-                            <label className={labelClass}>Todoist project</label>
+                            <div className="flex items-center justify-between">
+                                <label className={labelClass}>Todoist project</label>
+                                {onRefreshProjects && (
+                                    <button
+                                        type="button"
+                                        onClick={onRefreshProjects}
+                                        disabled={refreshingProjects}
+                                        className="text-[11px] text-text-light hover:text-accent cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                        title="Re-fetch your Todoist project list"
+                                    >
+                                        {refreshingProjects ? 'Refreshing…' : '↻ Refresh'}
+                                    </button>
+                                )}
+                            </div>
+                            {overrideIsStale && (
+                                <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
+                                    ⚠ The previously-selected project no longer exists in Todoist.
+                                    Saving will fall back to the workspace default.
+                                </p>
+                            )}
                             <select
                                 className={inputClass}
-                                value={todoistProjectId}
+                                value={overrideIsStale ? '' : todoistProjectId}
                                 onChange={(e) => setTodoistProjectId(e.target.value)}
                             >
                                 <option value="">

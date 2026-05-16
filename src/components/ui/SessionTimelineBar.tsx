@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { timeToMinutes } from '../../lib/time';
 import { getTaskTitle } from '../../lib/tasks';
+import { isHabitDerivedTask } from '../../lib/habits';
 import type { LinkedTask, SessionSlot } from '../../types';
 import type { SessionCapacity } from '../../lib/capacity';
 import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
@@ -170,17 +171,14 @@ export function SessionTimelineBar({
                                         {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
-                                {sessionBg.map((lt) => {
-                                    const isHabitDerived = Boolean(lt.sourceHabitId);
-                                    return (
-                                        <span
-                                            key={lt.todoistId}
-                                            className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
-                                        >
-                                            {lt.completed ? '🎉 ' : isHabitDerived ? '🔁 ' : ''}{titleFor(lt.todoistId)}
-                                        </span>
-                                    );
-                                })}
+                                {sessionBg.map((lt) => (
+                                    <span
+                                        key={lt.todoistId}
+                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
+                                    >
+                                        {lt.completed ? '🎉 ' : isHabitDerivedTask(lt) ? '🔁 ' : ''}{titleFor(lt.todoistId)}
+                                    </span>
+                                ))}
                                 {sessionMain.length === 0 && sessionBg.length === 0 && (
                                     <span className="text-[9px] text-text-light">Empty</span>
                                 )}
