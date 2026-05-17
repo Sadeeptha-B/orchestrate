@@ -15,9 +15,10 @@ import type {
     Season,
     Habit,
     HabitLogEntry,
-    HabitTaskInjection,
     RestCue,
     BacklogEntry,
+    TodaysHabitInstance,
+    EngagementRecord,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 import { todayISO } from '../lib/time';
@@ -35,7 +36,7 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-const SCHEMA_VERSION = 6.2;
+const SCHEMA_VERSION = 6.3;
 /** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
 const WIZARD_STEPS_COUNT = 4;
 
@@ -44,6 +45,7 @@ function freshPlan(): DayPlan {
         date: todayISO(),
         intentions: [],
         linkedTasks: [],
+        todaysHabits: [],
         taskSessions: {},
         wizardStep: 1,
         setupComplete: false,
@@ -115,33 +117,76 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
 
     // --- v2/v3 → v4: if plan has intentionSessions but no taskSessions/linkedTasks ---
     if (Array.isArray(raw.linkedTasks) && raw.taskSessions !== undefined) {
-        // Already v4 shape — ensure estimatedMinutes exists on all LinkedTask entries (v4.1 migration).
-        // v6.1: re-anchor any tasks under a (now removed) habit-derived intention as orphans
-        // with `sourceHabitId` set + type 'background'.
-        const migratedLinkedTasks = (raw.linkedTasks as Array<Record<string, unknown>>).map((lt) => {
+        // Already v4+ shape. v6.3: stabilizers leave LinkedTask entirely — any row with
+        // `sourceHabitId` (legacy v6.1/v6.2 shape, or rebuilt via the habit-derived-intention
+        // path above) becomes a synthetic TodaysHabitInstance, then is dropped from linkedTasks.
+        const harvestedInstances: TodaysHabitInstance[] = [];
+        const droppedHabitTaskIds = new Set<string>();
+        const v62LinkedTasks: Array<Record<string, unknown>> = [];
+        for (const lt of raw.linkedTasks as Array<Record<string, unknown>>) {
             const intentionId = lt.intentionId as string | undefined;
-            const habitId = intentionId ? habitIdByIntentionId.get(intentionId) : undefined;
+            const inferredHabitId = intentionId ? habitIdByIntentionId.get(intentionId) : undefined;
+            const habitId = (lt.sourceHabitId as string | undefined) ?? inferredHabitId;
             if (habitId) {
-                return {
-                    todoistId: lt.todoistId as string,
-                    sourceHabitId: habitId,
-                    type: 'background' as const,
-                    assignedSessions: (lt.assignedSessions as string[]) ?? [],
-                    completed: (lt.completed as boolean) ?? false,
-                    estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
-                    ...(lt.titleSnapshot ? { titleSnapshot: lt.titleSnapshot as string } : {}),
-                } satisfies LinkedTask;
+                const todoistId = lt.todoistId as string;
+                droppedHabitTaskIds.add(todoistId);
+                const completed = (lt.completed as boolean) ?? false;
+                const skipped = (lt.skippedForToday as boolean) ?? false;
+                harvestedInstances.push({
+                    id: crypto.randomUUID(),
+                    habitId,
+                    todoistTaskId: todoistId,
+                    titleSnapshot: (lt.titleSnapshot as string | undefined) ?? todoistId,
+                    durationMinutes: (lt.estimatedMinutes as number | null) ?? 30,
+                    status: completed ? 'completed' : skipped ? 'skipped' : 'planned',
+                });
+                continue;
             }
-            return {
-                ...(lt as unknown as LinkedTask),
+            v62LinkedTasks.push(lt);
+        }
+
+        // v6.3: stamp `status` on remaining LinkedTasks (mirror of `completed`).
+        const migratedLinkedTasks: LinkedTask[] = v62LinkedTasks.map((lt) => {
+            const completed = (lt.completed as boolean) ?? false;
+            const out: LinkedTask = {
+                todoistId: lt.todoistId as string,
+                intentionId: lt.intentionId as string | undefined,
+                type: (lt.type as LinkedTask['type']) ?? 'unclassified',
+                assignedSessions: (lt.assignedSessions as string[]) ?? [],
+                completed,
                 estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
+                status: (lt.status as LinkedTask['status']) ?? (completed ? 'completed' : 'pending'),
+                ...(lt.titleSnapshot ? { titleSnapshot: lt.titleSnapshot as string } : {}),
+                ...(lt.engagement ? { engagement: lt.engagement as EngagementRecord } : {}),
+                ...(lt.rescheduledFromTodoistId ? { rescheduledFromTodoistId: lt.rescheduledFromTodoistId as string } : {}),
+                ...(lt.rescheduledAt ? { rescheduledAt: lt.rescheduledAt as string } : {}),
             };
+            return out;
         });
+
+        const rawTaskSessions = raw.taskSessions as Record<string, string[]>;
+        const taskSessions = droppedHabitTaskIds.size > 0
+            ? Object.fromEntries(
+                Object.entries(rawTaskSessions).map(([sid, ids]) => [
+                    sid,
+                    ids.filter((id) => !droppedHabitTaskIds.has(id)),
+                ]),
+            )
+            : rawTaskSessions;
+
+        const existingTodaysHabits = (raw.todaysHabits as TodaysHabitInstance[] | undefined) ?? [];
+        const knownHabitIds = new Set(existingTodaysHabits.map((i) => i.habitId));
+        const todaysHabits = [
+            ...existingTodaysHabits,
+            ...harvestedInstances.filter((i) => !knownHabitIds.has(i.habitId)),
+        ];
+
         return {
             date: raw.date as string,
             intentions,
             linkedTasks: migratedLinkedTasks,
-            taskSessions: raw.taskSessions as Record<string, string[]>,
+            todaysHabits,
+            taskSessions,
             wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
             setupComplete: (raw.setupComplete as boolean) ?? false,
             checkIns: (raw.checkIns ?? []) as CheckIn[],
@@ -158,6 +203,7 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         date: raw.date as string,
         intentions,
         linkedTasks: [],
+        todaysHabits: [],
         taskSessions: {},
         wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
@@ -343,15 +389,24 @@ function removeLinkedTasksFromPlan(
     };
 }
 
-function detachHabitOwnership(task: LinkedTask, intentionId: string): LinkedTask {
+function setIntentionOwner(task: LinkedTask, intentionId: string): LinkedTask {
+    return { ...task, intentionId };
+}
+
+/**
+ * v6.3: close an open engagement record. If the record already has an `endedAt`, returns it unchanged.
+ * Otherwise stamps `endedAt = nowISO` and adds the elapsed minutes to `totalMinutes`.
+ */
+function closeEngagement(record: EngagementRecord, nowISO: string): EngagementRecord {
+    if (record.endedAt) return record;
+    const elapsed = Math.max(
+        0,
+        Math.round((Date.parse(nowISO) - Date.parse(record.startedAt)) / 60000),
+    );
     return {
-        todoistId: task.todoistId,
-        intentionId,
-        type: task.type,
-        assignedSessions: task.assignedSessions,
-        completed: task.completed,
-        estimatedMinutes: task.estimatedMinutes,
-        ...(task.titleSnapshot ? { titleSnapshot: task.titleSnapshot } : {}),
+        ...record,
+        endedAt: nowISO,
+        totalMinutes: (record.totalMinutes ?? 0) + elapsed,
     };
 }
 
@@ -395,8 +450,6 @@ type Action =
     | { type: 'UPDATE_HABIT'; habit: Habit }
     | { type: 'DELETE_HABIT'; habitId: string }
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
-    | { type: 'INJECT_HABIT_TASKS'; entries: HabitTaskInjection[] }
-    | { type: 'SKIP_HABIT_TASK'; todoistId: string }
     | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
     // ---- v6: Light Pool log actions ----
     | { type: 'LOG_HABIT_START'; habitId: string; sessionId?: string }
@@ -409,8 +462,18 @@ type Action =
     | { type: 'REPLACE_REST_CUES'; cues: RestCue[] | undefined }
     // ---- v6.2: Intentions backlog ----
     | { type: 'MOVE_INTENTION_TO_BACKLOG'; intentionId: string; reason?: BacklogEntry['reason'] }
-    | { type: 'RESTORE_FROM_BACKLOG'; backlogId: string; taskCache: Record<string, string> }
-    | { type: 'DELETE_BACKLOG_ENTRY'; backlogId: string };
+    | { type: 'RESTORE_FROM_BACKLOG'; backlogId: string; taskCache: Record<string, string>; now?: string }
+    | { type: 'DELETE_BACKLOG_ENTRY'; backlogId: string }
+    // ---- v6.3: TodaysHabitInstance lifecycle ----
+    | { type: 'REFRESH_TODAYS_HABITS'; instances: TodaysHabitInstance[] }
+    | { type: 'START_HABIT_INSTANCE'; instanceId: string; now: string }
+    | { type: 'STOP_HABIT_INSTANCE'; instanceId: string; now: string }
+    | { type: 'COMPLETE_HABIT_INSTANCE'; instanceId: string; now: string }
+    | { type: 'SKIP_HABIT_INSTANCE'; instanceId: string }
+    | { type: 'RESCHEDULE_HABIT_INSTANCE'; instanceId: string; newTargetTime?: string; now: string }
+    // ---- v6.3: Task engagement ----
+    | { type: 'START_TASK_ENGAGEMENT'; todoistId: string; now: string }
+    | { type: 'STOP_TASK_ENGAGEMENT'; todoistId: string; now: string };
 
 interface State {
     plan: DayPlan;
@@ -488,7 +551,7 @@ function reducer(state: State, action: Action): State {
             const { intentionId, todoistId } = action;
             // If already linked to another intention, move it.
             let linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === todoistId ? detachHabitOwnership(lt, intentionId) : lt,
+                lt.todoistId === todoistId ? setIntentionOwner(lt, intentionId) : lt,
             );
             const intentions = plan.intentions.map((i) => {
                 if (i.id === intentionId) {
@@ -589,15 +652,21 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'TOGGLE_TASK_COMPLETE': {
-            const linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === action.todoistId
-                    ? {
-                        ...lt,
-                        completed: !lt.completed,
-                        ...(action.titleSnapshot ? { titleSnapshot: action.titleSnapshot } : {}),
-                    }
-                    : lt,
-            );
+            const nowISO = new Date().toISOString();
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId) return lt;
+                const completed = !lt.completed;
+                const engagement = lt.engagement && !lt.engagement.endedAt
+                    ? closeEngagement(lt.engagement, nowISO)
+                    : lt.engagement;
+                return {
+                    ...lt,
+                    completed,
+                    status: completed ? ('completed' as const) : ('pending' as const),
+                    ...(engagement ? { engagement } : {}),
+                    ...(action.titleSnapshot ? { titleSnapshot: action.titleSnapshot } : {}),
+                };
+            });
             return { ...state, plan: { ...plan, linkedTasks } };
         }
 
@@ -742,15 +811,12 @@ function reducer(state: State, action: Action): State {
             // Anchor habits cannot be deleted while active — caller must deactivate first.
             if (habit?.isAnchor && habit.active) return state;
             const habits = state.life.habits.filter((h) => h.id !== action.habitId);
-            // v6.1: also drop any orphan habit-tasks belonging to this habit from today's plan.
-            const { linkedTasks, taskSessions } = removeLinkedTasksFromPlan(
-                plan,
-                (task) => task.sourceHabitId === action.habitId,
-            );
+            // v6.3: also drop today's instances for this habit from `plan.todaysHabits`.
+            const todaysHabits = plan.todaysHabits.filter((i) => i.habitId !== action.habitId);
             return {
                 ...state,
                 life: { ...state.life, habits },
-                plan: { ...plan, linkedTasks, taskSessions },
+                plan: { ...plan, todaysHabits },
             };
         }
 
@@ -761,56 +827,107 @@ function reducer(state: State, action: Action): State {
             return { ...state, life: { ...state.life, habits } };
         }
 
-        case 'INJECT_HABIT_TASKS': {
-            // v6.1: append habit-tasks pre-computed by `computeHabitTasksToInject`. Idempotent —
-            // any entry whose `habitId` is already present in `plan.linkedTasks` is skipped.
-            const existingHabitIds = new Set(
-                plan.linkedTasks
-                    .map((lt) => lt.sourceHabitId)
-                    .filter((id): id is string => Boolean(id)),
-            );
-            const fresh = action.entries.filter((e) => !existingHabitIds.has(e.habitId));
+        case 'REFRESH_TODAYS_HABITS': {
+            // v6.3: idempotent merge by habitId. Preserves any existing instance for a given habit
+            // (engaged/completed/unfinished/skipped state lives only here). Only adds new ones.
+            const knownHabitIds = new Set(plan.todaysHabits.map((i) => i.habitId));
+            const fresh = action.instances.filter((i) => !knownHabitIds.has(i.habitId));
             if (fresh.length === 0) return state;
-            const newTasks: LinkedTask[] = fresh.map((e) => ({
-                todoistId: e.todoistId,
-                sourceHabitId: e.habitId,
-                type: 'background',
-                assignedSessions: e.sessionId ? [e.sessionId] : [],
-                completed: false,
-                estimatedMinutes: e.estimatedMinutes,
-                titleSnapshot: e.name,
-            }));
-            const taskSessions = { ...plan.taskSessions };
-            for (const e of fresh) {
-                if (e.sessionId) {
-                    const current = taskSessions[e.sessionId] ?? [];
-                    if (!current.includes(e.todoistId)) {
-                        taskSessions[e.sessionId] = [...current, e.todoistId];
-                    }
-                }
-            }
             return {
                 ...state,
-                plan: {
-                    ...plan,
-                    linkedTasks: [...plan.linkedTasks, ...newTasks],
-                    taskSessions,
-                },
+                plan: { ...plan, todaysHabits: [...plan.todaysHabits, ...fresh] },
             };
         }
 
-        case 'SKIP_HABIT_TASK': {
-            // v6.1: mark a habit-task as skipped for today. The LinkedTask is kept so
-            // `computeHabitTasksToInject` (which dedupes by sourceHabitId presence) won't
-            // re-add it later in the same day. `completed` stays false — a skip is a deliberate
-            // "not today", not a completion, and shouldn't inflate the done-counter.
-            const linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === action.todoistId && lt.sourceHabitId
-                    ? { ...lt, skippedForToday: true, assignedSessions: [] }
-                    : lt,
+        case 'START_HABIT_INSTANCE': {
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId) return i;
+                const engagement: EngagementRecord = i.engagement
+                    ? { ...i.engagement, endedAt: undefined }
+                    : { startedAt: action.now };
+                return { ...i, status: 'engaged' as const, engagement };
+            });
+            return { ...state, plan: { ...plan, todaysHabits } };
+        }
+
+        case 'STOP_HABIT_INSTANCE': {
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId || !i.engagement) return i;
+                const engagement = closeEngagement(i.engagement, action.now);
+                return { ...i, engagement };
+            });
+            return { ...state, plan: { ...plan, todaysHabits } };
+        }
+
+        case 'COMPLETE_HABIT_INSTANCE': {
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId) return i;
+                const engagement = i.engagement && !i.engagement.endedAt
+                    ? closeEngagement(i.engagement, action.now)
+                    : i.engagement;
+                return {
+                    ...i,
+                    status: 'completed' as const,
+                    completedAt: action.now,
+                    ...(engagement ? { engagement } : {}),
+                };
+            });
+            return { ...state, plan: { ...plan, todaysHabits } };
+        }
+
+        case 'SKIP_HABIT_INSTANCE': {
+            const todaysHabits = plan.todaysHabits.map((i) =>
+                i.id === action.instanceId ? { ...i, status: 'skipped' as const } : i,
             );
-            const taskSessions = removeTaskIdsFromSessions(plan.taskSessions, [action.todoistId]);
-            return { ...state, plan: { ...plan, linkedTasks, taskSessions } };
+            return { ...state, plan: { ...plan, todaysHabits } };
+        }
+
+        case 'RESCHEDULE_HABIT_INSTANCE': {
+            const predecessor = plan.todaysHabits.find((i) => i.id === action.instanceId);
+            if (!predecessor) return state;
+            const wasEngaged = Boolean(predecessor.engagement);
+            const predecessorEngagement = wasEngaged && predecessor.engagement && !predecessor.engagement.endedAt
+                ? closeEngagement(predecessor.engagement, action.now)
+                : predecessor.engagement;
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId) return i;
+                return {
+                    ...i,
+                    status: (wasEngaged ? 'unfinished' : 'skipped') as 'unfinished' | 'skipped',
+                    ...(predecessorEngagement ? { engagement: predecessorEngagement } : {}),
+                };
+            });
+            const successor: TodaysHabitInstance = {
+                id: crypto.randomUUID(),
+                habitId: predecessor.habitId,
+                todoistTaskId: predecessor.todoistTaskId,
+                titleSnapshot: predecessor.titleSnapshot,
+                durationMinutes: predecessor.durationMinutes,
+                ...(action.newTargetTime ? { targetTime: action.newTargetTime } : {}),
+                status: 'planned',
+                rescheduledFromId: predecessor.id,
+                rescheduledAt: action.now,
+            };
+            return { ...state, plan: { ...plan, todaysHabits: [...todaysHabits, successor] } };
+        }
+
+        case 'START_TASK_ENGAGEMENT': {
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId) return lt;
+                const engagement: EngagementRecord = lt.engagement
+                    ? { ...lt.engagement, endedAt: undefined }
+                    : { startedAt: action.now };
+                return { ...lt, status: 'engaged' as const, engagement };
+            });
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'STOP_TASK_ENGAGEMENT': {
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId || !lt.engagement) return lt;
+                return { ...lt, engagement: closeEngagement(lt.engagement, action.now) };
+            });
+            return { ...state, plan: { ...plan, linkedTasks } };
         }
 
         // ---- v6: Light Pool log actions ----
@@ -935,7 +1052,8 @@ function reducer(state: State, action: Action): State {
             if (plan.intentions.some((i) => i.id === entry.intention.id)) {
                 return { ...state, life: { ...state.life, backlog: backlog.filter((e) => e.id !== action.backlogId) } };
             }
-            const restoredTasks = rebuildLinkedTasksForBacklogEntry(entry, action.taskCache);
+            const nowISO = action.now ?? new Date().toISOString();
+            const restoredTasks = rebuildLinkedTasksForBacklogEntry(entry, action.taskCache, nowISO);
             // Avoid re-introducing a LinkedTask for any todoistId already in the plan (e.g. linked to a different intention).
             const existingTaskIds = new Set(plan.linkedTasks.map((lt) => lt.todoistId));
             const freshTasks = restoredTasks.filter((lt) => !existingTaskIds.has(lt.todoistId));

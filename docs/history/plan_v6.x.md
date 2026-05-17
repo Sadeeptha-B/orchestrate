@@ -1,9 +1,10 @@
-# Plan v6.x — Habit-as-Task Decoupling (v6.1) + Intentions Backlog (v6.2)
+# Plan v6.x — Habit-as-Task Decoupling (v6.1) + Intentions Backlog (v6.2) + Habit/Session Decoupling (v6.3)
 
 > Frozen post-implementation plan. The living docs ([synthesis.md](../synthesis.md), [data-model.md](../data-model.md), [architecture.md](../architecture.md), [user-guide.md](../user-guide.md)) reflect the result. This document preserves the *narrative* of how the v6.1 and v6.2 point-releases were designed and what tradeoffs were made.
 >
 > - **v6.1** — Habit-as-Task Decoupling (below)
 > - **v6.2** — Intentions Backlog + Todoist unschedule-on-discard ([jump](#v62--intentions-backlog--todoist-unschedule-on-discard))
+> - **v6.3** — Full Habit/Session Decoupling (TodaysHabitInstance) + Task Engagement & Reschedule Records → see [plan_v6.3.md](./plan_v6.3.md). Supersedes v6.1's "stabilizer-as-orphan-LinkedTask" carrier; stabilizers now live on `plan.todaysHabits` as their own type.
 
 # v6.1 — Habit-as-Task Decoupling
 

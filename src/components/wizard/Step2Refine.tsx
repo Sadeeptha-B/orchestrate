@@ -141,7 +141,6 @@ export function Step2Refine() {
                         <p className="text-xs text-blue-900 dark:text-blue-200">
                             <strong>💡 Tip:</strong> Main tasks are primary work threads (30+ min).
                             Background tasks are small nudges with a short cap — they can be scheduled across multiple sessions.
-                            Stabilizer habits skip this step entirely.
                         </p>
                     </div>
 

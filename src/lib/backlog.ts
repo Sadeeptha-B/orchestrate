@@ -1,19 +1,15 @@
-import type { BacklogEntry, DayPlan, Intention, LinkedTask } from '../types';
+import type { BacklogEntry, DayPlan, EngagementRecord, Intention, LinkedTask } from '../types';
 import { buildLinkedTaskMap } from './tasks';
 
 /**
- * v6.2: returns true when an intention has at least one *intention-bound* linked task
+ * v6.2: returns true when an intention has at least one intention-bound linked task
  * that isn't yet completed. Empty-linked-task intentions are NOT considered unfinished —
- * there's nothing to recover. Habit-derived orphan tasks are intentionally ignored:
- * they belong to recurring Todoist tasks, not the parked intention.
+ * there's nothing to recover.
  */
 export function hasUnfinishedWork(intention: Intention, plan: DayPlan): boolean {
     if (intention.linkedTaskIds.length === 0) return false;
     return plan.linkedTasks.some(
-        (lt) =>
-            lt.intentionId === intention.id &&
-            !lt.sourceHabitId &&
-            !lt.completed,
+        (lt) => lt.intentionId === intention.id && !lt.completed,
     );
 }
 
@@ -39,6 +35,7 @@ export function buildBacklogEntry(
     const pendingIds: string[] = [];
     const taskSnapshots: Record<string, string> = {};
     const completedTaskTitles: string[] = [];
+    const unfinishedTaskRecords: Record<string, EngagementRecord> = {};
 
     for (const id of intention.linkedTaskIds) {
         const lt = linkedTaskMap.get(id);
@@ -48,6 +45,8 @@ export function buildBacklogEntry(
         }
         pendingIds.push(id);
         if (lt?.titleSnapshot) taskSnapshots[id] = lt.titleSnapshot;
+        // v6.3: preserve engagement memo for pending tasks the user engaged with.
+        if (lt?.engagement) unfinishedTaskRecords[id] = lt.engagement;
     }
 
     return {
@@ -58,6 +57,7 @@ export function buildBacklogEntry(
         reason,
         ...(Object.keys(taskSnapshots).length > 0 ? { taskSnapshots } : {}),
         ...(completedTaskTitles.length > 0 ? { completedTaskTitles } : {}),
+        ...(Object.keys(unfinishedTaskRecords).length > 0 ? { unfinishedTaskRecords } : {}),
     };
 }
 
@@ -76,14 +76,21 @@ export function harvestStalePlan(plan: DayPlan): BacklogEntry[] {
  * Fresh state — no categorization, no estimate, no assignment, not completed.
  * `taskCache` is the live Todoist title map (todoistId → content); falls back to
  * the entry's captured `taskSnapshots`, then to the id itself as a last resort.
+ *
+ * v6.3: rebuilt rows whose id had an engagement record at archive time get stamped
+ * with `rescheduledFromTodoistId` + `rescheduledAt` (engagement memo stays read-only
+ * on the BacklogEntry — it's not transferred to the successor).
  */
 export function rebuildLinkedTasksForBacklogEntry(
     entry: BacklogEntry,
     taskCache: Record<string, string>,
+    nowISO: string,
 ): LinkedTask[] {
+    const unfinished = entry.unfinishedTaskRecords ?? {};
     return entry.intention.linkedTaskIds.map((todoistId) => {
         const titleSnapshot =
             taskCache[todoistId] ?? entry.taskSnapshots?.[todoistId];
+        const wasEngaged = todoistId in unfinished;
         return {
             todoistId,
             intentionId: entry.intention.id,
@@ -91,7 +98,9 @@ export function rebuildLinkedTasksForBacklogEntry(
             assignedSessions: [],
             completed: false,
             estimatedMinutes: null,
+            status: 'pending' as const,
             ...(titleSnapshot ? { titleSnapshot } : {}),
+            ...(wasEngaged ? { rescheduledFromTodoistId: todoistId, rescheduledAt: nowISO } : {}),
         };
     });
 }

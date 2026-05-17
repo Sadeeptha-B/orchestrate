@@ -19,6 +19,7 @@ import { HeaderControls } from '../ui/HeaderControls';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
 import { LightPoolPanel } from './LightPoolPanel';
+import { HabitInstanceCard } from './HabitInstanceCard';
 import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 
@@ -39,6 +40,8 @@ export function Dashboard() {
     const backlogCount = life.backlog?.length ?? 0;
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const [calendarOpen, setCalendarOpen] = useState(false);
+    // Shared between the timeline (click to pin) and the carousel (prev/next, ↩ to unpin).
+    const [pinnedSessionId, setPinnedSessionId] = useState<string | null>(null);
 
     const { panelWidth, onMouseDown } = useResizablePanel();
 
@@ -165,12 +168,18 @@ export function Dashboard() {
                                 <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
                                     Timeline
                                 </h3>
-                                <SessionTimeline />
+                                <SessionTimeline
+                                    pinnedSessionId={pinnedSessionId}
+                                    onSelectSession={setPinnedSessionId}
+                                />
                             </div>
                             <aside className="lg:w-72 lg:flex-shrink-0 space-y-3">
                                 <SeasonContextCard />
                             </aside>
                         </div>
+
+                        {/* v6.3: Today's habits — independent of session assignment */}
+                        <HabitInstanceCard />
 
                         {/* Between-session True Rest cue (v6) — only when no active session and next within 60 min */}
                         {nextSessionStartsWithin(60) && <TrueRestCard variant="banner" />}
@@ -180,7 +189,10 @@ export function Dashboard() {
                             <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
                                 Current Session
                             </h3>
-                            <CurrentSession />
+                            <CurrentSession
+                                pinnedSessionId={pinnedSessionId}
+                                onPinnedChange={setPinnedSessionId}
+                            />
                         </div>
 
                         {/* Light Pool — micro-gap fillers (v6) */}

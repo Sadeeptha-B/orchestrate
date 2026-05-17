@@ -54,6 +54,19 @@ export function BacklogTab() {
             {entries.map((entry) => {
                 const pendingCount = entry.intention.linkedTaskIds.length;
                 const completedTitles = entry.completedTaskTitles ?? [];
+                const unfinishedRecords = entry.unfinishedTaskRecords ?? {};
+                const unfinishedIds = Object.keys(unfinishedRecords);
+                const unfinishedTotalMinutes = unfinishedIds.reduce(
+                    (sum, id) => sum + (unfinishedRecords[id].totalMinutes ?? 0),
+                    0,
+                );
+                const unfinishedTooltip = unfinishedIds
+                    .map((id) => {
+                        const title = entry.taskSnapshots?.[id] ?? id;
+                        const mins = unfinishedRecords[id].totalMinutes ?? 0;
+                        return `${title}: ${mins}m`;
+                    })
+                    .join('\n');
                 return (
                     <Card key={entry.id} className="!p-3">
                         <div className="space-y-2">
@@ -66,6 +79,14 @@ export function BacklogTab() {
                                     {' '}from {entry.archivedFromDate} &middot;
                                     {' '}{entry.reason === 'rollover' ? 'rolled over' : 'manual'}
                                 </p>
+                                {unfinishedIds.length > 0 && (
+                                    <p
+                                        className="text-xs text-amber-700 dark:text-amber-300"
+                                        title={unfinishedTooltip}
+                                    >
+                                        ✱ Engaged earlier: {unfinishedIds.length} task{unfinishedIds.length === 1 ? '' : 's'}, {unfinishedTotalMinutes}m
+                                    </p>
+                                )}
                                 {completedTitles.length > 0 && (
                                     <p
                                         className="text-xs text-text-light/70 truncate"

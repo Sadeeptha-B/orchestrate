@@ -9,7 +9,7 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
-import { computeHabitTasksToInject } from '../../lib/habitsTodoistSync';
+import { computeTodaysHabitInstances } from '../../lib/habitsTodoistSync';
 import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
 import type { LinkedTask } from '../../types';
 
@@ -17,24 +17,22 @@ export function Step1Intentions() {
     const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
 
-    // v6.1: surface today's stabilizer habit-tasks as orphan LinkedTasks (no intention).
-    // Re-fires when the Todoist cache changes size, habits/seasons change, or plan tasks
-    // change. The reducer's INJECT_HABIT_TASKS is idempotent so redundant dispatches are
-    // harmless no-ops (the effect runs once more after injection, finds nothing new, and stops).
+    // v6.3: surface today's stabilizer habits as TodaysHabitInstance entries on the timeline.
+    // Re-fires when the Todoist cache size, habits, active season, or existing instances change.
+    // REFRESH_TODAYS_HABITS dedupes by habitId, so redundant dispatches are harmless no-ops.
     useEffect(() => {
-        const entries = computeHabitTasksToInject({
+        const instances = computeTodaysHabitInstances({
             life,
             plan,
             taskMap,
-            sessionSlots: settings.sessionSlots,
             now: new Date(),
             taskCaps: settings.taskCapDefaults ?? DEFAULT_TASK_CAPS,
         });
-        if (entries.length > 0) {
-            dispatch({ type: 'INJECT_HABIT_TASKS', entries });
+        if (instances.length > 0) {
+            dispatch({ type: 'REFRESH_TODAYS_HABITS', instances });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [taskMap.size, life.habits, life.activeSeasonId, plan.linkedTasks, settings.sessionSlots, settings.taskCapDefaults, dispatch]);
+    }, [taskMap.size, life.habits, life.activeSeasonId, plan.todaysHabits, settings.taskCapDefaults, dispatch]);
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
@@ -106,10 +104,10 @@ export function Step1Intentions() {
         [plan.intentions],
     );
 
-    // v6.1: count today's habit-tasks for an informational chip in Phase 1.
+    // v6.3: count today's habit instances for an informational chip in Phase 1.
     const habitTaskCount = useMemo(
-        () => plan.linkedTasks.filter((lt) => Boolean(lt.sourceHabitId)).length,
-        [plan.linkedTasks],
+        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && i.status !== 'unfinished').length,
+        [plan.todaysHabits],
     );
 
     const addIntention = () => {
@@ -205,7 +203,7 @@ export function Step1Intentions() {
                                 <div className="rounded-md border border-accent/20 bg-accent-subtle/40 px-3 py-2 text-xs text-text-light flex items-center gap-2">
                                     <span aria-hidden>🔁</span>
                                     <span>
-                                        <strong className="text-accent">{habitTaskCount}</strong> habit task{habitTaskCount === 1 ? '' : 's'} scheduled for today — see Step 3.
+                                        <strong className="text-accent">{habitTaskCount}</strong> habit{habitTaskCount === 1 ? '' : 's'} will fire today — already on your timeline.
                                     </span>
                                 </div>
                             )}
@@ -549,6 +547,7 @@ export function Step1Intentions() {
                                 linkedTaskIds: currentMappingIntention.linkedTaskIds,
                                 allLinkedTasks: plan.linkedTasks,
                                 intentionTitles: intentionTitleMap,
+                                habitTodoistIds: new Set(plan.todaysHabits.map((i) => i.todoistTaskId)),
                                 onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentMappingIntention.id, todoistId }),
                                 onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
                             } : undefined}

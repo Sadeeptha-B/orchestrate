@@ -28,7 +28,7 @@ On top of that, there are **three ways work can flow** through your day, plus a 
                    └────────────────────────────────┘
 
       Deep Track       → Your main work: big tasks in dedicated session blocks
-      Stabilizer       → Your recurring rituals: synced to Todoist, session-slotted
+      Stabilizer       → Your recurring rituals: synced to Todoist, surfaced on the timeline at their target time (independent of sessions)
       Light Pool       → Your micro-gap fillers: logged when you pull them, never scheduled
 
       + Manual background  → Small today-only nudges inside an intention
@@ -56,7 +56,7 @@ A **Habit** is anything you want to do regularly — from morning meditation to 
 
 ### What kind of habit is it?
 
-- **Stabilizer** (`kind: 'stabilizer'`) — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate syncs these to Todoist as recurring tasks (in a dedicated Habits project) and surfaces them directly as session-assigned tasks each day they're due.
+- **Stabilizer** (`kind: 'stabilizer'`) — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate syncs these to Todoist as recurring tasks (in a dedicated Habits project) and surfaces them on the dashboard timeline at their target time (in a habit lane above the session blocks), with Start / Stop / Complete / Skip / Reschedule controls. Habits are *not* attached to a session — they live independently and don't burn session capacity.
 - **Light-coherent** (`kind: 'light-coherent'`) — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. These show up in the **Light Pool** on your dashboard — you pull from them when you're ready, and they're logged but never scheduled.
 
 ### How protected is it?
@@ -98,24 +98,31 @@ Create an Intention
 
 These are habits that automatically show up as tasks every day their recurrence rule matches. You don't have to remember to add "morning meditation" — Orchestrate creates a recurring Todoist task once, and from then on it surfaces in your plan whenever it's due.
 
-**The flow:**
+**The flow (v6.3):**
 ```
 You set up a stabilizer Habit once (e.g., "Morning meditation", daily, 07:00, 10 min)
   → Orchestrate creates a recurring Todoist task in the Habits project
      (with due_string like "every day at 7:00" and duration 10 min)
-  → each matching day, if the task is due and unchecked, it appears in your plan
-     as a session-assigned task — auto-placed in the session containing 07:00
-  → if it can't resolve a session, it lands in the "Unassigned habits" tray on Step 3
-  → completing it on the Dashboard syncs back to Todoist; tomorrow's recurrence
-     is auto-created by Todoist
+  → each matching day, if the task is due and unchecked, it appears as a
+     TodaysHabitInstance on your dashboard:
+       • on the timeline's habit lane at 07:00 (if a target time is set)
+       • or in the "Anytime today" cluster (if no target time)
+       • plus a row in the HabitInstanceCard with Start / Stop / Complete / Skip / Reschedule controls
+  → press ▶ when you begin → status flips to "engaged" and minutes accumulate
+  → press ✓ when done → instance flips to "completed" and the recurring Todoist task's
+     current occurrence is checked off
+  → missed it but you're planning late? On Step 3 Phase 2 or the dashboard, hit ⤴ Reschedule
+     to pick a later time today. A successor instance is added at the new time; the
+     original is recorded as "unfinished" (if you engaged) or "skipped" (if untouched).
+     The recurring Todoist task is *untouched* — your recurrence stays clean.
 ```
 
 A few knobs in the form:
-- **Target time** (optional but recommended) — drives session auto-assignment.
-- **Duration** — pushed to Todoist as the task duration and used as the in-plan estimate.
+- **Target time** (optional but recommended) — positions the instance on the timeline. Untimed habits float in the "Anytime today" cluster.
+- **Duration** — pushed to Todoist as the task duration and used as the displayed estimate / lane width.
 - **Todoist project** — pick which project this habit's recurring task lives in. Leave on "Use default" to use the workspace default you set in **Settings → Integrations → Default Habits Project** (which itself defaults to a lazily-created project named "Habits"). Changing the project on an already-synced habit *moves* the recurring task to the new project.
 - **Window behavior**:
-  - *Surface anyway* (lenient, default) — show it whenever the Todoist task is due + unchecked, even if you're planning late.
+  - *Surface anyway* (lenient, default) — show it whenever the Todoist task is due + unchecked, even if you're planning late. You can reschedule it to a later time today.
   - *Hide for today* (strict) — if your planning time is already past `targetTime + duration`, drop it from today's plan. Streaks are preserved.
 
 **Good for:** anchor-style rituals that need to live in a time slot.
@@ -354,7 +361,7 @@ Here's a concrete walk-through showing all the pieces in action.
 - Always-on light-coherent: *Idea capture freewrite*, *Duolingo session*.
 
 **Step 1 — Intentions:**
-- Stabilizer habit-tasks are *not* in the intention list. Instead, an inline chip says: *"4 habit tasks scheduled for today — see Step 3."*
+- Stabilizer habits are *not* in the intention list. Instead, an inline chip says: *"4 habits will fire today — already on your timeline."*
 - You add manually: *"Finish v6 capacity arithmetic"*, *"Read paper on session scheduling"*.
 - Light-coherent habits don't appear here either — they live in the Light Pool.
 
@@ -362,24 +369,25 @@ Here's a concrete walk-through showing all the pieces in action.
 - *Finish v6 capacity arithmetic* → main, 120 min.
 - *Read paper on session scheduling* → main, 60 min.
 - You add a manual background: *"Push WIP commit before lunch"*, 10 min.
-- Stabilizer habit-tasks bypass this step entirely — they already arrived as background tasks with their `targetDurationMinutes` estimate from injection.
+- Stabilizer habits aren't here — they live separately on the timeline.
 
 **Step 3 — Schedule:**
-- Early morning: 🔁 *Morning meditation* + 🔁 *Gym* (auto-assigned via Todoist due time).
-- Morning: *Finish v6 capacity arithmetic* (main).
-- Afternoon: *Read paper* (main) + 🔁 *Daily planning ritual* + *Push WIP commit* (background).
-- Night: 🔁 *Evening shutdown*.
-- Habit-tasks render under a "🔁 Habits" group inside each session card; if any habit-task lacks a Todoist time, it would sit in the "Unassigned habits" tray above the timeline for you to drop into a session.
-- Capacity badge shows the morning session is `tight` at 110%. You proceed — it's advisory.
+- Phase 1 (Assign): you assign your manual tasks to sessions. Habits already render in the dedicated habit lane above the session blocks (positioned by their target time). They are *not* assignable to sessions.
+- Phase 2 (Time): side-by-side Todoist + Calendar, plus a "Today's habits" panel listing each habit instance. Any lenient habit whose window has passed gets a ⤴ Reschedule affordance with a time-picker.
+- Capacity badge shows the morning session is `tight` at 110%. You proceed — it's advisory. (Habits do not count toward session capacity.)
 
 **During the day:**
+- The dashboard's habit lane shows 🔁 *Morning meditation* (07:00), 🔁 *Gym* (today's slot), 🔁 *Daily planning ritual* (14:00), 🔁 *Evening shutdown* (22:00). The `HabitInstanceCard` lists them with controls.
+- 7:02 AM — you press ▶ on Morning meditation, sit 12 minutes, press ✓. The pill turns into 🎉, the recurring Todoist task is checked off, tomorrow's occurrence is auto-created by Todoist.
+- For a main task you've started but need to pause, hit ■ on its TaskRow. Engagement minutes accumulate in case you bounce off it.
 - The Light Pool panel lists *Read one section*, *Algorithms warm-up*, *Idea capture*, *Duolingo*. Between morning and afternoon sessions, you pull *Algorithms warm-up* — Start, work for 12 minutes, Done. Logged to `habitLog`, doesn't touch the task graph.
 - Between-session True Rest banner: *"Walk 5 minutes — outside if possible."* No tracking.
 - 2:00 PM check-in: feeling *struggling*, work type *low-energy*. The modal shows a True Rest cue (*"Long-exhale breathing — 3 min"*) and a couple Light Pool rows. You try the breathing, then resume your main work.
 - 3:00 PM check-in: feeling *stuck*. The avoidance prompt appears. You write: *"The paper's math section — I don't have the prerequisites yet."* Saved for later reflection.
+- 6:30 PM — you realize you skipped Gym this morning. On the dashboard you press ⤴ Reschedule on the Gym row, pick 19:30. A new instance appears at 19:30 with `rescheduledFromId` pointing at the morning one; the morning one is recorded as `skipped`. The recurring Todoist task is untouched.
 
 **End of day:**
-- Stabilizer habit-tasks: 4/4 completed (synced to Todoist; tomorrow's recurrences auto-created by Todoist).
+- Stabilizer habit instances: 4/4 completed for today (the recurring Todoist tasks were checked off as you completed each).
 - Main tasks: 1.5/2 completed.
 - Light Pool log: 2 entries (algorithms warm-up and Duolingo; flashcards and reading skipped today).
 - True Rest: surfaced but untracked, as intended.

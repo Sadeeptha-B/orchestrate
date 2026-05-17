@@ -24,42 +24,88 @@ interface Intention {
 }
 ```
 
-**v6.1:** `sourceHabitId` and `skippedForToday` were removed — stabilizer habits no longer become intentions. On migration, any existing habit-derived intentions are dropped and their LinkedTasks are re-anchored as orphans with `sourceHabitId` set (see [§4: v6 → v6.1 migration](#v6--v61-habit-as-task-decoupling)).
+**v6.3:** stabilizer habits no longer surface as orphan LinkedTasks at all. They live on `DayPlan.todaysHabits` as `TodaysHabitInstance` entries (see §1.4). `sourceHabitId` and `skippedForToday` are removed from `LinkedTask`. The v6.2→v6.3 migration moves any legacy `sourceHabitId`-bearing LinkedTask into a synthetic `TodaysHabitInstance` and drops it from `linkedTasks`.
 
-**v6:** the deprecated `isHabit: boolean` was removed from this interface (and from `LinkedTask`). Old saved-session payloads with `isHabit` survive: `migratePlan` strips the field on read. The `TOGGLE_TASK_HABIT` action and the `backfillHabitsFromLegacy` function were removed in the same release.
+**v6.1 (historical):** `sourceHabitId` and `skippedForToday` were added to `LinkedTask` after habit-derived intentions were dropped — that step is now redundant given v6.3.
 
-**Relationships:** An intention owns zero or more `LinkedTask` entries (those whose `intentionId` matches). The `linkedTaskIds` array maintains the display order. Toggling an intention's completion cascades to all its linked tasks (orphan habit-tasks are unaffected).
+**v6:** the deprecated `isHabit: boolean` was removed from this interface (and from `LinkedTask`). Old saved-session payloads with `isHabit` survive: `migratePlan` strips the field on read.
+
+**Relationships:** An intention owns zero or more `LinkedTask` entries (those whose `intentionId` matches). The `linkedTaskIds` array maintains the display order. Toggling an intention's completion cascades to all its linked tasks.
 
 ### 1.2 LinkedTask
 
-A Todoist task surfaced inside Orchestrate's planning model. Either bound to an intention (manual link) or an orphan **habit-task** (v6.1) — never both.
+A Todoist task surfaced inside Orchestrate's planning model, bound to an intention via `intentionId`. v6.3: always intention-bound (no more orphans).
 
 ```ts
+type LinkedTaskStatus = 'pending' | 'engaged' | 'completed' | 'unfinished';
+
+interface EngagementRecord {                              // v6.3
+    startedAt: string;                                    // ISO — first Start press
+    endedAt?: string;                                     // ISO — last Stop press
+    totalMinutes?: number;                                // accumulated across cycles
+}
+
 interface LinkedTask {
     todoistId: string;                                    // Todoist task ID (primary key)
-    intentionId?: string;                                 // v6.1: parent intention; absent = orphan habit-task
-    sourceHabitId?: string;                               // v6.1: set when this LinkedTask came from a stabilizer Habit
-    type: 'main' | 'background' | 'unclassified';        // set in Step 2 (orphan habit-tasks are pre-typed 'background')
+    intentionId?: string;                                 // parent intention (always set in v6.3)
+    type: 'main' | 'background' | 'unclassified';        // set in Step 2
     assignedSessions: string[];                           // session slot IDs this task is assigned to
-    completed: boolean;
+    completed: boolean;                                   // mirrors status === 'completed'
     estimatedMinutes: number | null;                      // null = not yet estimated
     titleSnapshot?: string;                               // cached title for display when task is no longer in Todoist
-    skippedForToday?: boolean;                            // v6.1: set when a habit-task is skipped via SKIP_HABIT_TASK
+    status?: LinkedTaskStatus;                            // v6.3: absent = 'pending'
+    engagement?: EngagementRecord;                        // v6.3: explicit Start/Stop record
+    rescheduledFromTodoistId?: string;                    // v6.3: predecessor todoistId when restored from a backlog entry with engagement
+    rescheduledAt?: string;                               // v6.3: ISO timestamp of the restore
 }
 ```
 
 **Task types:**
 - **main** — Primary work thread. Exclusive to one session (assigning removes it from any previous session).
-- **background** — Habit or nudge task. Can be assigned to multiple sessions simultaneously. **v6.1:** for stabilizer habit-tasks (where `sourceHabitId` is set), the per-task estimate is `Habit.targetDurationMinutes ?? taskCapDefaults.stabilizer`. For manually-categorized backgrounds, the cap is `taskCapDefaults.manualBackground`. Defaults: 30 / 20 / 30.
-- **unclassified** — Default state after linking. Must be categorized before the user can proceed past Step 2. Orphan habit-tasks never appear in this state.
+- **background** — Small nudge task. Can be assigned to multiple sessions simultaneously. Cap: `taskCapDefaults.manualBackground` (default 30 min).
+- **unclassified** — Default state after linking. Must be categorized before the user can proceed past Step 2.
 
-**Invariants:**
-- A `LinkedTask` has either `intentionId` or `sourceHabitId` set, not both.
-- Orphan habit-tasks (`sourceHabitId` set, `intentionId` undefined) bypass Step 2 entirely.
+**Engagement lifecycle:**
+- New / restored task: `status = 'pending'`, no engagement.
+- User presses ▶ Start: `START_TASK_ENGAGEMENT` sets `status = 'engaged'` and `engagement.startedAt`.
+- User presses ■ Stop: `STOP_TASK_ENGAGEMENT` stamps `engagement.endedAt` and adds elapsed minutes to `engagement.totalMinutes`. Status stays `'engaged'` (resumable).
+- User checks complete: `TOGGLE_TASK_COMPLETE` flips to `status = 'completed'`, closes any open engagement.
+- User moves engaged-but-incomplete intention to backlog: the engagement record is copied into `BacklogEntry.unfinishedTaskRecords` for the read-only annotation.
 
 **Title fallback chain:** When displaying a task title, components use: `taskMap.get(todoistId)?.content` → `linkedTask.titleSnapshot` → `todoistId` (raw ID as last resort).
 
-### 1.3 DayPlan
+### 1.3 TodaysHabitInstance (v6.3)
+
+A stabilizer habit's manifestation for today. Independent of session assignment; positioned on the timeline by `targetTime`. Successor instances (clones) accumulate in `plan.todaysHabits` alongside their predecessors.
+
+```ts
+type HabitInstanceStatus = 'planned' | 'engaged' | 'completed' | 'unfinished' | 'skipped';
+
+interface TodaysHabitInstance {
+    id: string;                            // uuid (primary key — distinct from todoistTaskId)
+    habitId: string;                       // → life.habits[i].id
+    todoistTaskId: string;                 // recurring Todoist task id (stable across reschedule chain)
+    titleSnapshot: string;
+    durationMinutes: number;
+    targetTime?: string;                   // "HH:mm" — drives timeline position; absent = "anytime today"
+    status: HabitInstanceStatus;
+    completedAt?: string;                  // ISO
+    engagement?: EngagementRecord;
+    rescheduledFromId?: string;            // predecessor instance id (clone chain)
+    rescheduledAt?: string;                // ISO
+}
+```
+
+**Status semantics:**
+- **planned**    — surfaced for today, not yet acted on.
+- **engaged**    — user pressed Start on the dashboard `HabitInstanceCard`.
+- **completed**  — done; the reducer dispatches plus the caller fires `actions.completeTask(todoistTaskId)` to close Todoist's current occurrence.
+- **unfinished** — terminal: was engaged, then rescheduled or abandoned. Engagement record retained.
+- **skipped**   — terminal: user explicitly skipped, or was the predecessor of a reschedule with no prior engagement.
+
+**Reschedule (clone) primitive:** `RESCHEDULE_HABIT_INSTANCE` flips the predecessor to `'unfinished'` (if engagement exists) or `'skipped'` (untouched), then appends a successor with fresh `status: 'planned'` and `rescheduledFromId` set. **No Todoist write** — the recurring task is untouched.
+
+### 1.4 DayPlan
 
 The central document representing a single day's plan. Stored in localStorage and reset daily.
 
@@ -67,7 +113,8 @@ The central document representing a single day's plan. Stored in localStorage an
 interface DayPlan {
     date: string;                                   // "YYYY-MM-DD" — auto-reset when stale
     intentions: Intention[];                        // ordered list
-    linkedTasks: LinkedTask[];                      // all tasks across all intentions
+    linkedTasks: LinkedTask[];                      // user-task LinkedTasks only (v6.3)
+    todaysHabits: TodaysHabitInstance[];            // v6.3: stabilizer instances for today
     taskSessions: Record<string, string[]>;         // sessionId → todoistId[] (ordered)
     wizardStep: number;                             // 1–4 (current wizard position)
     setupComplete: boolean;                         // true after Step 4 finish
@@ -83,19 +130,12 @@ interface HabitLogEntry {                           // v6
     durationMinutes?: number;                       // derived on complete or user-entered
     sessionId?: string;                             // active session id when started, if any
 }
-
-interface HabitTaskInjection {                      // v6.1: payload of INJECT_HABIT_TASKS
-    habitId: string;
-    todoistId: string;
-    name: string;                                   // becomes LinkedTask.titleSnapshot
-    estimatedMinutes: number;
-    sessionId?: string;                             // pre-resolved via Todoist due.datetime → SessionSlot
-}
 ```
 
 **Key invariants:**
-- `linkedTasks` is the flat, denormalized list of all linked tasks. Each task's `intentionId` back-references its parent.
-- `taskSessions` is a map from session IDs to ordered arrays of Todoist task IDs. This determines what shows in each session card and the task order within it.
+- `linkedTasks` is the flat, denormalized list of intention-bound tasks. Each task's `intentionId` back-references its parent.
+- `todaysHabits` is the parallel list for stabilizer habit instances. Independent of `linkedTasks` / `taskSessions`.
+- `taskSessions` is a map from session IDs to ordered arrays of Todoist task IDs. Habits never appear here.
 - `intentions[i].linkedTaskIds` is the ordered list of task IDs belonging to that intention. This is kept in sync with `linkedTasks` by the reducer.
 
 ### 1.4 SessionSlot
@@ -288,8 +328,8 @@ interface Habit {
 }
 ```
 
-**Kinds (v6 + v6.1):**
-- **stabilizer** — anchor-style ritual. **v6.1:** synced to Todoist as a recurring task in the dedicated Habits project (lazily created via `AppSettings.habitsTodoistProjectId`); on Step 1 mount, `INJECT_HABIT_TASKS` surfaces today's eligible stabilizer tasks as orphan LinkedTasks (no intention, `type: 'background'`) auto-assigned to the session containing the Todoist `due.datetime`.
+**Kinds (v6 + v6.1 + v6.3):**
+- **stabilizer** — anchor-style ritual. Synced to Todoist as a recurring task in the dedicated Habits project (lazily created via `AppSettings.habitsTodoistProjectId`). **v6.3:** on Step 1 mount, `REFRESH_TODAYS_HABITS` adds today's eligible stabilizers to `plan.todaysHabits` as `TodaysHabitInstance` rows. They are rendered in the SessionTimelineBar's habit lane (positioned by `targetTime` or clustered as "Anytime today") and in the dashboard's `HabitInstanceCard`, independent of session assignment.
 - **light-coherent** — micro-gap filler. Never auto-injects. Surfaces in the `LightPoolPanel` (Dashboard) and `LightPoolSection` (`/life`); Start/Complete writes a `HabitLogEntry` to `plan.habitLog`.
 
 **Recurrence matching** (`src/lib/habits.ts → habitMatchesDate`):
@@ -301,7 +341,7 @@ interface Habit {
 
 **Anchor protection:** anchor habits cannot be deleted while active — the reducer no-ops on `DELETE_HABIT` and the UI surfaces a "deactivate first" modal.
 
-**Habit-task injection (v6.1, stabilizer only):** on Step 1 entry, `Step1Intentions` calls `computeHabitTasksToInject(...)` from `lib/habitsTodoistSync.ts` and dispatches `INJECT_HABIT_TASKS` with the resulting `HabitTaskInjection[]`. The helper filters to active stabilizers with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; applies `windowBehavior === 'strict'` to drop past-window tasks. The reducer is idempotent against any habit already represented in `plan.linkedTasks` via `sourceHabitId`. Light-coherent habits never appear here.
+**Today's habit instances (v6.3, stabilizer only):** on Step 1 entry, `Step1Intentions` calls `computeTodaysHabitInstances(...)` from `lib/habitsTodoistSync.ts` and dispatches `REFRESH_TODAYS_HABITS` with the resulting `TodaysHabitInstance[]`. The helper filters to active stabilizers with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; applies `windowBehavior === 'strict'` to drop past-window instances. The reducer is idempotent against any habit already represented in `plan.todaysHabits`. Light-coherent habits never appear here.
 
 **Habit ↔ Todoist sync (v6.1):** when a stabilizer is created or edited via `HabitForm`, `HabitsLibrary` (a) calls `ensureHabitsProject(...)` once to resolve / lazily-create the workspace default project (`AppSettings.habitsTodoistProjectId`; falls back to a project literally named `"Habits"`), then (b) calls `resolveHabitProjectId(habit, defaultProjectId, projects)` to honor the per-habit `todoistProjectId` override, then (c) calls `syncHabitToTodoist(...)` which creates or updates the recurring task with `due_string` from `buildDueString(habit)` (e.g. `"every weekday at 7:00"`) and `duration` from `targetDurationMinutes`. If the existing task lives in a different project, it is moved via the Sync API (`item_move`). The bulk Migrate path in `HabitsLibrary` resolves the default project once before iterating to avoid a stale-closure bug that previously re-created a duplicate project per habit. Sync failures are non-blocking — the habit remains saved locally.
 
@@ -475,8 +515,8 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 
 | Action | Payload | Effect |
 |---|---|---|
-| `MOVE_INTENTION_TO_BACKLOG` | `intentionId: string; reason?: 'manual' \| 'rollover'` | Scrubs the intention + its intention-bound `LinkedTask`s from the plan (same plan-side cleanup as `REMOVE_INTENTION`), and appends a `BacklogEntry` (built by `buildBacklogEntry`) to `life.backlog`. Default reason `'manual'`. Caller is responsible for unscheduling Todoist tasks via `useIntentionRemoval().moveToBacklog`. |
-| `RESTORE_FROM_BACKLOG` | `backlogId: string; taskCache: Record<string,string>` | Pulls the entry off `life.backlog`, appends `entry.intention` to `plan.intentions`, and reconstructs fresh `LinkedTask` rows (`type: 'unclassified'`, no estimate/assignment, not completed) for each *pending* id. Idempotent against re-add: if the intention id already exists in `plan.intentions`, just removes the entry. Skips any `todoistId` already present in `plan.linkedTasks`. `completedTaskTitles` is preserved on the entry for the lifetime of the backlog row but never round-trips into a `LinkedTask`. |
+| `MOVE_INTENTION_TO_BACKLOG` | `intentionId: string; reason?: 'manual' \| 'rollover'` | Scrubs the intention + its intention-bound `LinkedTask`s from the plan (same plan-side cleanup as `REMOVE_INTENTION`), and appends a `BacklogEntry` (built by `buildBacklogEntry`) to `life.backlog`. **v6.3:** engagement records from any engaged-but-incomplete LinkedTask are copied into `BacklogEntry.unfinishedTaskRecords`. Default reason `'manual'`. Caller is responsible for unscheduling Todoist tasks via `useIntentionRemoval().moveToBacklog`. |
+| `RESTORE_FROM_BACKLOG` | `backlogId: string; taskCache: Record<string,string>; now?: string` | Pulls the entry off `life.backlog`, appends `entry.intention` to `plan.intentions`, and reconstructs fresh `LinkedTask` rows (`type: 'unclassified'`, `status: 'pending'`, no estimate/assignment, not completed) for each *pending* id. **v6.3:** rows whose id appears in `entry.unfinishedTaskRecords` are stamped with `rescheduledFromTodoistId` + `rescheduledAt` (the engagement record stays on the BacklogEntry until the entry is consumed). Idempotent against re-add: if the intention id already exists in `plan.intentions`, just removes the entry. Skips any `todoistId` already present in `plan.linkedTasks`. |
 | `DELETE_BACKLOG_ENTRY` | `backlogId: string` | Removes the entry from `life.backlog`. Pure — caller (`useIntentionRemoval().discardFromBacklog`) handles Todoist unschedule. |
 
 ### 3.5 Life Scaffolding Actions (v5)
@@ -489,11 +529,17 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 | `ACTIVATE_SEASON` | `seasonId: string \| null` | Sets exactly one season active (or none). Updates `activeSeasonId` |
 | `ADD_HABIT` | `habit: Habit` | Appends a fully-formed habit (caller generates `id` + `createdAt` so it can run `syncHabitToTodoist` against the same id afterward) |
 | `UPDATE_HABIT` | `habit: Habit` | Replaces the matching habit in-place |
-| `DELETE_HABIT` | `habitId: string` | No-ops if the habit is anchor + active. Otherwise removes; **v6.1:** also drops any orphan habit-tasks (`sourceHabitId === habitId`) from `plan.linkedTasks` and clears them from `plan.taskSessions` |
+| `DELETE_HABIT` | `habitId: string` | No-ops if the habit is anchor + active. Otherwise removes; **v6.3:** also drops any `TodaysHabitInstance` rows (`habitId`) from `plan.todaysHabits`. |
 | `TOGGLE_HABIT_ACTIVE` | `habitId: string` | Flips the habit's `active` flag |
-| `INJECT_HABIT_TASKS` | `entries: HabitTaskInjection[]` | **v6.1** (replaces `INJECT_HABIT_INTENTIONS`). Appends pre-computed orphan habit-tasks to `plan.linkedTasks` (each with `type: 'background'`, `sourceHabitId`, `intentionId: undefined`) and adds them to `plan.taskSessions[entry.sessionId]` when `sessionId` is set. Idempotent: any entry whose `habitId` is already present as a `LinkedTask.sourceHabitId` is skipped. |
-| `SKIP_HABIT_TASK` | `todoistId: string` | **v6.1** (replaces `SKIP_HABIT_INTENTION`). Marks an orphan habit-task `skippedForToday: true` and clears it from session assignments. The LinkedTask itself is kept so re-injection won't duplicate it for the day. `completed` stays false — a skip is "not today", not a completion, and shouldn't count toward the done-counter. |
-| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import: existing entries are never overwritten, new entries are appended. Imported habits run through the same `migrateHabit` helper as `loadLifeContext`, so a v6 backup picks up the v6.1 stabilizer shape (`todoistTaskId`, `targetDurationMinutes`, `windowBehavior`) on import. Honors the no-backend safety net. |
+| `REFRESH_TODAYS_HABITS` | `instances: TodaysHabitInstance[]` | **v6.3** (replaces `INJECT_HABIT_TASKS`). Appends precomputed instances to `plan.todaysHabits`. Idempotent: any instance whose `habitId` is already present is skipped (existing engaged/completed/unfinished/skipped state is preserved). |
+| `START_HABIT_INSTANCE` | `instanceId: string; now: string` | **v6.3** Sets `status = 'engaged'` and initializes/reopens `engagement` (clears `endedAt`). |
+| `STOP_HABIT_INSTANCE` | `instanceId: string; now: string` | **v6.3** Closes the current engagement segment: stamps `endedAt`, adds elapsed minutes to `totalMinutes`. Status stays `'engaged'` (resumable). |
+| `COMPLETE_HABIT_INSTANCE` | `instanceId: string; now: string` | **v6.3** Sets `status = 'completed'`, `completedAt = now`; closes any open engagement. Caller is responsible for `actions.completeTask(todoistTaskId)`. |
+| `SKIP_HABIT_INSTANCE` | `instanceId: string` | **v6.3** Sets `status = 'skipped'`. Terminal. |
+| `RESCHEDULE_HABIT_INSTANCE` | `instanceId: string; newTargetTime?: string; now: string` | **v6.3** Predecessor flips to `'unfinished'` (if engaged) or `'skipped'`. Appends a successor instance with fresh `status: 'planned'`, `rescheduledFromId`, `rescheduledAt`, new `targetTime`. **No Todoist write.** |
+| `START_TASK_ENGAGEMENT` | `todoistId: string; now: string` | **v6.3** Sets `LinkedTask.status = 'engaged'` and initializes/reopens `engagement`. |
+| `STOP_TASK_ENGAGEMENT` | `todoistId: string; now: string` | **v6.3** Closes the current engagement segment. Status stays `'engaged'`. |
+| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import: existing entries are never overwritten, new entries are appended. Imported habits run through the same `migrateHabit` helper as `loadLifeContext`. Honors the no-backend safety net. |
 
 ### 3.6 Light Pool Actions (v6)
 
@@ -585,6 +631,20 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
 - **Added**: `BacklogEntry` type, `LifeContext.backlog`, the three reducer actions (`MOVE_INTENTION_TO_BACKLOG` / `RESTORE_FROM_BACKLOG` / `DELETE_BACKLOG_ENTRY`), `lib/backlog.ts` (`hasUnfinishedWork`, `buildBacklogEntry`, `harvestStalePlan`, `rebuildLinkedTasksForBacklogEntry`), `lib/intentionUnschedule.ts` (`unscheduleIntentionTasks`), `hooks/useIntentionRemoval.ts` (`useIntentionRemoval` hook), `components/ui/ConfirmModal.tsx`, `hooks/useConfirmModal.ts`, `src/components/dashboard/HistorySidebar.tsx` (renamed from `SavedSessions.tsx`), `src/components/dashboard/BacklogTab.tsx`. **Removed**: `loadPlan` helper (folded into `loadInitialState`), `TransitionTips.tsx` (dead code), `getHabitTasksForDay` (dead code). **Moved**: `validateTodoistToken` from `hooks/useTodoist.ts` to `lib/todoistApi.ts`.
 - **Persistence** stamps `_schemaVersion: 6.2` onto plan, settings, life-context, and saved-session payloads on every write.
 
+### v6.2 → v6.3: habit/session decoupling + task engagement
+- **Trigger:** Saved payload `_schemaVersion < 6.3`.
+- **Plan transforms** (`migratePlan`):
+  - For every `LinkedTask` with `sourceHabitId`: emit a synthetic `TodaysHabitInstance` into `plan.todaysHabits` with `id: crypto.randomUUID()`, `habitId: sourceHabitId`, `todoistTaskId: lt.todoistId`, `titleSnapshot: lt.titleSnapshot ?? todoistId`, `durationMinutes: lt.estimatedMinutes ?? 30`, `targetTime: undefined`, `status: completed ? 'completed' : skippedForToday ? 'skipped' : 'planned'`.
+  - Drop those rows from `plan.linkedTasks`. Prune their ids from every `plan.taskSessions[sessionId]`.
+  - For every remaining `LinkedTask`: stamp `status: completed ? 'completed' : 'pending'`. Drop the deprecated `sourceHabitId` / `skippedForToday` fields (no-op if already absent).
+  - Initialize `plan.todaysHabits: []` when missing on a non-legacy payload.
+- **LifeContext transforms**: none.
+- **AppSettings:** no changes.
+- **BacklogEntry:** existing entries get `unfinishedTaskRecords: undefined`; the field is populated only by future `MOVE_INTENTION_TO_BACKLOG` dispatches.
+- **Removed**: `HabitTaskInjection` type, `INJECT_HABIT_TASKS` / `SKIP_HABIT_TASK` actions, `LinkedTask.sourceHabitId`, `LinkedTask.skippedForToday`, `isHabitDerivedTask` helper, the `HABIT_GROUP_KEY` synthetic grouping in `SessionTimeline`.
+- **Added**: `TodaysHabitInstance` / `HabitInstanceStatus` / `EngagementRecord` / `LinkedTaskStatus` types, `DayPlan.todaysHabits`, `LinkedTask.status` / `engagement` / `rescheduledFromTodoistId` / `rescheduledAt`, `BacklogEntry.unfinishedTaskRecords`, the six habit-instance reducer actions (`REFRESH_TODAYS_HABITS`, `START_HABIT_INSTANCE`, `STOP_HABIT_INSTANCE`, `COMPLETE_HABIT_INSTANCE`, `SKIP_HABIT_INSTANCE`, `RESCHEDULE_HABIT_INSTANCE`) and the two task-engagement actions (`START_TASK_ENGAGEMENT`, `STOP_TASK_ENGAGEMENT`), `computeTodaysHabitInstances` and `cloneHabitInstanceForReschedule` in `lib/habitsTodoistSync.ts`, the habit lane in `SessionTimelineBar`, the new `HabitInstanceCard` component, the Phase 2 "Today's habits" panel in `Step3Schedule`, the `✱ Engaged` annotation in `BacklogTab`, the `LinkingProps.habitTodoistIds` field on `TodoistPanel`.
+- **Persistence** stamps `_schemaVersion: 6.3` onto plan, settings, life-context, and saved-session payloads on every write.
+
 ### Wizard step migration
 - **6-step → 5-step** (`_wizardSteps !== 5 && _wizardSteps !== 4`): Steps 2+ shift down by 1.
 - **5-step → 4-step** (`_wizardSteps === 5`): Old step 4 (nudges) merges into step 3, old step 5 becomes step 4.
@@ -604,12 +664,15 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
 {
     "date": "2025-01-15",
     "intentions": [ { "id": "...", "title": "...", "linkedTaskIds": [...], ... } ],
-    "linkedTasks": [ { "todoistId": "...", "intentionId": "...", ... } ],
+    "linkedTasks": [ { "todoistId": "...", "intentionId": "...", "status": "pending", ... } ],
+    "todaysHabits": [ { "id": "...", "habitId": "...", "todoistTaskId": "...", "status": "planned", "targetTime": "07:00", "durationMinutes": 15, ... } ],
     "taskSessions": { "morning": ["task-1", "task-2"], "afternoon": ["task-3"] },
     "wizardStep": 3,
     "setupComplete": false,
     "checkIns": [],
-    "_wizardSteps": 4
+    "habitLog": [],
+    "_wizardSteps": 4,
+    "_schemaVersion": 6.3
 }
 ```
 
@@ -847,8 +910,8 @@ All CRUD mutations update local state immediately (optimistic), then rely on the
 ```
 
 **Key relationships:**
-- `Intention` 1→N `LinkedTask` (via `intentionId` back-reference, `linkedTaskIds` forward reference). **v6.1:** `intentionId` is optional — orphan habit-tasks have `sourceHabitId` instead and no parent intention.
-- `Habit` 1→1 `LinkedTask` per day (v6.1, stabilizers only) — via `LinkedTask.sourceHabitId`. The Todoist task is shared across days; each day's `INJECT_HABIT_TASKS` produces a fresh LinkedTask referencing it.
+- `Intention` 1→N `LinkedTask` (via `intentionId` back-reference, `linkedTaskIds` forward reference). v6.3: every LinkedTask is intention-bound.
+- `Habit` (stabilizer) 1→N `TodaysHabitInstance` per day (v6.3) — via `habitId` back-reference + `todoistTaskId` referencing the shared recurring Todoist task. Multiple instances per habit per day can exist when the user reschedules (predecessor stays in `unfinished`/`skipped`, successor in `planned`).
 - `LinkedTask` N↔M `SessionSlot` (via `taskSessions` map and `assignedSessions` array). Constraint: main tasks are 1:1, background tasks (incl. habit-tasks) are 1:N.
 - `LinkedTask.todoistId` references `TodoistTask.id` — but `TodoistTask` is ephemeral API data, not persisted in the plan. Only `titleSnapshot` captures a durable copy.
 - `DayPlan.taskSessions` is the source of truth for session assignments. `LinkedTask.assignedSessions` is a derived convenience kept in sync by the reducer.
