@@ -9,7 +9,6 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
-import { getHabitTasksForDay } from '../../lib/habits';
 import { computeHabitTasksToInject } from '../../lib/habitsTodoistSync';
 import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
 import type { LinkedTask } from '../../types';
@@ -19,7 +18,9 @@ export function Step1Intentions() {
     const { taskMap } = useTodoistData();
 
     // v6.1: surface today's stabilizer habit-tasks as orphan LinkedTasks (no intention).
-    // Re-fires whenever the Todoist cache becomes ready or grows; reducer is idempotent.
+    // Re-fires when the Todoist cache changes size, habits/seasons change, or plan tasks
+    // change. The reducer's INJECT_HABIT_TASKS is idempotent so redundant dispatches are
+    // harmless no-ops (the effect runs once more after injection, finds nothing new, and stops).
     useEffect(() => {
         const entries = computeHabitTasksToInject({
             life,
@@ -33,7 +34,7 @@ export function Step1Intentions() {
             dispatch({ type: 'INJECT_HABIT_TASKS', entries });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [taskMap.size, life.habits, life.activeSeasonId]);
+    }, [taskMap.size, life.habits, life.activeSeasonId, plan.linkedTasks, settings.sessionSlots, settings.taskCapDefaults, dispatch]);
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
@@ -107,8 +108,8 @@ export function Step1Intentions() {
 
     // v6.1: count today's habit-tasks for an informational chip in Phase 1.
     const habitTaskCount = useMemo(
-        () => getHabitTasksForDay(plan).length,
-        [plan],
+        () => plan.linkedTasks.filter((lt) => Boolean(lt.sourceHabitId)).length,
+        [plan.linkedTasks],
     );
 
     const addIntention = () => {

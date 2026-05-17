@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { encryptToken } from '../../lib/crypto';
-import { validateTodoistToken } from '../../hooks/useTodoist';
+import { validateTodoistToken } from '../../lib/todoistApi';
 import { Button } from '../ui/Button';
 import { inputClass } from '../ui/formStyles';
 import type { GoogleCalendarEntry } from '../../types';
@@ -47,8 +47,8 @@ export function TodoistSetup() {
         () =>
             Boolean(
                 habitsProjectId
-                    && projects.length > 0
-                    && !projects.some((p) => p.id === habitsProjectId),
+                && projects.length > 0
+                && !projects.some((p) => p.id === habitsProjectId),
             ),
         [habitsProjectId, projects],
     );

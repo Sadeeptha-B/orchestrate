@@ -37,14 +37,6 @@ export function WizardLayout({
     const [panelOpen, setPanelOpen] = useState(true);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
     const backlogCount = life.backlog?.length ?? 0;
-    const openPanel = (next: HistoryTab) => {
-        if (panelOpen && panelTab === next) {
-            setPanelOpen(false);
-        } else {
-            setPanelTab(next);
-            setPanelOpen(true);
-        }
-    };
     const { panelWidth, onMouseDown } = useResizablePanel();
 
     const goBack = () => {
@@ -117,19 +109,12 @@ export function WizardLayout({
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => openPanel('sessions')}
+                                onClick={() => setPanelOpen((open) => !open)}
+                                title="Saved sessions and intentions backlog"
                             >
-                                {panelOpen && panelTab === 'sessions' ? 'Hide Saved' : 'Saved Sessions'}
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openPanel('backlog')}
-                                title="Intentions backlog"
-                            >
-                                {panelOpen && panelTab === 'backlog'
-                                    ? 'Hide Backlog'
-                                    : <>📥 Backlog{backlogCount > 0 ? ` (${backlogCount})` : ''}</>}
+                                {panelOpen
+                                    ? 'Hide Work Items'
+                                    : `Work Items${backlogCount > 0 ? ` (${backlogCount})` : ''}`}
                             </Button>
                             {isEditing && (
                                 <Button variant="ghost" size="sm" onClick={goToDashboard}>

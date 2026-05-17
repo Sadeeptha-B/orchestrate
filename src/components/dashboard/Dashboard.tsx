@@ -37,15 +37,6 @@ export function Dashboard() {
     const [panelOpen, setPanelOpen] = useState(false);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
     const backlogCount = life.backlog?.length ?? 0;
-    const openPanel = (next: HistoryTab) => {
-        // Toggle off if already open on the same tab; otherwise open + switch tab.
-        if (panelOpen && panelTab === next) {
-            setPanelOpen(false);
-        } else {
-            setPanelTab(next);
-            setPanelOpen(true);
-        }
-    };
     const [taskManagerOpen, setTaskManagerOpen] = useState(false);
     const [calendarOpen, setCalendarOpen] = useState(false);
 
@@ -105,19 +96,12 @@ export function Dashboard() {
                         <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => openPanel('sessions')}
+                            onClick={() => setPanelOpen((open) => !open)}
+                            title="Saved sessions and intentions backlog"
                         >
-                            {panelOpen && panelTab === 'sessions' ? 'Hide Saved' : 'Saved Sessions'}
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openPanel('backlog')}
-                            title="Intentions backlog"
-                        >
-                            {panelOpen && panelTab === 'backlog'
-                                ? 'Hide Backlog'
-                                : <>📥 Backlog{backlogCount > 0 ? ` (${backlogCount})` : ''}</>}
+                            {panelOpen
+                                ? 'Hide Work Items'
+                                : `Work Items${backlogCount > 0 ? ` (${backlogCount})` : ''}`}
                         </Button>
                         <HeaderControls />
                     </div>

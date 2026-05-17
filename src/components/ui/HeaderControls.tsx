@@ -1,4 +1,4 @@
-import { useState, type MutableRefObject } from 'react';
+import { useEffect, useState, type MutableRefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal } from './Modal';
 import { ThemeToggle } from './ThemeToggle';
@@ -22,7 +22,14 @@ export function HeaderControls({ aboutTriggerRef }: HeaderControlsProps) {
     const [showAbout, setShowAbout] = useState(false);
 
     // Expose the trigger so external elements (e.g. Welcome's "Learn" link) can open About.
-    if (aboutTriggerRef) aboutTriggerRef.current = () => setShowAbout(true);
+    // Assignment runs in an effect — mutating refs during render is a react-hooks/refs violation.
+    useEffect(() => {
+        if (!aboutTriggerRef) return;
+        aboutTriggerRef.current = () => setShowAbout(true);
+        return () => {
+            aboutTriggerRef.current = null;
+        };
+    }, [aboutTriggerRef]);
 
     return (
         <>

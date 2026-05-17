@@ -1,6 +1,6 @@
 > **What is this?** A guide to how Orchestrate thinks about your day — and how you can use that to get more done with less friction. Covers **Habits**, **Intentions**, **Tasks**, the **Light Pool**, **True Rest**, and **Capacity**. For the technical overview see [synthesis.md](./synthesis.md); for exact types and actions see [data-model.md](./data-model.md).
 >
-> **Reflects:** v6.1 — habit-as-task decoupling. Stabilizers now sync to Todoist as recurring tasks and surface directly as session-assigned tasks (not as auto-injected intentions).
+> **Reflects:** v6.2 — Intentions Backlog. Discarded intentions can be parked in `life.backlog` rather than deleted; day rollover harvests unfinished intentions automatically. Completed tasks are preserved as read-only context on backlog entries (`completedTaskTitles`) rather than rebuilt as fresh work on restore. EoD auto-save was removed in this iteration — `SavedDayPlan` history is now manual-save-only. The v6.1 habit-as-task decoupling (stabilizers as recurring Todoist tasks surfaced directly as session-assigned tasks) remains the baseline.
 
 # Orchestrate — User Guide
 
@@ -290,6 +290,27 @@ If the current session is over-capacity, the Dashboard banner is already visible
 
 ---
 
+## 9a. Intentions Backlog — parking work for later (v6.2)
+
+Not every intention you write down on Monday belongs on Monday. You overcommit, plans shift, energy fades. The **Backlog** is a persistent pool of parked intentions you can pull back into a future day, surfaced in the second tab of the left-side sidebar (the same panel that holds your Saved Sessions). The `Work Items` button in the header on every screen — Wizard, Dashboard — opens the sidebar; switch between Saved Sessions and Backlog with the tab toggle at the top of the panel. The header button shows a count suffix (e.g. `Work Items (3)`) when there's anything in the backlog.
+
+**Two ways an intention lands in the backlog:**
+
+1. **You park it manually.** Every intention row in Step 1 and the "Today's intentions" panel at the top of Step 3 has two small icon buttons: `📥` (Move to backlog — no confirm, non-destructive) and `🗑` (Delete — confirm modal). The 📥 path is the default, low-cost gesture. Use it when you realize at Step 3 that the day is over-stuffed, or mid-day when priorities shift.
+2. **Day rollover harvests it.** When a new day starts, any intention from yesterday that still has uncompleted linked tasks is automatically moved into the backlog (with `reason: 'rollover'`). The plan resets fresh; the unfinished thought is preserved. Intentions where every linked task was completed are not harvested — there's nothing to bring back.
+
+**What gets carried:** the intention title, plus the ids of its *pending* (not-yet-completed) linked tasks. Tasks you'd already checked off at archive time are stripped from the carried-forward list — their titles are kept as a small `✓ Done: …` annotation under the entry so you can see what you accomplished before parking, but they're never reconstructed as work to be re-done.
+
+**What Todoist sees:** manually moving an intention to the backlog (or deleting it) also clears the `due_*` fields on its linked Todoist tasks — they revert to "no date" so they don't sit forever on yesterday's schedule. Rollover-harvested intentions deliberately leave Todoist alone, so yesterday's overdue tasks remain visible there for you to deal with on your terms. Habit-task recurrences (`sourceHabitId` set) are never touched by either path — they belong to Todoist's recurrence engine, not the intention flow.
+
+**Bringing one back:** open the sidebar's Backlog tab and click "Bring to today" on any entry. The intention reappears in today's `plan.intentions` and its pending tasks come back as fresh `unclassified` rows — you re-flow them through Step 2 (categorize + estimate) and Step 3 (schedule). Nothing carries the previous estimate or session assignment forward, by design: today's plan isn't yesterday's plan.
+
+**Discarding:** "Discard" on a backlog entry asks once for confirmation, then unschedules its linked Todoist tasks and drops the entry. This is the final delete — there's no second-level recycle bin.
+
+**Note on Saved Sessions vs Backlog:** since v6.2, *Saved Sessions are manual-only*. The end-of-day auto-save was removed because the backlog already preserves the part of yesterday that matters (unfinished intentions). Use `Save Day` from the Dashboard header when you want a deliberate snapshot of a full day's plan (e.g. before a major reset, or to export); rely on the backlog for everyday spillover.
+
+---
+
 ## 10. Decision tree — "I want to add X to my day"
 
 ```
@@ -362,6 +383,7 @@ Here's a concrete walk-through showing all the pieces in action.
 - Main tasks: 1.5/2 completed.
 - Light Pool log: 2 entries (algorithms warm-up and Duolingo; flashcards and reading skipped today).
 - True Rest: surfaced but untracked, as intended.
+- Tomorrow morning: the half-finished main task's parent intention is auto-harvested into the Backlog with `reason: 'rollover'`. Its already-done sibling task shows up under `✓ Done:` in the backlog row for context. You decide whether to bring it back into the new day's plan.
 
 ---
 
@@ -376,6 +398,7 @@ Here's a concrete walk-through showing all the pieces in action.
 | A non-task recovery prompt | Don't model. True Rest handles it. |
 | A practice tied to a specific focus period | Light-coherent Habit with `seasonIds` set |
 | A foundational habit that survives season changes | Stabilizer Habit with `isAnchor`, always-on (`seasonIds: []`) |
+| An intention you want to defer (today is too full, or plans shifted) | Click `📥` on the intention row. Bring it back from the Backlog sidebar tab on a future day. |
 
 ---
 
