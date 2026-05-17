@@ -7,6 +7,7 @@ import { useTodoistData } from '../../hooks/useTodoist';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import { spotifyPlaylistId } from '../../lib/spotify';
 import { getLightPoolHabits } from '../../lib/habits';
+import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
 import { TrueRestCard } from '../dashboard/TrueRestCard';
 import { LightPoolRow } from '../dashboard/LightPoolRow';
 import type { WorkType, CheckIn, LinkedTask } from '../../types';
@@ -55,11 +56,14 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
         for (const e of plan.habitLog) if (!e.completedAt) m.set(e.habitId, e.id);
         return m;
     }, [plan.habitLog]);
+    const linkedTaskMap = useMemo(
+        () => buildLinkedTaskMap(plan.linkedTasks),
+        [plan.linkedTasks],
+    );
 
     // Background nudges for the current session
     const bgNudges = currentSession
-        ? (plan.taskSessions[currentSession.id] ?? [])
-            .map((id) => plan.linkedTasks.find((lt) => lt.todoistId === id))
+        ? getLinkedTasksByIds(plan.taskSessions[currentSession.id] ?? [], linkedTaskMap)
             .filter((lt): lt is LinkedTask => lt !== undefined && lt.type === 'background' && !lt.completed)
         : [];
 

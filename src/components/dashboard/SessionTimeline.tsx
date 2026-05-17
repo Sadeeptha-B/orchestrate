@@ -9,6 +9,7 @@ import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
 import { isHabitDerivedTask } from '../../lib/habits';
+import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
 
 /** v6.1: synthetic group key used by SessionCard to render orphan habit-tasks under a "🔁 Habits" header. */
@@ -187,7 +188,7 @@ function SessionCard({
     isCurrent,
     isPast,
     taskIds,
-    linkedTasks,
+    linkedTaskMap,
     taskMap,
     intentions,
     drag,
@@ -196,14 +197,12 @@ function SessionCard({
     isCurrent: boolean;
     isPast: boolean;
     taskIds: string[];
-    linkedTasks: LinkedTask[];
+    linkedTaskMap: Map<string, LinkedTask>;
     taskMap: Map<string, TodoistTask>;
     intentions: Map<string, Intention>;
     drag: ReturnType<typeof useTaskDrag>;
 }) {
-    const tasksInSession = taskIds
-        .map((id) => linkedTasks.find((lt) => lt.todoistId === id))
-        .filter((lt): lt is LinkedTask => lt !== undefined);
+    const tasksInSession = getLinkedTasksByIds(taskIds, linkedTaskMap);
 
     // Group by intention; orphan habit-tasks fall into the synthetic 🔁 Habits group.
     const tasksByIntention = new Map<string, LinkedTask[]>();
@@ -302,6 +301,10 @@ export function CurrentSession() {
     const intentionMap = useMemo(
         () => new Map(plan.intentions.map((i) => [i.id, i])),
         [plan.intentions],
+    );
+    const linkedTaskMap = useMemo(
+        () => buildLinkedTaskMap(plan.linkedTasks),
+        [plan.linkedTasks],
     );
 
     // Auto-select: current session → first remaining → last session (end-of-day).
@@ -409,7 +412,7 @@ export function CurrentSession() {
                     isCurrent={isViewingCurrent}
                     isPast={isPast}
                     taskIds={taskIds}
-                    linkedTasks={plan.linkedTasks}
+                    linkedTaskMap={linkedTaskMap}
                     taskMap={taskMap}
                     intentions={intentionMap}
                     drag={drag}

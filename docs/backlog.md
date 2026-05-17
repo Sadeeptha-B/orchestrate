@@ -2,18 +2,17 @@
 >
 > When an item ships: write the implementation plan into [history/](./history/) (e.g. `plan_v7.md`), append a narrative entry to [history/iterations.md](./history/iterations.md), update [synthesis.md](./synthesis.md) to reflect the new current state, and remove the item from this file.
 >
-> See [vision.md](./vision.md) for the durable "why", [synthesis.md](./synthesis.md) for the current state, and the most recent shipped plans: [history/plan_v5.md](./history/plan_v5.md), [history/plan_v6.md](./history/plan_v6.md), [history/plan_v6.1.md](./history/plan_v6.1.md).
+> See [vision.md](./vision.md) for the durable "why", [synthesis.md](./synthesis.md) for the current state, and the most recent shipped plan: [history/plan_v6.x.md](./history/plan_v6.x.md).
 
 # Orchestrate — Backlog
 
 ## Modes, rituals, recovery (sketched in plan_v5)
 
-Targeted for **v7** — the next iteration after v6's micro-gap refinement + capacity intelligence and v6.1's habit-as-task decoupling. See [history/plan_v5.md](./history/plan_v5.md) "v7 — Modes, Rituals, Recovery" for the sketch:
+Targeted for **v7** — the next iteration after v6.2's intentions backlog. See [history/plan_v5.md](./history/plan_v5.md) "v7 — Modes, Rituals, Recovery" for the sketch:
 - `DayPlan.mode: 'focus' | 'maintenance' | 'recovery' | 'shutdown' | 'review'`.
 - Mode switcher card on Dashboard (manual; signal-driven suggestions in v8).
 - `RitualPlayer` for state transitions, with seed templates (morning launch, shutdown, recovery reset, weekly review prep).
 - "Apply Minimum Viable Day" one-click reduced template.
-- The `isHabit` flag removal that plan_v5 originally pushed to v7 was pulled forward and **shipped in v6**.
 
 ## Reviews, drift detection, hierarchical views (sketched in plan_v5)
 

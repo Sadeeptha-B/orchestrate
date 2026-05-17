@@ -77,7 +77,7 @@ export interface DayPlan {
     intentions: Intention[];
     linkedTasks: LinkedTask[];                             // all tasks across all intentions
     taskSessions: Record<string, string[]>;               // sessionId -> todoistId[]
-    wizardStep: number; // 1–5
+    wizardStep: number; // 1–4
     setupComplete: boolean;
     checkIns: CheckIn[];
     habitLog: HabitLogEntry[];                            // v6: Light Pool log entries for today
@@ -210,12 +210,18 @@ export interface LifeContext {
  * v6.2: a parked intention. Created when the user moves an intention to the backlog
  * (manual discard during planning) or when an unfinished intention auto-rolls over
  * at date-change. Brought back into today's plan via `RESTORE_FROM_BACKLOG`.
+ *
+ * `intention.linkedTaskIds` is pending-only: tasks already completed at archive time
+ * are stripped from the id list and their titles are stashed in `completedTaskTitles`
+ * for context display in the Backlog tab. On restore we only rebuild LinkedTasks for
+ * the pending ids; completed work is preserved as read-only annotation.
  */
 export interface BacklogEntry {
     id: string;                              // uuid for the entry itself (distinct from intention.id)
-    intention: Intention;                    // preserved verbatim — title, linkedTaskIds, completed, brokenDown
+    intention: Intention;                    // preserved — but linkedTaskIds is pending-only (no completed)
     archivedAt: string;                      // ISO timestamp
     archivedFromDate: string;                // YYYY-MM-DD — plan.date the intention came from
     reason: 'manual' | 'rollover';
-    taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot at archive time
+    taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot for pending tasks
+    completedTaskTitles?: string[];          // titles of tasks already completed at archive time (context-only)
 }

@@ -27,32 +27,35 @@ This document describes the architecture of Orchestrate: how the application is 
 Every React component in the app sits inside a nested provider tree. The order matters — each provider may depend on providers above it.
 
 ```
-StrictMode
-└── BrowserRouter (basename: /orchestrate/)
-    └── ErrorBoundary
-        └── DayPlanProvider          ← core app state (plan, settings, history, life)
-            └── TodoistProvider      ← Todoist data + API actions
-                └── AppRoutes        ← router switch
-                    ├── Welcome      (hub: when !setupComplete, at /)
-                    ├── Wizard       (at /setup)
-                    ├── Dashboard    (when setupComplete, at /)
-                    ├── LifeView     (at /life)
-                    ├── SeasonsManager (at /season)
-                    ├── SeasonDetail (at /season/:id)
-                    ├── HabitsLibrary (at /habits)
-                    ├── RestCuesManager (at /rest-cues)
-                    └── UserGuide    (at /guide)
+StrictMode                         (main.tsx)
+└── BrowserRouter (basename: /orchestrate/)   (main.tsx)
+    └── App                        (App.tsx — below)
+        └── ErrorBoundary
+            └── DayPlanProvider          ← core app state (plan, settings, history, life)
+                └── TodoistProvider      ← Todoist data + API actions
+                    └── AppRoutes        ← router switch
+                        ├── Welcome      (hub: when !setupComplete, at /)
+                        ├── Wizard       (at /setup)
+                        ├── Dashboard    (when setupComplete, at /)
+                        ├── LifeView     (at /life)
+                        ├── SeasonsManager (at /season)
+                        ├── SeasonDetail (at /season/:id)
+                        ├── HabitsLibrary (at /habits)
+                        ├── RestCuesManager (at /rest-cues)
+                        ├── SettingsPage (at /settings)
+                        └── UserGuide    (at /guide)
 ```
 
 **Why this order?**
+- `StrictMode` and `BrowserRouter` live in `main.tsx`, wrapping the `<App />` root.
+- `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
 - `TodoistProvider` reads `settings` (encrypted token) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
-- `ErrorBoundary` wraps everything so a crash in any provider or route is caught gracefully.
 
 ---
 
 ## 3. Routing
 
-Orchestrate has eight routes, all defined in the `AppRoutes` component inside `App.tsx`:
+Orchestrate has nine routes, all defined in the `AppRoutes` component inside `App.tsx`:
 
 | Path | Component | Guard |
 |---|---|---|
@@ -63,6 +66,7 @@ Orchestrate has eight routes, all defined in the `AppRoutes` component inside `A
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits with anchor protection |
 | `/rest-cues` | `RestCuesManager` | Always reachable. CRUD True Rest cues with category filter pills (All / Physical / Breath / Sensory); inline add/edit forms; Reset to defaults |
+| `/settings` | `SettingsPage` | Always reachable. Vertical-tab layout: Integrations, Capacity, Data |
 | `/guide` | `UserGuide` | Always reachable. In-app rendering of the v6 user guide (mental model + how-to). Linked from the About modal across Welcome / Dashboard / Wizard. |
 | `*` | Redirect to `/` | Catch-all |
 
@@ -150,9 +154,9 @@ This is the heart of the application. It manages:
 - **`history`** — array of `SavedDayPlan` entries for past sessions.
 - **`life`** — persistent `LifeContext` (seasons, habits, activeSeasonId) — added in v5.
 
-**Architecture:** `useReducer` with a ~40-action discriminated union. **v6.2:** state is initialized lazily via a single coordinated `loadInitialState()` helper that calls `peekRawPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day-rollover migration in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
+**Architecture:** `useReducer` with a ~45-action discriminated union. **v6.2:** state is initialized lazily via a single coordinated `loadInitialState()` helper that calls `peekRawPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day-rollover migration in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
 
-**Plan date freshness + rollover (v6.2):** `peekRawPlan()` returns the parsed/migrated plan without a date gate. If `parsed.date !== todayISO()`, `loadInitialState` (a) builds a `SavedDayPlan` for the stale plan with `label: "Auto: {date}"` and prepends it to `history`, *replacing* any same-date entry (auto-save is authoritative — it reflects end-of-day truth), and (b) runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for intentions where any linked task is uncompleted, appending them to `life.backlog` with `reason: 'rollover'`. The returned plan is fresh. Auto-rollover deliberately does NOT touch Todoist — yesterday's scheduled tasks remain visibly overdue there.
+**Plan date freshness + rollover (v6.2):** `peekRawPlan()` returns the parsed/migrated plan without a date gate. If `parsed.date !== todayISO()`, `loadInitialState` runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for intentions where at least one intention-bound (non-habit) linked task is uncompleted, appending them to `life.backlog` with `reason: 'rollover'`. The returned plan is fresh. `SavedDayPlan` history is left untouched — there is no automatic EoD save; the backlog already preserves the meaningful unfinished part of yesterday, so a separate snapshot would be redundant. Manual `SAVE_DAY` remains the only way to add to history. Auto-rollover deliberately does NOT touch Todoist either — yesterday's scheduled tasks remain visibly overdue there.
 
 **Migration chain:** Plans are stored with a `_wizardSteps` marker (legacy) and, since v5, an explicit `_schemaVersion` marker (now `6.2`, a JSON float). On load, `migratePlan()` runs the chain: v1 (tasks) → v2 (intentions) → v3 (intentionSessions) → v4 (linkedTasks + taskSessions) → v4.1 (estimatedMinutes) → v5 (no plan-shape change; `LifeContext` is loaded separately) → v6 (strips the deprecated `Intention.isHabit` / `LinkedTask.isHabit` flags on read; initializes `plan.habitLog: []` if missing; `loadLifeContext` defaults each habit's `kind` to `'stabilizer'` when missing; `loadSettings` injects `taskCapDefaults` and `sessionBufferMinutes` when absent) → v6.1 (drops habit-derived intentions and re-anchors their LinkedTasks as orphans with `sourceHabitId` set + `type: 'background'`; strips `Intention.sourceHabitId` / `skippedForToday`; in `loadLifeContext`, stabilizers' `autoLinkTodoistId` migrates to `todoistTaskId`, `maxBlockMinutes` migrates to `targetDurationMinutes`, `windowBehavior` defaults to `'lenient'`) → **v6.2** (no plan-shape change; just stamps the new marker; `loadLifeContext` defaults `backlog` to `[]`). Schema `6.2` stamps `_schemaVersion: 6.2` onto plan, settings, life, and saved-session payloads on every persist.
 
@@ -164,7 +168,7 @@ This is the heart of the application. It manages:
 - `INJECT_HABIT_TASKS` (v6.1, replaces `INJECT_HABIT_INTENTIONS`) is idempotent — it skips habits whose `id` is already present as a `LinkedTask.sourceHabitId`. The action's payload (`HabitTaskInjection[]`) is precomputed by `lib/habitsTodoistSync.ts → computeHabitTasksToInject(...)` from the live Todoist `taskMap` + active session slots; only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify. Light-coherent habits never appear here.
 - `SKIP_HABIT_TASK` (v6.1) marks a habit-task `skippedForToday` and clears it from session assignments — the LinkedTask itself is kept so re-injection won't duplicate it for the day. `completed` stays false on a skip: it's "not today", not a completion, and shouldn't inflate the done-counter. Idempotency against re-injection is preserved via `sourceHabitId` presence alone.
 - Light-coherent habits surface only via the Light Pool, which writes to `plan.habitLog` and never touches `intentions`/`linkedTasks`/`taskSessions`.
-- **`MOVE_INTENTION_TO_BACKLOG`** (v6.2) mirrors `REMOVE_INTENTION`'s plan-side cleanup (scrubs `plan.linkedTasks` + `plan.taskSessions`) and additionally appends a `BacklogEntry` to `life.backlog` with `taskSnapshots` captured from current `linkedTasks[].titleSnapshot`.
+- **`MOVE_INTENTION_TO_BACKLOG`** (v6.2) mirrors `REMOVE_INTENTION`'s plan-side cleanup (scrubs `plan.linkedTasks` + `plan.taskSessions`) and additionally appends a `BacklogEntry` to `life.backlog`. `buildBacklogEntry` splits the intention's linked tasks: completed ones drop from `linkedTaskIds` (their titles go into `completedTaskTitles` for context); pending ones round-trip with `titleSnapshot`s in `taskSnapshots`.
 - **`RESTORE_FROM_BACKLOG`** (v6.2) is idempotent against re-adds: if an intention with the same id is already in `plan.intentions`, the action just removes the backlog entry. Same-`todoistId` tasks already in `plan.linkedTasks` are skipped on rebuild.
 - **`DELETE_BACKLOG_ENTRY`** (v6.2) is pure; the caller (`useIntentionRemoval().discardFromBacklog`) is responsible for the Todoist unschedule.
 - **Intention removal Todoist side-effect** (v6.2): all paths that remove an intention from today — `REMOVE_INTENTION`, `MOVE_INTENTION_TO_BACKLOG`, `DELETE_BACKLOG_ENTRY` — route through the `useIntentionRemoval()` hook, which calls `unscheduleIntentionTasks(...)` *before* dispatching. Habit-derived orphan tasks (`sourceHabitId` set) are explicitly skipped (they're owned by `syncHabitToTodoist`). Auto-rollover into the backlog is the deliberate exception: yesterday's tasks remain scheduled in Todoist so they show up as overdue.
@@ -277,16 +281,9 @@ The most complex component. Used in four places with different configurations:
 
 **`InsightCard` (Dashboard player row):** A consolidated side-card that alternates between the static Transition Tips cheat-sheet and a True Rest recovery cue on a 2-minute auto-cycle. State is driven by a step counter (even = tips, odd = rest cue); each `setInterval` tick or manual `›` click increments the step and resets the timer. The cue index is `Math.floor(step / 2) % cues.length`, so every rest-mode appearance shows the next cue in the catalog. The content area is wrapped in a `flex flex-col min-h-[6rem]` container so the card height stays consistent across both views.
 
-**`TrueRestCard` remaining variants:** The `card` variant has been replaced by `InsightCard`. Only `inline` (check-in modal, low-energy states) and `banner` (between-session prompt when next slot is within 60 min) remain in use. Both are read-only — no skip button.
+**`TrueRestCard` variants:** The original `card` variant has been replaced by `InsightCard` (see above). Only `inline` (check-in modal, low-energy states) and `banner` (between-session prompt when next slot is within 60 min) remain in use. Both are read-only — no skip button.
 
 **Management page (`/rest-cues`):** `RestCuesManager` uses `LifeShell` with a breadcrumb. A single `Card` hosts filter pills (All / Physical / Breath / Sensory) and a flat list of cues. Each category has a distinct left-border accent color. Edit/Delete actions are hover-revealed per row. Add form appears inline at the top of the list. "Reset to defaults" (only shown when customized) dispatches `REPLACE_REST_CUES(undefined)`.
-
-**Dashboard link:** The `card` variant footer includes a `Manage →` link to `/rest-cues`. The `/life` summary card for True Rest also has a `Manage` button.
-
-**Three surfaces:**
-- `variant='card'` — Dashboard side rail, sequential cycling with `›` skip. Always visible.
-- `variant='inline'` — embedded inside `CheckInModal` when the user signals a low-resource state.
-- `variant='banner'` — between-session prompt on the Dashboard. Gated by `useCurrentSession().nextSessionStartsWithin(60)`.
 
 True Rest is intentionally not a Habit: no logging, no streak, no completion. It's a gentle prompt and nothing else.
 
@@ -326,34 +323,37 @@ Background tasks count once per assignment: a 20-min background task assigned to
 - **Habit-save lockout during migration (post-v6.1)**: while `migrating` is true, the **New Habit** button + per-row **Pause/Activate**, **Edit**, **Delete** buttons are all disabled. Migration is user-initiated (not a background sync), so the simple lockout was preferred over a mutex; it eliminates the race where a concurrent `handleCreate` would re-invoke `ensureHabitsProject` in parallel with the loop.
 - **Default project picker**: `TodoistSetup` (Settings → Integrations) renders a dropdown of the user's Todoist projects, persisted to `AppSettings.habitsTodoistProjectId`. Leaving it on "Auto-create" defers to `ensureHabitsProject`'s lazy-create flow. A **↻ Refresh projects** affordance next to the heading triggers `actions.refreshProjects({ force: true })` so users who just created a project in Todoist can pick it without reloading. When the stored `habitsTodoistProjectId` references a project that no longer exists in the loaded list, a stale-default warning banner appears with a **Clear** button; the select also shows the "Auto-create" option as the displayed value so the UI matches what the next save will actually do.
 - **Per-habit project override**: `HabitForm` (stabilizer-only Schedule section) renders the same project dropdown with a "Use default" option. Persisted to `Habit.todoistProjectId`. Editing this on an already-synced habit causes the next save to move the existing Todoist task into the new project. The form receives an `onRefreshProjects` / `refreshingProjects` pair from `HabitsLibrary` and renders the same **↻ Refresh** affordance. When `initial.todoistProjectId` doesn't match any current project, a stale-override warning is rendered above the select and the displayed value falls back to "Use default" so the UI reflects the post-save state.
-- **On Step 1 wizard mount**: `Step1Intentions` calls `computeHabitTasksToInject(...)` and dispatches `INJECT_HABIT_TASKS`. Re-fires when the Todoist `taskMap.size`, `life.habits`, or `life.activeSeasonId` changes (idempotent at the reducer level).
+- **On Step 1 wizard mount**: `Step1Intentions` calls `computeHabitTasksToInject(...)` and dispatches `INJECT_HABIT_TASKS`. Re-fires when the Todoist `taskMap.size`, `life.habits`, `life.activeSeasonId`, `plan.linkedTasks`, or `settings.sessionSlots` / `settings.taskCapDefaults` change. The reducer is idempotent — redundant dispatches are harmless no-ops.
 
 ### 6.8 Intentions Backlog (v6.2)
 
-**Files:** [src/lib/backlog.ts](../src/lib/backlog.ts), [src/lib/intentionUnschedule.ts](../src/lib/intentionUnschedule.ts), [src/components/dashboard/HistorySidebar.tsx](../src/components/dashboard/HistorySidebar.tsx), [src/components/dashboard/BacklogTab.tsx](../src/components/dashboard/BacklogTab.tsx), [src/components/ui/EditableTaskList.tsx](../src/components/ui/EditableTaskList.tsx), [src/components/wizard/Step3Schedule.tsx](../src/components/wizard/Step3Schedule.tsx).
+**Files:** [src/lib/backlog.ts](../src/lib/backlog.ts), [src/lib/intentionUnschedule.ts](../src/lib/intentionUnschedule.ts) (pure helper), [src/hooks/useIntentionRemoval.ts](../src/hooks/useIntentionRemoval.ts) (hook), [src/components/dashboard/HistorySidebar.tsx](../src/components/dashboard/HistorySidebar.tsx), [src/components/dashboard/BacklogTab.tsx](../src/components/dashboard/BacklogTab.tsx), [src/components/ui/EditableTaskList.tsx](../src/components/ui/EditableTaskList.tsx), [src/components/wizard/Step3Schedule.tsx](../src/components/wizard/Step3Schedule.tsx).
 
 **Pure helpers in `lib/backlog.ts`:**
 - `hasUnfinishedWork(intention, plan)` — true iff the intention has any intention-bound (non-habit), non-completed `LinkedTask`. Empty-linked-task intentions return false.
-- `buildBacklogEntry(intention, plan, reason)` — snapshots an intention into a `BacklogEntry`, capturing `taskSnapshots` from current `LinkedTask.titleSnapshot` so future bring-back can display titles even if the Todoist tasks are gone.
+- `buildBacklogEntry(intention, plan, reason)` — snapshots an intention into a `BacklogEntry`. **Splits tasks into pending vs completed:** pending ids stay on `intention.linkedTaskIds` (with their `titleSnapshot`s in `taskSnapshots`); completed tasks are stripped from `linkedTaskIds` and only their titles ride along in `completedTaskTitles` as read-only context. This prevents a completed Todoist task from being rebuilt as a fresh `unclassified` LinkedTask on restore — which would otherwise render as "stale" in Step 2 since completed Todoist tasks are absent from the active REST API cache.
 - `harvestStalePlan(plan)` — produces `BacklogEntry[]` for all intentions with unfinished work, marked `reason: 'rollover'`.
-- `rebuildLinkedTasksForBacklogEntry(entry, taskCache)` — reconstructs fresh `LinkedTask` rows on restore (`type: 'unclassified'`, no estimate, no assignment, not completed). Title snapshot resolution: `taskCache[id]` (live Todoist) → `entry.taskSnapshots?.[id]` (archived) → undefined (id is the last-resort label).
-- `buildAutoSaveEntry(plan, wizardStepsCount, schemaVersion)` — builds a `SavedDayPlan` with `label: "Auto: {plan.date}"` for the rollover path.
+- `rebuildLinkedTasksForBacklogEntry(entry, taskCache)` — reconstructs fresh `LinkedTask` rows on restore (`type: 'unclassified'`, no estimate, no assignment, not completed) **only for the pending ids in `entry.intention.linkedTaskIds`**. Completed tasks (captured in `completedTaskTitles`) are not rebuilt. Title resolution: `taskCache[id]` (live Todoist) → `entry.taskSnapshots?.[id]` (archived) → undefined (id is the last-resort label).
 
-**Unschedule helper + hook in `lib/intentionUnschedule.ts`:**
+**Unschedule pure helper in `lib/intentionUnschedule.ts`:**
 - `unscheduleIntentionTasks(todoistIds, linkedTasks, actions, taskMap)` — per id: skip habit-derived (`sourceHabitId` set), skip missing-from-cache, skip already-unscheduled (`!t.due`); otherwise `actions.updateTask(id, { due_string: 'no date' })`. Runs calls in parallel via `Promise.allSettled`. Errors logged but never block.
+
+**Hook in `hooks/useIntentionRemoval.ts`:**
 - `useIntentionRemoval()` — the single boundary for intention removal. Three operations: `moveToBacklog(intentionId)`, `removeIntention(intentionId)`, `discardFromBacklog(backlogId)`. Each unschedules first, then dispatches.
 
 **Lifecycle:**
 
-- **Day rollover** (`loadInitialState` in `DayPlanContext`): when `peekRawPlan()` returns a plan with `date !== todayISO()`, auto-save the stale plan to `history` (label `Auto: <date>`, replacing any same-date entry — auto is authoritative) and append `harvestStalePlan(plan)` to `life.backlog`. Returns a fresh plan. **Does not touch Todoist** — yesterday's due dates remain in place so the user sees their overdue items in Todoist.
+- **Day rollover** (`loadInitialState` in `DayPlanContext`): when `peekRawPlan()` returns a plan with `date !== todayISO()`, append `harvestStalePlan(plan)` to `life.backlog` and return a fresh plan. No auto-save to `history` — `SavedDayPlan` is manual-only. **Does not touch Todoist** — yesterday's due dates remain in place so the user sees their overdue items in Todoist.
 - **Manual move-to-backlog** (`📥` button in `EditableTaskList` row or Step 3 overview panel): `useIntentionRemoval().moveToBacklog(intentionId)` → unschedule Todoist tasks → dispatch `MOVE_INTENTION_TO_BACKLOG`.
 - **Manual delete** (`🗑` button + confirm modal): `useIntentionRemoval().removeIntention(intentionId)` → unschedule → dispatch `REMOVE_INTENTION`. **This fixes the v6.1 bug** where deleted intentions left their Todoist tasks scheduled.
-- **Bring to today** ("Bring to today" button in `BacklogTab`): build a `taskCache` from live `taskMap`, dispatch `RESTORE_FROM_BACKLOG`. Reducer reconstructs fresh `LinkedTask` rows; user re-flows them through Step 2 + Step 3. If `plan.setupComplete === false`, the handler also navigates to `/setup`.
+- **Bring to today** ("Bring to today" button in `BacklogTab`): build a `taskCache` from live `taskMap`, dispatch `RESTORE_FROM_BACKLOG`. Reducer reconstructs fresh `LinkedTask` rows for the entry's pending ids only; user re-flows them through Step 2 + Step 3. If `plan.setupComplete === false`, the handler also navigates to `/setup`.
 - **Discard from backlog** ("Discard" button + confirm modal): `useIntentionRemoval().discardFromBacklog(backlogId)` → unschedule → dispatch `DELETE_BACKLOG_ENTRY`.
 
 **Sidebar UX:**
 
-`HistorySidebar` (renamed from `SavedSessions.tsx`) is a controlled-tab container — parent (Dashboard or WizardLayout) holds `{ panelOpen, panelTab }` state and passes `tab` + `onTabChange` to the sidebar. The header in both surfaces gains a second `📥 Backlog (N)` button. Clicking either header button toggles the panel and switches tab in one click: same-tab click closes the panel; different-tab click opens (or stays open) and switches.
+`HistorySidebar` (renamed from `SavedSessions.tsx`) is a controlled-tab container — parent (Dashboard or WizardLayout) holds `{ panelOpen, panelTab }` state and passes `tab` + `onTabChange` to the sidebar. Both surfaces expose a single `Work Items` header button (count suffix when `life.backlog.length > 0`) that toggles `panelOpen`. The Saved Sessions vs Backlog selection lives entirely inside the sidebar's own tab toggle — header-level surfaces were initially duplicated (one button per tab) but collapsed to one to avoid two UI affordances pointing at the same panel.
+
+The `BacklogTab` row renders the intention title + `{N} pending · from <date> · <reason>` line, with an optional `✓ Done: {titles}` annotation below (sourced from `entry.completedTaskTitles`, truncated with a hover tooltip showing the full list).
 
 **Step 3 overview panel:** a compact "Today's intentions (N)" list at the top of Phase 1, each row with the intention title, task count, and `📥` / `🗑` icon buttons (hover-revealed). The overcommitment-realization moment now has an in-place affordance.
 
@@ -399,12 +399,12 @@ All persistence is via `localStorage`. No backend or database is used.
 | `orchestrate-active-playlist` | Playlist ID string | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<string, string>` | `MusicProvider` |
 
-**Backup affordance (v5):** The data flow is split between two surfaces by intent — file I/O lives in the Settings page (`/settings?tab=data`), and restoring a saved session as today's plan lives in the `SavedSessions` sidebar.
+**Backup affordance (v5):** The data flow is split between two surfaces by intent — file I/O lives in the Settings page (`/settings?tab=data`), and restoring a saved session as today's plan lives in the `HistorySidebar`.
 
 - **Settings page → "Data" tab** (rendered by `DataManagement`): Full Backup, Import Backup, Import Sessions, Export All Sessions. The Full Backup export bundles `{ settings, life, history, _backupVersion: 1 }` into a single JSON file. Import Backup dispatches `IMPORT_BACKUP`, which merges by id — existing entries are never overwritten, new entries are appended. Import Sessions dispatches `IMPORT_SESSIONS` for a sessions-only file. After a successful import that brings in sessions, the page shows a clickable "Open Saved Sessions →" hint that navigates to `/setup` (where the sidebar lives).
-- **`SavedSessions` sidebar** (Dashboard + Wizard, always available, toggleable): per-row Restore / Export / Delete on each saved entry. Restore dispatches `RESTORE_DAY`, replacing the current plan and navigating to `/`.
+- **`HistorySidebar`** (Dashboard + Wizard, always available, toggleable): Sessions tab has per-row Restore / Export / Delete on each saved entry. Restore dispatches `RESTORE_DAY`, replacing the current plan and navigating to `/`. Backlog tab shows parked intentions with Bring-to-today / Discard affordances.
 
-The Settings page (`/settings`) is reachable from the cog icon on Dashboard, Welcome, and every Wizard step. It uses a vertical tab layout with three tabs: Integrations, Capacity, and Data. The active tab highlights in the orchestrate accent green. Together with the SavedSessions sidebar, these are the user's safety net in lieu of a backend sync server.
+The Settings page (`/settings`) is reachable from the cog icon on Dashboard, Welcome, and every Wizard step. It uses a vertical tab layout with three tabs: Integrations, Capacity, and Data. The active tab highlights in the orchestrate accent green. Together with the HistorySidebar, these are the user's safety net in lieu of a backend sync server.
 
 ---
 
@@ -464,20 +464,22 @@ src/
 │   ├── useNotifications.ts     # Web Notifications wrapper
 │   ├── useResizablePanel.ts    # Drag-to-resize
 │   ├── useTheme.ts             # Light/dark theme
-│   └── useTodoist.ts           # Todoist consumer hooks + types
+│   ├── useTodoist.ts           # Todoist consumer hooks + types
+│   ├── useIntentionRemoval.ts  # v6.2: moveToBacklog, removeIntention, discardFromBacklog
+│   └── useConfirmModal.ts      # Reusable confirm-dialog state hook
 │
 ├── lib/
 │   ├── crypto.ts               # AES-256-GCM encryption/decryption
 │   ├── time.ts                 # timeToMinutes, minutesToTime, addMinutesToTime, formatDuration, todayISO
-│   ├── habits.ts               # v5: habitMatchesDate; v6: getLightPoolHabits, getActiveHabits, getAnchorHabits; v6.1: isHabitDerivedTask, getHabitTasksForDay
+│   ├── habits.ts               # v5: habitMatchesDate; v6: getLightPoolHabits, getActiveHabits, getAnchorHabits; v6.1: isHabitDerivedTask
 │   ├── habitsTodoistSync.ts    # v6.1: buildDueString, ensureHabitsProject, syncHabitToTodoist, computeHabitTasksToInject
-│   ├── backlog.ts              # v6.2: hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry, buildAutoSaveEntry
-│   ├── intentionUnschedule.ts  # v6.2: unscheduleIntentionTasks + useIntentionRemoval hook
+│   ├── backlog.ts              # v6.2: hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry
+│   ├── intentionUnschedule.ts  # v6.2: unscheduleIntentionTasks pure helper
 │   ├── seasons.ts              # v5: findActiveSeason, getSeasonProgress
-│   ├── tasks.ts                # getTaskTitle (Todoist content → titleSnapshot → ID), collectDescendantIds (cascade-delete BFS)
+│   ├── tasks.ts                # getTaskTitle (Todoist content → titleSnapshot → ID; accepts array or Map), collectDescendantIds (cascade-delete BFS)
 │   ├── capacity.ts             # v6: computeSessionCapacity / computeAllSessionCapacities
 │   ├── spotify.ts              # spotifyPlaylistId, isValidSpotifyUrl
-│   └── todoistApi.ts           # API_BASE constant (dev proxy vs prod direct)
+│   └── todoistApi.ts           # API_BASE constant (dev proxy vs prod direct), validateTodoistToken
 │
 ├── data/
 │   ├── sessions.ts             # Default session slot definitions
@@ -499,7 +501,6 @@ src/
 │   │   ├── MusicPanel.tsx      # MusicProvider, PlaylistSelector, SpotifyPlayer
 │   │   ├── DigitalClock.tsx    # Live clock
 │   │   ├── InsightCard.tsx     # Side-rail card cycling between Transition Tips and a True Rest cue (2-min auto-advance, manual ›)
-│   │   ├── TransitionTips.tsx  # Static music tips card (unused on Dashboard; preserved for reference)
 │   │   ├── HistorySidebar.tsx  # v6.2: was SavedSessions.tsx; controlled-tab container hosting SavedSessionsTab + BacklogTab
 │   │   ├── BacklogTab.tsx      # v6.2: per-row Bring-to-today / Discard for life.backlog
 │   │   ├── LightPoolPanel.tsx       # v6: Light Pool surface on Dashboard
@@ -525,7 +526,7 @@ src/
 │   │   ├── SeasonDetail.tsx    # /season/:id — single-season editor
 │   │   ├── SeasonForm.tsx      # Reusable create/edit form
 │   │   ├── HabitsLibrary.tsx   # /habits — CRUD with anchor protection
-│   │   ├── HabitForm.tsx       # Reusable create/edit form (v6: kind + maxBlockMinutes inputs)
+│   │   ├── HabitForm.tsx       # Reusable create/edit form (v6.1: kind, targetTime, targetDurationMinutes, windowBehavior, project override)
 │   │   ├── LightPoolSection.tsx# v6: /life section — today's pool + weekly cadence
 │   │   ├── RestCuesManager.tsx  # /rest-cues — True Rest cue CRUD with category filter pills
 │   │   └── ActiveSeasonBadge.tsx # Badge in Dashboard + Wizard headers
@@ -533,6 +534,7 @@ src/
 │       ├── Button.tsx
 │       ├── Card.tsx
 │       ├── Modal.tsx
+│       ├── ConfirmModal.tsx    # Reusable confirm dialog (title + body + confirm/cancel buttons)
 │       ├── ProgressBar.tsx
 │       ├── ErrorBoundary.tsx
 │       ├── EditableTaskList.tsx

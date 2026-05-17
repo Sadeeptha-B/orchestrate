@@ -30,10 +30,10 @@ These are explicit opinions, not hedges. Proposals that violate them should be c
 
 These ideas have survived across iterations and shape future direction. They are part of the product, not an implementation detail.
 
-- **Intention** — a high-level goal for *today*. Today-scoped, not epic-scoped. Owned by Orchestrate. May be auto-injected from a Habit (carries `sourceHabitId`).
+- **Intention** — a high-level goal for *today*. Today-scoped, not epic-scoped. Owned by Orchestrate. Always user-created (v6.1 removed habit-to-intention auto-injection).
 - **Task** — a concrete unit of work, owned by Todoist. Linked to an intention inside Orchestrate.
 - **Season** — a medium-horizon focus period (typically 4–12 weeks) with a primary theme, supporting goals, explicit non-goals, success criteria, and an optional capacity budget. Exactly one season is active at a time. Added in v5 as the bridge between life direction and daily execution.
-- **Habit** — a first-class recurring stabilizer with its own recurrence rule, minimum-viable form, trigger cue, and anchor flag. Active habits become daily intentions automatically. Replaces the deprecated `LinkedTask.isHabit` flag. Habit-derived tasks are always background.
+- **Habit** — a first-class recurring entity discriminated by `kind`: `stabilizer` (synced to Todoist, surfaced as session-assigned LinkedTasks) or `light-coherent` (Light Pool micro-gap fillers). Owns recurrence rule, minimum-viable form, trigger cue, anchor flag, and season scope. Stabilizer habit-tasks are always background.
 - **Anchor** — a habit treated as load-bearing for the user's life (sleep, meditation, gym, shutdown, weekly review). Anchors are protected from accidental deletion and remain visible across modes.
 - **Session** — a fixed time block in the day. Defaults are early-morning (6–8), morning (9–13), afternoon (14:30–18:30), night (20:30–23); these are user-configurable. Tasks are assigned to sessions.
 - **Main vs background task** — *main* tasks are primary work threads, exclusive to one session. *Background* tasks are habit/nudge tasks that can recur across multiple sessions in a day.

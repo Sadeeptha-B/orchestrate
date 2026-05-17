@@ -1,18 +1,37 @@
 import type { LinkedTask } from '../types';
 import type { TodoistTask } from '../hooks/useTodoist';
 
+export function buildLinkedTaskMap(linkedTasks: LinkedTask[]): Map<string, LinkedTask> {
+    return new Map(linkedTasks.map((task) => [task.todoistId, task]));
+}
+
+export function getLinkedTasksByIds(
+    taskIds: string[],
+    linkedTasks: LinkedTask[] | Map<string, LinkedTask>,
+): LinkedTask[] {
+    const linkedTaskMap = linkedTasks instanceof Map
+        ? linkedTasks
+        : buildLinkedTaskMap(linkedTasks);
+
+    return taskIds
+        .map((id) => linkedTaskMap.get(id))
+        .filter((task): task is LinkedTask => task !== undefined);
+}
+
 /**
  * Resolve the display title for a Todoist task ID with the standard fallback chain:
  * live Todoist content → cached `titleSnapshot` on the LinkedTask → the raw ID.
  */
 export function getTaskTitle(
     todoistId: string,
-    linkedTasks: LinkedTask[],
+    linkedTasks: LinkedTask[] | Map<string, LinkedTask>,
     taskMap: Map<string, Pick<TodoistTask, 'content'>>,
 ): string {
     const live = taskMap.get(todoistId)?.content;
     if (live) return live;
-    const lt = linkedTasks.find((t) => t.todoistId === todoistId);
+    const lt = linkedTasks instanceof Map
+        ? linkedTasks.get(todoistId)
+        : linkedTasks.find((t) => t.todoistId === todoistId);
     return lt?.titleSnapshot ?? todoistId;
 }
 

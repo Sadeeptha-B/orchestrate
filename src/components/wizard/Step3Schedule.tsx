@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { SessionCapacityBanner } from '../dashboard/SessionCapacityBanner';
 import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
@@ -14,7 +15,7 @@ import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
 import { isHabitDerivedTask } from '../../lib/habits';
-import { useIntentionRemoval } from '../../lib/intentionUnschedule';
+import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import type { Intention, LinkedTask } from '../../types';
 
 export function Step3Schedule() {
@@ -23,10 +24,11 @@ export function Step3Schedule() {
     const { taskMap } = useTodoistData();
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [phase, setPhase] = useState<'assign' | 'time'>('assign');
+    const [intentionsOpen, setIntentionsOpen] = useState(true);
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
         () => remainingSessions[0]?.id ?? null,
     );
-    const [confirmDelete, setConfirmDelete] = useState<Intention | null>(null);
+    const confirmDelete = useConfirmModal<Intention>();
 
     const mainTasks = plan.linkedTasks.filter((lt) => lt.type === 'main' && !lt.completed);
     const backgroundTasks = plan.linkedTasks.filter((lt) => lt.type === 'background' && !lt.completed);
@@ -91,48 +93,68 @@ export function Step3Schedule() {
                         </p>
                     </div>
 
-                    {/* v6.2: intentions overview — defer or delete intentions when overcommitted */}
+                    {/* Intentions — compact reference strip */}
                     {plan.intentions.length > 0 && (
-                        <div className="rounded-lg border border-border bg-subtle/30 px-3 py-2">
-                            <h3 className="text-xs font-medium text-text-light uppercase tracking-wider mb-1.5">
+                        <div>
+                            <button
+                                onClick={() => setIntentionsOpen((o) => !o)}
+                                className="flex items-center gap-1.5 text-xs font-medium text-text-light uppercase tracking-wider mb-1.5 cursor-pointer hover:text-text transition-colors"
+                            >
+                                <span className={`transition-transform duration-150 ${intentionsOpen ? 'rotate-90' : ''}`}>›</span>
                                 Today&apos;s intentions ({plan.intentions.length})
-                            </h3>
-                            <ul className="space-y-1">
+                            </button>
+                            {intentionsOpen && <div className="rounded-md border border-border/50 divide-y divide-border/30">
                                 {plan.intentions.map((intention) => {
-                                    const taskCount = plan.linkedTasks.filter(
-                                        (lt) => lt.intentionId === intention.id,
-                                    ).length;
+                                    const intentionMain = mainTasks.filter((lt) => lt.intentionId === intention.id);
+                                    const intentionBg = backgroundTasks.filter((lt) => lt.intentionId === intention.id);
                                     return (
-                                        <li
-                                            key={intention.id}
-                                            className="flex items-center gap-2 text-sm group"
-                                        >
-                                            <span className="flex-1 min-w-0 truncate">
+                                        <div key={intention.id} className="flex items-center gap-3 px-3 py-1.5 group">
+                                            <span className="text-sm font-medium shrink-0 max-w-44 truncate">
                                                 {intention.title}
-                                                <span className="ml-2 text-xs text-text-light">
-                                                    {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
-                                                </span>
                                             </span>
-                                            <button
-                                                onClick={() => void moveToBacklog(intention.id)}
-                                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-sm cursor-pointer opacity-60 group-hover:opacity-100"
-                                                title="Move to backlog"
-                                                aria-label={`Move ${intention.title} to backlog`}
-                                            >
-                                                📥
-                                            </button>
-                                            <button
-                                                onClick={() => setConfirmDelete(intention)}
-                                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors text-sm cursor-pointer opacity-60 group-hover:opacity-100"
-                                                title="Delete"
-                                                aria-label={`Delete ${intention.title}`}
-                                            >
-                                                🗑
-                                            </button>
-                                        </li>
+                                            <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+                                                {intentionMain.map((lt) => (
+                                                    <span
+                                                        key={lt.todoistId}
+                                                        className="px-1.5 py-0.5 text-[10px] rounded bg-accent/10 text-accent/80"
+                                                    >
+                                                        {getTaskLabel(lt)}
+                                                    </span>
+                                                ))}
+                                                {intentionBg.map((lt) => (
+                                                    <span
+                                                        key={lt.todoistId}
+                                                        className="px-1.5 py-0.5 text-[10px] rounded bg-surface-dark text-text-light/70"
+                                                    >
+                                                        {getTaskLabel(lt)}
+                                                    </span>
+                                                ))}
+                                                {intentionMain.length === 0 && intentionBg.length === 0 && (
+                                                    <span className="text-[10px] text-text-light/50">No tasks</span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                                <button
+                                                    onClick={() => void moveToBacklog(intention.id)}
+                                                    className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-sm cursor-pointer"
+                                                    title="Move to backlog"
+                                                    aria-label={`Move ${intention.title} to backlog`}
+                                                >
+                                                    📥
+                                                </button>
+                                                <button
+                                                    onClick={() => confirmDelete.open(intention)}
+                                                    className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors text-sm cursor-pointer"
+                                                    title="Delete"
+                                                    aria-label={`Delete ${intention.title}`}
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                        </div>
                                     );
                                 })}
-                            </ul>
+                            </div>}
                         </div>
                     )}
 
@@ -154,26 +176,6 @@ export function Step3Schedule() {
                         </div>
                     )}
 
-                    {/* Unassigned main tasks */}
-                    {mainTasks.filter((lt) => lt.assignedSessions.length === 0).length > 0 && (
-                        <div>
-                            <h3 className="text-sm font-medium text-text-light mb-2">Unassigned main tasks</h3>
-                            <div className="flex flex-wrap gap-2">
-                                {mainTasks
-                                    .filter((lt) => lt.assignedSessions.length === 0)
-                                    .map((lt) => (
-                                        <span
-                                            key={lt.todoistId}
-                                            className="px-3 py-1.5 text-xs rounded-full bg-accent-subtle text-accent border border-accent/20"
-                                            title={lt.intentionId ? intentionMap.get(lt.intentionId)?.title : undefined}
-                                        >
-                                            {getTaskLabel(lt)}
-                                        </span>
-                                    ))}
-                            </div>
-                        </div>
-                    )}
-
                     {/* v6.1: Unassigned habit-tasks tray (orphan tasks with no session yet) */}
                     {unassignedHabitTasks.length > 0 && (
                         <div className="rounded-lg border border-accent/20 bg-accent-subtle/30 px-3 py-2">
@@ -188,29 +190,6 @@ export function Step3Schedule() {
                                         className="px-2.5 py-1 text-xs rounded-full bg-accent-subtle text-accent border border-accent/30"
                                     >
                                         {getTaskLabel(lt)}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Background tasks overview */}
-                    {backgroundTasks.length > 0 && (
-                        <div>
-                            <h3 className="text-sm font-medium text-text-light mb-2">Background tasks</h3>
-                            <div className="flex flex-wrap gap-2">
-                                {backgroundTasks.map((lt) => (
-                                    <span
-                                        key={lt.todoistId}
-                                        className="px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light border border-border"
-                                        title={lt.intentionId ? intentionMap.get(lt.intentionId)?.title : 'Habit'}
-                                    >
-                                        {isHabitDerivedTask(lt) && '🔁 '}{getTaskLabel(lt)}
-                                        {lt.assignedSessions.length > 0 && (
-                                            <span className="ml-1 text-accent">
-                                                ({lt.assignedSessions.length} session{lt.assignedSessions.length !== 1 ? 's' : ''})
-                                            </span>
-                                        )}
                                     </span>
                                 ))}
                             </div>
@@ -506,33 +485,19 @@ export function Step3Schedule() {
                 </div>
             )}
 
-            <Modal
-                open={confirmDelete !== null}
-                onClose={() => setConfirmDelete(null)}
+            <ConfirmModal
+                open={confirmDelete.value !== null}
+                onClose={confirmDelete.close}
+                onConfirm={() => confirmDelete.value ? removeIntention(confirmDelete.value.id) : Promise.resolve()}
                 title="Delete intention permanently?"
+                confirmLabel="Delete"
             >
                 <p className="text-sm text-text-light mb-4">
-                    <strong>{confirmDelete?.title}</strong> will be removed from today.
+                    <strong>{confirmDelete.value?.title}</strong> will be removed from today.
                     Any of its linked Todoist tasks that are currently scheduled will be unscheduled.
                     To park it for later instead, cancel and click 📥.
                 </p>
-                <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(null)}>
-                        Cancel
-                    </Button>
-                    <Button
-                        size="sm"
-                        onClick={async () => {
-                            if (!confirmDelete) return;
-                            const id = confirmDelete.id;
-                            setConfirmDelete(null);
-                            await removeIntention(id);
-                        }}
-                    >
-                        Delete
-                    </Button>
-                </div>
-            </Modal>
+            </ConfirmModal>
         </WizardLayout>
     );
 }

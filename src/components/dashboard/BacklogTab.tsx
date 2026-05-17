@@ -1,11 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
-import { useIntentionRemoval } from '../../lib/intentionUnschedule';
+import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { useConfirmModal } from '../../hooks/useConfirmModal';
 
 /**
  * v6.2: list view of `life.backlog` shown inside the `HistorySidebar`'s Backlog tab.
@@ -17,7 +18,7 @@ export function BacklogTab() {
     const { taskMap } = useTodoistData();
     const { discardFromBacklog } = useIntentionRemoval();
     const navigate = useNavigate();
-    const [confirmDiscard, setConfirmDiscard] = useState<string | null>(null);
+    const confirmDiscard = useConfirmModal<string>();
 
     const entries = useMemo(
         () => [...(life.backlog ?? [])].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt)),
@@ -51,7 +52,8 @@ export function BacklogTab() {
     return (
         <div className="space-y-2">
             {entries.map((entry) => {
-                const taskCount = entry.intention.linkedTaskIds.length;
+                const pendingCount = entry.intention.linkedTaskIds.length;
+                const completedTitles = entry.completedTaskTitles ?? [];
                 return (
                     <Card key={entry.id} className="!p-3">
                         <div className="space-y-2">
@@ -60,10 +62,18 @@ export function BacklogTab() {
                                     {entry.intention.title}
                                 </p>
                                 <p className="text-xs text-text-light">
-                                    {taskCount} {taskCount === 1 ? 'task' : 'tasks'} &middot;
+                                    {pendingCount} pending &middot;
                                     {' '}from {entry.archivedFromDate} &middot;
                                     {' '}{entry.reason === 'rollover' ? 'rolled over' : 'manual'}
                                 </p>
+                                {completedTitles.length > 0 && (
+                                    <p
+                                        className="text-xs text-text-light/70 truncate"
+                                        title={completedTitles.join('\n')}
+                                    >
+                                        ✓ Done: {completedTitles.join(', ')}
+                                    </p>
+                                )}
                             </div>
                             <div className="flex gap-2">
                                 <Button
@@ -76,7 +86,7 @@ export function BacklogTab() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => setConfirmDiscard(entry.id)}
+                                    onClick={() => confirmDiscard.open(entry.id)}
                                 >
                                     Discard
                                 </Button>
@@ -86,32 +96,18 @@ export function BacklogTab() {
                 );
             })}
 
-            <Modal
-                open={confirmDiscard !== null}
-                onClose={() => setConfirmDiscard(null)}
+            <ConfirmModal
+                open={confirmDiscard.value !== null}
+                onClose={confirmDiscard.close}
+                onConfirm={() => confirmDiscard.value ? discardFromBacklog(confirmDiscard.value) : Promise.resolve()}
                 title="Discard backlog entry?"
+                confirmLabel="Discard"
             >
                 <p className="text-sm text-text-light mb-4">
                     The intention will be removed from the backlog. Any of its linked
                     Todoist tasks that are currently scheduled will be unscheduled.
                 </p>
-                <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setConfirmDiscard(null)}>
-                        Cancel
-                    </Button>
-                    <Button
-                        size="sm"
-                        onClick={async () => {
-                            if (!confirmDiscard) return;
-                            const id = confirmDiscard;
-                            setConfirmDiscard(null);
-                            await discardFromBacklog(id);
-                        }}
-                    >
-                        Discard
-                    </Button>
-                </div>
-            </Modal>
+            </ConfirmModal>
         </div>
     );
 }

@@ -305,7 +305,7 @@ interface Habit {
 
 **Habit ↔ Todoist sync (v6.1):** when a stabilizer is created or edited via `HabitForm`, `HabitsLibrary` (a) calls `ensureHabitsProject(...)` once to resolve / lazily-create the workspace default project (`AppSettings.habitsTodoistProjectId`; falls back to a project literally named `"Habits"`), then (b) calls `resolveHabitProjectId(habit, defaultProjectId, projects)` to honor the per-habit `todoistProjectId` override, then (c) calls `syncHabitToTodoist(...)` which creates or updates the recurring task with `due_string` from `buildDueString(habit)` (e.g. `"every weekday at 7:00"`) and `duration` from `targetDurationMinutes`. If the existing task lives in a different project, it is moved via the Sync API (`item_move`). The bulk Migrate path in `HabitsLibrary` resolves the default project once before iterating to avoid a stale-closure bug that previously re-created a duplicate project per habit. Sync failures are non-blocking — the habit remains saved locally.
 
-### 1.14 RestCue (v6)
+### 1.13 RestCue (v6)
 
 Defined in `src/types/index.ts`. Surfaced by `TrueRestCard` in three forms (card / inline / banner) and managed via the `/rest-cues` page.
 
@@ -320,7 +320,7 @@ interface RestCue {
 
 8 built-in cues live in `src/data/restCues.ts`. When the user customizes, their cues are stored in `LifeContext.restCues`. Not a Habit: no completion semantics, no logging, no streak. Pure prompt data.
 
-### 1.13 LifeContext (v5)
+### 1.14 LifeContext (v5)
 
 The new top-level persistent state slice that holds multi-day entities.
 
@@ -330,12 +330,37 @@ interface LifeContext {
     habits: Habit[];
     activeSeasonId: string | null;       // denormalized for fast lookup; mirrors seasons[].active
     restCues?: RestCue[];                // user-customized cue list; undefined = use built-in defaults
+    backlog?: BacklogEntry[];            // v6.2: parked intentions; undefined treated as []
 }
 ```
 
-Persisted to `orchestrate-life-context` localStorage key with `_schemaVersion: 6.1` (a JSON float; was `6` in v6, `5` in v5).
+Persisted to `orchestrate-life-context` localStorage key with `_schemaVersion: 6.2` (a JSON float; was `6.1`/`6`/`5` previously).
 
 **`restCues` semantics:** when `undefined`, `TrueRestCard` falls back to the 8 built-in cues in `src/data/restCues.ts`. On the first `ADD_REST_CUE`, `UPDATE_REST_CUE`, or `DELETE_REST_CUE` dispatch, the reducer auto-seeds the array from the built-in defaults before applying the change, so no explicit "Customize" action is required by the UI.
+
+### 1.15 BacklogEntry (v6.2)
+
+A parked intention, stored on `LifeContext.backlog`.
+
+```ts
+interface BacklogEntry {
+    id: string;                              // uuid for the entry itself (distinct from intention.id)
+    intention: Intention;                    // preserved — but linkedTaskIds is pending-only (completed ids stripped)
+    archivedAt: string;                      // ISO timestamp
+    archivedFromDate: string;                // YYYY-MM-DD — plan.date the intention came from
+    reason: 'manual' | 'rollover';
+    taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot for pending tasks
+    completedTaskTitles?: string[];          // titles of tasks already completed at archive time (context-only)
+}
+```
+
+Two creation paths, both via `lib/backlog.ts → buildBacklogEntry(intention, plan, reason)`:
+- **Manual** (`reason: 'manual'`): `MOVE_INTENTION_TO_BACKLOG` reducer case, fired by `useIntentionRemoval().moveToBacklog`.
+- **Rollover** (`reason: 'rollover'`): `loadInitialState` calls `harvestStalePlan(plan)` on cold start when `plan.date !== todayISO()`.
+
+**Completed-task handling:** `buildBacklogEntry` walks `intention.linkedTaskIds` and partitions them by the matching `LinkedTask.completed` flag. Completed ids never enter `intention.linkedTaskIds` on the resulting entry; instead their `titleSnapshot` (always populated by `TOGGLE_TASK_COMPLETE`) is appended to `completedTaskTitles`. This avoids restoring a "stale" completed-but-rebuilt-as-fresh task that Step 2 cannot render correctly (completed Todoist tasks are absent from the active REST API response, so they'd be rebuilt as `{ completed: false, type: 'unclassified' }` and trip Step 2's stale-task fallback).
+
+`RESTORE_FROM_BACKLOG` only rebuilds `LinkedTask` rows for the pending ids; `completedTaskTitles` is read-only context surfaced inline in the `BacklogTab` row (`✓ Done: title1, title2 …`, truncated with a hover tooltip).
 
 ---
 
@@ -399,14 +424,14 @@ interface TodoistSection {
 
 ## 3. Reducer Action Catalog
 
-All state mutations flow through the `DayPlanContext` reducer. The `Action` type is a discriminated union of ~25 variants.
+All state mutations flow through the `DayPlanContext` reducer. The `Action` type is a discriminated union of ~45 variants.
 
 ### 3.1 Intention Actions
 
 | Action | Payload | Effect |
 |---|---|---|
 | `ADD_INTENTION` | `title: string` | Creates a new `Intention` with `crypto.randomUUID()`, appends to list |
-| `REMOVE_INTENTION` | `intentionId: string` | Removes intention, all its `LinkedTask` entries, and their session assignments |
+| `REMOVE_INTENTION` | `intentionId: string` | Removes intention, all its `LinkedTask` entries, and their session assignments. **v6.2:** call sites route through `useIntentionRemoval().removeIntention(id)` so linked Todoist tasks are unscheduled (`due_string: 'no date'`) before dispatch. Habit-derived orphan tasks are skipped. |
 | `UPDATE_INTENTION` | `intention: Intention` | Replaces the matching intention in-place |
 | `REORDER_INTENTIONS` | `intentionIds: string[]` | Reorders intentions to match the provided ID sequence |
 | `TOGGLE_INTENTION_COMPLETE` | `intentionId: string` | Toggles completed flag. **Cascades** to all linked tasks |
@@ -441,10 +466,18 @@ All state mutations flow through the `DayPlanContext` reducer. The `Action` type
 
 | Action | Payload | Effect |
 |---|---|---|
-| `SAVE_DAY` | `label: string` | Creates a `SavedDayPlan` snapshot with `_wizardSteps: 4` and `_schemaVersion: 6.1` markers (current schema). Replaces any existing entry for the same date |
+| `SAVE_DAY` | `label: string` | Creates a `SavedDayPlan` snapshot with `_wizardSteps: 4` and `_schemaVersion: 6.2` markers (current schema). Replaces any existing entry for the same date. **v6.2:** `SAVE_DAY` is the *only* writer to `history`; rollover no longer auto-saves (the backlog covers the meaningful unfinished portion of yesterday). |
 | `RESTORE_DAY` | `savedAt: string` | Finds the saved plan by `savedAt`, runs it through `migratePlan()`, sets date to today |
 | `DELETE_SAVED_DAY` | `savedAt: string` | Removes the entry from history |
 | `IMPORT_SESSIONS` | `sessions: SavedDayPlan[]` | Merges imported sessions, deduplicating by `savedAt` |
+
+### 3.4a Intentions Backlog Actions (v6.2)
+
+| Action | Payload | Effect |
+|---|---|---|
+| `MOVE_INTENTION_TO_BACKLOG` | `intentionId: string; reason?: 'manual' \| 'rollover'` | Scrubs the intention + its intention-bound `LinkedTask`s from the plan (same plan-side cleanup as `REMOVE_INTENTION`), and appends a `BacklogEntry` (built by `buildBacklogEntry`) to `life.backlog`. Default reason `'manual'`. Caller is responsible for unscheduling Todoist tasks via `useIntentionRemoval().moveToBacklog`. |
+| `RESTORE_FROM_BACKLOG` | `backlogId: string; taskCache: Record<string,string>` | Pulls the entry off `life.backlog`, appends `entry.intention` to `plan.intentions`, and reconstructs fresh `LinkedTask` rows (`type: 'unclassified'`, no estimate/assignment, not completed) for each *pending* id. Idempotent against re-add: if the intention id already exists in `plan.intentions`, just removes the entry. Skips any `todoistId` already present in `plan.linkedTasks`. `completedTaskTitles` is preserved on the entry for the lifetime of the backlog row but never round-trips into a `LinkedTask`. |
+| `DELETE_BACKLOG_ENTRY` | `backlogId: string` | Removes the entry from `life.backlog`. Pure — caller (`useIntentionRemoval().discardFromBacklog`) handles Todoist unschedule. |
 
 ### 3.5 Life Scaffolding Actions (v5)
 
@@ -541,6 +574,16 @@ Plans stored in `localStorage` include a `_wizardSteps` marker that records the 
 - **AppSettings:** `habitsTodoistProjectId` is left undefined; created lazily when the user first saves a stabilizer (or hits "Migrate" on the `/habits` page banner).
 - **Removed**: `Intention.sourceHabitId`, `Intention.skippedForToday`, the `INJECT_HABIT_INTENTIONS` and `SKIP_HABIT_INTENTION` actions, the `getHabitDerivedIntentionIds` helper. **Renamed**: `INJECT_HABIT_INTENTIONS` → `INJECT_HABIT_TASKS` (new payload), `SKIP_HABIT_INTENTION` → `SKIP_HABIT_TASK`. **Added**: `HabitTaskInjection` type, `LinkedTask.sourceHabitId` / `LinkedTask.skippedForToday`, `Habit.todoistTaskId` / `todoistProjectId` / `targetTime` / `targetDurationMinutes` / `windowBehavior`, `AppSettings.habitsTodoistProjectId`, `TodoistActionsValue.moveTask` (Sync API `item_move`), `lib/habitsTodoistSync.ts` (`buildDueString`, `ensureHabitsProject`, `resolveHabitProjectId`, `syncHabitToTodoist`, `computeHabitTasksToInject`).
 - **Persistence** stamps `_schemaVersion: 6.1` onto plan, settings, life-context, and saved-session payloads on every write.
+
+### v6.1 → v6.2: intentions backlog + Todoist unschedule-on-discard
+- **Trigger:** Saved payload `_schemaVersion < 6.2`.
+- **Plan transforms** (`migratePlan`): none. The plan shape is unchanged.
+- **LifeContext transforms** (`loadLifeContext`): default `backlog` to `[]` when missing. (Old entries persisted under v6.2 with completed-task ids mixed into `intention.linkedTaskIds` are not retroactively split; only entries created via `buildBacklogEntry` after this commit have the partition applied.)
+- **AppSettings:** no changes.
+- **TodoistContext:** `UpdateTaskOpts.due_*` / `duration*` fields widened to `string | null` / `number | null` so the new `unscheduleIntentionTasks` helper can clear scheduling via `{ due_string: 'no date' }`. `JSON.stringify` already round-trips `null` correctly, so no `apiFetch` change is needed.
+- **Provider init:** `loadPlan` is removed; `useReducer` initializes from a single coordinated `loadInitialState()` that calls `peekRawPlan()` (parse + migrate without the date gate) and, when the plan's date is stale, calls `harvestStalePlan(plan)` to append rollover `BacklogEntry`s to `life.backlog` and returns a fresh plan. **No automatic `SAVE_DAY`** runs at rollover — `SavedDayPlan` history is manual-only.
+- **Added**: `BacklogEntry` type, `LifeContext.backlog`, the three reducer actions (`MOVE_INTENTION_TO_BACKLOG` / `RESTORE_FROM_BACKLOG` / `DELETE_BACKLOG_ENTRY`), `lib/backlog.ts` (`hasUnfinishedWork`, `buildBacklogEntry`, `harvestStalePlan`, `rebuildLinkedTasksForBacklogEntry`), `lib/intentionUnschedule.ts` (`unscheduleIntentionTasks`), `hooks/useIntentionRemoval.ts` (`useIntentionRemoval` hook), `components/ui/ConfirmModal.tsx`, `hooks/useConfirmModal.ts`, `src/components/dashboard/HistorySidebar.tsx` (renamed from `SavedSessions.tsx`), `src/components/dashboard/BacklogTab.tsx`. **Removed**: `loadPlan` helper (folded into `loadInitialState`), `TransitionTips.tsx` (dead code), `getHabitTasksForDay` (dead code). **Moved**: `validateTodoistToken` from `hooks/useTodoist.ts` to `lib/todoistApi.ts`.
+- **Persistence** stamps `_schemaVersion: 6.2` onto plan, settings, life-context, and saved-session payloads on every write.
 
 ### Wizard step migration
 - **6-step → 5-step** (`_wizardSteps !== 5 && _wizardSteps !== 4`): Steps 2+ shift down by 1.
@@ -652,7 +695,18 @@ The `_wizardSteps` field is not part of the `DayPlan` type — it is injected du
     "restCues": [
         { "id": "walk-5", "label": "Walk 5 minutes — outside if possible", "durationHint": "5 min", "category": "physical" }
     ],
-    "_schemaVersion": 6.1
+    "backlog": [
+        {
+            "id": "...",
+            "intention": { "id": "...", "title": "Finish assignment 3", "linkedTaskIds": ["..."], "completed": false, "brokenDown": true },
+            "archivedAt": "2026-05-16T18:00:00Z",
+            "archivedFromDate": "2026-05-15",
+            "reason": "rollover",
+            "taskSnapshots": { "...": "Edit section 2" },
+            "completedTaskTitles": ["Write outline", "Draft section 1"]
+        }
+    ],
+    "_schemaVersion": 6.2
 }
 ```
 

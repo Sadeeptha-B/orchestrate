@@ -24,7 +24,6 @@ import { todayISO } from '../lib/time';
 import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../lib/capacity';
 import { restCues as defaultRestCues } from '../data/restCues';
 import {
-    buildAutoSaveEntry,
     buildBacklogEntry,
     harvestStalePlan,
     rebuildLinkedTasksForBacklogEntry,
@@ -271,10 +270,10 @@ function peekRawPlan(): DayPlan | null {
 }
 
 /**
- * v6.2: coordinated initial-state loader. Handles the day-rollover migration:
- * on cold start with a stale persisted plan, auto-saves the stale plan into history
- * (authoritative — replaces any prior same-date entry) and harvests its unfinished
- * intentions into `life.backlog`. Returns the four-slice initial state for `useReducer`.
+ * v6.2: coordinated initial-state loader. On cold start with a stale persisted plan,
+ * harvests its unfinished intentions into `life.backlog` and returns a fresh plan.
+ * The history list is left untouched — `SavedDayPlan` is now a manual-save-only construct
+ * since the backlog already preserves the meaningful part of yesterday (unfinished intentions).
  */
 function loadInitialState(): State {
     const settings = loadSettings();
@@ -292,10 +291,7 @@ function loadInitialState(): State {
         };
     }
 
-    // Stale plan: auto-save it (authoritative — replaces any existing same-date entry),
-    // harvest unfinished intentions into the backlog, then return a fresh plan.
-    const autoSave = buildAutoSaveEntry(raw, WIZARD_STEPS_COUNT, SCHEMA_VERSION);
-    const history = [autoSave, ...baseHistory.filter((h) => h.plan.date !== raw.date)];
+    // Stale plan: harvest unfinished intentions into the backlog, then return a fresh plan.
     const harvested = harvestStalePlan(raw);
     const life: LifeContext = harvested.length === 0
         ? baseLife
@@ -305,8 +301,57 @@ function loadInitialState(): State {
         plan: freshPlan(),
         settings,
         editingStep: null,
-        history,
+        history: baseHistory,
         life,
+    };
+}
+
+function removeTaskIdsFromSessions(
+    taskSessions: Record<string, string[]>,
+    taskIds: Iterable<string>,
+): Record<string, string[]> {
+    const removedIds = new Set(taskIds);
+    if (removedIds.size === 0) return taskSessions;
+
+    const next: Record<string, string[]> = {};
+    for (const [sessionId, ids] of Object.entries(taskSessions)) {
+        next[sessionId] = ids.filter((id) => !removedIds.has(id));
+    }
+    return next;
+}
+
+function removeLinkedTasksFromPlan(
+    plan: DayPlan,
+    shouldRemove: (task: LinkedTask) => boolean,
+): Pick<DayPlan, 'linkedTasks' | 'taskSessions'> {
+    const removedIds = new Set(
+        plan.linkedTasks
+            .filter(shouldRemove)
+            .map((task) => task.todoistId),
+    );
+
+    if (removedIds.size === 0) {
+        return {
+            linkedTasks: plan.linkedTasks,
+            taskSessions: plan.taskSessions,
+        };
+    }
+
+    return {
+        linkedTasks: plan.linkedTasks.filter((task) => !removedIds.has(task.todoistId)),
+        taskSessions: removeTaskIdsFromSessions(plan.taskSessions, removedIds),
+    };
+}
+
+function detachHabitOwnership(task: LinkedTask, intentionId: string): LinkedTask {
+    return {
+        todoistId: task.todoistId,
+        intentionId,
+        type: task.type,
+        assignedSessions: task.assignedSessions,
+        completed: task.completed,
+        estimatedMinutes: task.estimatedMinutes,
+        ...(task.titleSnapshot ? { titleSnapshot: task.titleSnapshot } : {}),
     };
 }
 
@@ -365,8 +410,7 @@ type Action =
     // ---- v6.2: Intentions backlog ----
     | { type: 'MOVE_INTENTION_TO_BACKLOG'; intentionId: string; reason?: BacklogEntry['reason'] }
     | { type: 'RESTORE_FROM_BACKLOG'; backlogId: string; taskCache: Record<string, string> }
-    | { type: 'DELETE_BACKLOG_ENTRY'; backlogId: string }
-    | { type: 'BACKLOG_HARVEST'; entries: BacklogEntry[] };
+    | { type: 'DELETE_BACKLOG_ENTRY'; backlogId: string };
 
 interface State {
     plan: DayPlan;
@@ -393,17 +437,10 @@ function reducer(state: State, action: Action): State {
 
         case 'REMOVE_INTENTION': {
             const intentions = plan.intentions.filter((i) => i.id !== action.intentionId);
-            // Remove all linked tasks belonging to this intention
-            const removedTaskIds = new Set(
-                plan.linkedTasks
-                    .filter((lt) => lt.intentionId === action.intentionId)
-                    .map((lt) => lt.todoistId),
+            const { linkedTasks, taskSessions } = removeLinkedTasksFromPlan(
+                plan,
+                (task) => task.intentionId === action.intentionId,
             );
-            const linkedTasks = plan.linkedTasks.filter((lt) => lt.intentionId !== action.intentionId);
-            const taskSessions = { ...plan.taskSessions };
-            for (const sid of Object.keys(taskSessions)) {
-                taskSessions[sid] = taskSessions[sid].filter((id) => !removedTaskIds.has(id));
-            }
             return { ...state, plan: { ...plan, intentions, linkedTasks, taskSessions } };
         }
 
@@ -451,7 +488,7 @@ function reducer(state: State, action: Action): State {
             const { intentionId, todoistId } = action;
             // If already linked to another intention, move it.
             let linkedTasks = plan.linkedTasks.map((lt) =>
-                lt.todoistId === todoistId ? { ...lt, intentionId } : lt,
+                lt.todoistId === todoistId ? detachHabitOwnership(lt, intentionId) : lt,
             );
             const intentions = plan.intentions.map((i) => {
                 if (i.id === intentionId) {
@@ -481,15 +518,14 @@ function reducer(state: State, action: Action): State {
 
         case 'UNLINK_TASK': {
             const { todoistId } = action;
-            const linkedTasks = plan.linkedTasks.filter((lt) => lt.todoistId !== todoistId);
+            const { linkedTasks, taskSessions } = removeLinkedTasksFromPlan(
+                plan,
+                (task) => task.todoistId === todoistId,
+            );
             const intentions = plan.intentions.map((i) => ({
                 ...i,
                 linkedTaskIds: i.linkedTaskIds.filter((id) => id !== todoistId),
             }));
-            const taskSessions = { ...plan.taskSessions };
-            for (const sid of Object.keys(taskSessions)) {
-                taskSessions[sid] = taskSessions[sid].filter((id) => id !== todoistId);
-            }
             return { ...state, plan: { ...plan, intentions, linkedTasks, taskSessions } };
         }
 
@@ -520,9 +556,7 @@ function reducer(state: State, action: Action): State {
                 taskSessions[action.sessionId] = [...current, action.todoistId];
             } else {
                 // Main: exclusive — remove from any other session first
-                for (const sid of Object.keys(taskSessions)) {
-                    taskSessions[sid] = taskSessions[sid].filter((id) => id !== action.todoistId);
-                }
+                Object.assign(taskSessions, removeTaskIdsFromSessions(taskSessions, [action.todoistId]));
                 taskSessions[action.sessionId] = [
                     ...(taskSessions[action.sessionId] ?? []),
                     action.todoistId,
@@ -709,18 +743,10 @@ function reducer(state: State, action: Action): State {
             if (habit?.isAnchor && habit.active) return state;
             const habits = state.life.habits.filter((h) => h.id !== action.habitId);
             // v6.1: also drop any orphan habit-tasks belonging to this habit from today's plan.
-            const orphanTaskIds = new Set(
-                plan.linkedTasks
-                    .filter((lt) => lt.sourceHabitId === action.habitId)
-                    .map((lt) => lt.todoistId),
+            const { linkedTasks, taskSessions } = removeLinkedTasksFromPlan(
+                plan,
+                (task) => task.sourceHabitId === action.habitId,
             );
-            const linkedTasks = plan.linkedTasks.filter((lt) => lt.sourceHabitId !== action.habitId);
-            const taskSessions = { ...plan.taskSessions };
-            if (orphanTaskIds.size > 0) {
-                for (const sid of Object.keys(taskSessions)) {
-                    taskSessions[sid] = taskSessions[sid].filter((id) => !orphanTaskIds.has(id));
-                }
-            }
             return {
                 ...state,
                 life: { ...state.life, habits },
@@ -783,10 +809,7 @@ function reducer(state: State, action: Action): State {
                     ? { ...lt, skippedForToday: true, assignedSessions: [] }
                     : lt,
             );
-            const taskSessions = { ...plan.taskSessions };
-            for (const sid of Object.keys(taskSessions)) {
-                taskSessions[sid] = taskSessions[sid].filter((id) => id !== action.todoistId);
-            }
+            const taskSessions = removeTaskIdsFromSessions(plan.taskSessions, [action.todoistId]);
             return { ...state, plan: { ...plan, linkedTasks, taskSessions } };
         }
 
@@ -893,16 +916,10 @@ function reducer(state: State, action: Action): State {
             const entry = buildBacklogEntry(intention, plan, action.reason ?? 'manual');
             // Remove the intention + its linked tasks (same logic as REMOVE_INTENTION).
             const intentions = plan.intentions.filter((i) => i.id !== action.intentionId);
-            const removedTaskIds = new Set(
-                plan.linkedTasks
-                    .filter((lt) => lt.intentionId === action.intentionId)
-                    .map((lt) => lt.todoistId),
+            const { linkedTasks, taskSessions } = removeLinkedTasksFromPlan(
+                plan,
+                (task) => task.intentionId === action.intentionId,
             );
-            const linkedTasks = plan.linkedTasks.filter((lt) => lt.intentionId !== action.intentionId);
-            const taskSessions = { ...plan.taskSessions };
-            for (const sid of Object.keys(taskSessions)) {
-                taskSessions[sid] = taskSessions[sid].filter((id) => !removedTaskIds.has(id));
-            }
             return {
                 ...state,
                 plan: { ...plan, intentions, linkedTasks, taskSessions },
@@ -922,11 +939,15 @@ function reducer(state: State, action: Action): State {
             // Avoid re-introducing a LinkedTask for any todoistId already in the plan (e.g. linked to a different intention).
             const existingTaskIds = new Set(plan.linkedTasks.map((lt) => lt.todoistId));
             const freshTasks = restoredTasks.filter((lt) => !existingTaskIds.has(lt.todoistId));
+            const restoredIntention: Intention = {
+                ...entry.intention,
+                linkedTaskIds: freshTasks.map((task) => task.todoistId),
+            };
             return {
                 ...state,
                 plan: {
                     ...plan,
-                    intentions: [...plan.intentions, entry.intention],
+                    intentions: [...plan.intentions, restoredIntention],
                     linkedTasks: [...plan.linkedTasks, ...freshTasks],
                 },
                 life: { ...state.life, backlog: backlog.filter((e) => e.id !== action.backlogId) },
@@ -936,17 +957,6 @@ function reducer(state: State, action: Action): State {
         case 'DELETE_BACKLOG_ENTRY': {
             const backlog = (state.life.backlog ?? []).filter((e) => e.id !== action.backlogId);
             return { ...state, life: { ...state.life, backlog } };
-        }
-
-        case 'BACKLOG_HARVEST': {
-            if (action.entries.length === 0) return state;
-            return {
-                ...state,
-                life: {
-                    ...state.life,
-                    backlog: [...(state.life.backlog ?? []), ...action.entries],
-                },
-            };
         }
 
         default:

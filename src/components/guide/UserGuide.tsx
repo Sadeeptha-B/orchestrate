@@ -444,6 +444,75 @@ export function UserGuide() {
                         </p>
                     </Section>
 
+                    <Section id="backlog" title="9a. Intentions Backlog — parking work for later">
+                        <p>
+                            Not every intention you write down on Monday belongs on Monday. You overcommit, plans shift,
+                            energy fades. The <strong>Backlog</strong> is a persistent pool of parked intentions you can
+                            pull back into a future day, surfaced in the second tab of the left-side sidebar (same panel
+                            as Saved Sessions). The <code>Work Items</code> header button on every screen opens the
+                            sidebar; switch between <em>Saved Sessions</em> and <em>Backlog</em> using the tab toggle
+                            at the top of the panel. The header button shows a count suffix
+                            (e.g. <code>Work Items (3)</code>) when there's anything in the backlog.
+                        </p>
+
+                        <SubHeading>Two ways an intention lands in the backlog</SubHeading>
+                        <ol className="list-decimal pl-5 space-y-1.5">
+                            <li>
+                                <strong>You park it manually.</strong> Every intention row in Step 1 and the
+                                "Today's intentions" panel at the top of Step 3 shows two icon buttons:{' '}
+                                <code>📥</code> (Move to backlog — no confirm, non-destructive) and <code>🗑</code>{' '}
+                                (Delete — confirm modal). <code>📥</code> is the low-cost default; use it when Step 3
+                                reveals an over-stuffed day, or mid-day when priorities shift.
+                            </li>
+                            <li>
+                                <strong>Day rollover harvests it.</strong> When a new day starts, any intention from
+                                yesterday with uncompleted linked tasks moves into the backlog automatically
+                                (<code>reason: 'rollover'</code>). Intentions whose linked tasks were all completed are
+                                not harvested — nothing to bring back.
+                            </li>
+                        </ol>
+
+                        <SubHeading>What gets carried forward</SubHeading>
+                        <p>
+                            The intention title plus the ids of its <em>pending</em> (not-yet-completed) linked tasks.
+                            Tasks you'd already checked off at archive time are stripped from the carried-forward list;
+                            their titles appear as a small <em>✓ Done: …</em> annotation under the entry so you can see
+                            what was accomplished before parking, but they're never reconstructed as work to redo.
+                        </p>
+
+                        <SubHeading>What Todoist sees</SubHeading>
+                        <p>
+                            Manually moving an intention to the backlog (or deleting it) clears the <code>due_*</code>{' '}
+                            fields on its linked Todoist tasks — they revert to "no date" so they don't sit forever on
+                            yesterday's schedule. Rollover-harvested intentions deliberately leave Todoist alone, so
+                            yesterday's overdue tasks remain visible there for you to deal with on your terms. Habit-task
+                            recurrences are never touched by either path — they belong to Todoist's recurrence engine,
+                            not the intention flow.
+                        </p>
+
+                        <SubHeading>Bringing one back</SubHeading>
+                        <p>
+                            Open the sidebar's Backlog tab and click "Bring to today" on any entry. The intention
+                            reappears in today's plan and its pending tasks come back as fresh <em>unclassified</em>{' '}
+                            rows — you re-flow them through Step 2 (categorize + estimate) and Step 3 (schedule). Nothing
+                            carries the previous estimate or session assignment forward, by design: today's plan isn't
+                            yesterday's plan.
+                        </p>
+
+                        <SubHeading>Discarding</SubHeading>
+                        <p>
+                            "Discard" on a backlog entry asks once for confirmation, then unschedules its linked
+                            Todoist tasks and drops the entry. This is the final delete — no second-level recycle bin.
+                        </p>
+
+                        <p className="text-text-light">
+                            <strong>Note on Saved Sessions vs Backlog:</strong> Saved Sessions are manual-only. The
+                            end-of-day auto-save was removed in v6.2 because the backlog already preserves the part of
+                            yesterday that matters (unfinished intentions). Use <em>Save Day</em> from the Dashboard
+                            header for deliberate snapshots; rely on the backlog for everyday spillover.
+                        </p>
+                    </Section>
+
                     <Section id="decision-tree" title='10. Decision tree — "I want to add X to my day"'>
                         <Flow>{`Is X a non-task recovery move (walk, breathe, gaze)?
 ├─ YES → Don't model it. True Rest will surface organically.
@@ -543,6 +612,7 @@ Is X today-only?
                                 <Tr><Td>A non-task recovery prompt</Td><Td>Don't model. True Rest handles it.</Td></Tr>
                                 <Tr><Td>A practice tied to a specific focus period</Td><Td>Light-coherent Habit with <Code>seasonIds</Code> set</Td></Tr>
                                 <Tr><Td>A foundational habit that survives season changes</Td><Td>Stabilizer Habit with <Code>isAnchor</Code>, always-on</Td></Tr>
+                                <Tr><Td>An intention you want to defer (today's too full, or plans shifted)</Td><Td>Click <Code>📥</Code> on the intention row. Bring it back from the Backlog sidebar tab on a future day.</Td></Tr>
                             </tbody>
                         </table>
                     </Section>
@@ -555,7 +625,7 @@ Is X today-only?
                             ← Back to Dashboard
                         </button>
                         <span className="text-text-light">
-                            Reflects v6.1. See <Link to="/life" className="text-accent hover:underline">/life</Link> to manage your seasons and habits.
+                            Reflects v6.2. See <Link to="/life" className="text-accent hover:underline">/life</Link> to manage your seasons and habits.
                         </span>
                     </div>
                 </div>
@@ -589,6 +659,7 @@ const TOC_ENTRIES: { id: string; label: string }[] = [
     { id: 'anchor-stabilizer-seasons', label: '7. Habits, Seasons, Anchors' },
     { id: 'capacity', label: '8. Session capacity' },
     { id: 'check-in', label: '9. The hourly check-in' },
+    { id: 'backlog', label: '9a. Intentions Backlog' },
     { id: 'decision-tree', label: '10. Decision tree' },
     { id: 'typical-day', label: '11. A typical day' },
     { id: 'quick-reference', label: '12. Quick reference' },

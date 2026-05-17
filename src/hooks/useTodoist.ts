@@ -1,6 +1,5 @@
 import { useContext } from 'react';
 import { TodoistDataContext, TodoistActionsContext, type TodoistDataValue, type TodoistActionsValue } from '../context/TodoistContext';
-import { API_BASE } from '../lib/todoistApi';
 
 export interface TodoistTask {
     id: string;
@@ -54,20 +53,4 @@ export function useTodoistActions(): TodoistActionsValue {
     const ctx = useContext(TodoistActionsContext);
     if (!ctx) throw new Error('useTodoistActions must be used within TodoistProvider');
     return ctx;
-}
-
-/** Validate a Todoist API token by hitting the projects endpoint. */
-export async function validateTodoistToken(token: string): Promise<boolean> {
-    try {
-        const res = await fetch(`${API_BASE}/projects`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) {
-            console.warn(`Todoist token validation failed: ${res.status} ${res.statusText}`);
-        }
-        return res.ok;
-    } catch (err) {
-        console.error('Todoist token validation error:', err);
-        return false;
-    }
 }
