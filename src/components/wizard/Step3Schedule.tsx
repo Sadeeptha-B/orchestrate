@@ -11,12 +11,11 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { formatDuration } from '../../lib/time';
+import { formatDuration, timeToMinutes } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { getTaskTitle } from '../../lib/tasks';
-import { isHabitDerivedTask } from '../../lib/habits';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
-import type { Intention, LinkedTask } from '../../types';
+import type { Intention, LinkedTask, TodaysHabitInstance } from '../../types';
 
 export function Step3Schedule() {
     const { plan, settings, dispatch } = useDayPlan();
@@ -49,14 +48,6 @@ export function Step3Schedule() {
         }
         return groups;
     }, [mainTasks]);
-
-    /** v6.1: orphan habit-tasks not yet assigned to any session live in this tray. */
-    const unassignedHabitTasks = useMemo(
-        () => plan.linkedTasks.filter(
-            (lt) => isHabitDerivedTask(lt) && !lt.completed && !lt.skippedForToday && lt.assignedSessions.length === 0,
-        ),
-        [plan.linkedTasks],
-    );
 
     const titleFor = (todoistId: string) => getTaskTitle(todoistId, plan.linkedTasks, taskMap);
 
@@ -176,26 +167,6 @@ export function Step3Schedule() {
                         </div>
                     )}
 
-                    {/* v6.1: Unassigned habit-tasks tray (orphan tasks with no session yet) */}
-                    {unassignedHabitTasks.length > 0 && (
-                        <div className="rounded-lg border border-accent/20 bg-accent-subtle/30 px-3 py-2">
-                            <h3 className="text-xs font-medium text-text-light mb-1.5 flex items-center gap-1">
-                                <span aria-hidden>🔁</span>
-                                <span>Unassigned habits — pick a session to drop them in</span>
-                            </h3>
-                            <div className="flex flex-wrap gap-1.5">
-                                {unassignedHabitTasks.map((lt) => (
-                                    <span
-                                        key={lt.todoistId}
-                                        className="px-2.5 py-1 text-xs rounded-full bg-accent-subtle text-accent border border-accent/30"
-                                    >
-                                        {getTaskLabel(lt)}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
                     {/* ── Timeline ── */}
                     <SessionCapacityBanner sessions={remainingSessions} capacities={capacities} />
                     <SessionTimelineBar
@@ -206,6 +177,7 @@ export function Step3Schedule() {
                         selectedSessionId={selectedSessionId}
                         onSelectSession={setSelectedSessionId}
                         capacities={capacities}
+                        todaysHabits={plan.todaysHabits}
                     />
 
                     {/* ── Selected session detail panel ── */}
@@ -214,9 +186,6 @@ export function Step3Schedule() {
                         const assignedMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));
                         const unassignedMain = mainTasks.filter((lt) => lt.assignedSessions.length === 0);
                         const assignedBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
-                        // v6.1: split assigned background by source — habit-derived render under a 🔁 Habits group.
-                        const assignedHabitBg = assignedBg.filter(isHabitDerivedTask);
-                        const assignedManualBg = assignedBg.filter((lt) => !isHabitDerivedTask(lt));
                         const unassignedBg = backgroundTasks.filter((lt) => !assignedIds.includes(lt.todoistId));
 
                         const assignedByIntention = new Map<string, LinkedTask[]>();
@@ -272,37 +241,10 @@ export function Step3Schedule() {
                                     </div>
                                 )}
 
-                                {/* Assigned habit-derived background tasks (🔁 Habits group) */}
-                                {assignedHabitBg.length > 0 && (
-                                    <div>
-                                        <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
-                                            🔁 Habits
-                                        </span>
-                                        <div className="flex flex-wrap gap-1.5 mt-1">
-                                            {assignedHabitBg.map((lt) => (
-                                                <button
-                                                    key={lt.todoistId}
-                                                    onClick={() =>
-                                                        dispatch({
-                                                            type: 'UNASSIGN_TASK',
-                                                            todoistId: lt.todoistId,
-                                                            sessionId: selectedSession.id,
-                                                        })
-                                                    }
-                                                    className="px-3 py-1.5 text-xs rounded-full bg-accent text-white cursor-pointer hover:bg-accent/80 transition-colors"
-                                                    title="Click to remove from this session"
-                                                >
-                                                    {getTaskLabel(lt)} ×
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Assigned manual background tasks */}
-                                {assignedManualBg.length > 0 && (
+                                {/* Assigned background tasks */}
+                                {assignedBg.length > 0 && (
                                     <div className="flex flex-wrap gap-2">
-                                        {assignedManualBg.map((lt) => (
+                                        {assignedBg.map((lt) => (
                                             <button
                                                 key={lt.todoistId}
                                                 onClick={() =>
@@ -379,7 +321,7 @@ export function Step3Schedule() {
                                                     }
                                                     className="px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-text-light hover:border-accent hover:text-accent cursor-pointer transition-colors"
                                                 >
-                                                    + {isHabitDerivedTask(lt) && '🔁 '}{getTaskLabel(lt)}
+                                                    + {getTaskLabel(lt)}
                                                 </button>
                                             ))}
                                         </div>
@@ -457,7 +399,7 @@ export function Step3Schedule() {
                                                 key={lt.todoistId}
                                                 className="px-2 py-0.5 text-[10px] rounded-full bg-surface-dark text-text-light"
                                             >
-                                                {isHabitDerivedTask(lt) && '🔁 '}{getTaskLabel(lt)}
+                                                {getTaskLabel(lt)}
                                             </span>
                                         ))}
                                         {sessionMain.length === 0 && sessionBg.length === 0 && (
@@ -468,6 +410,9 @@ export function Step3Schedule() {
                             );
                         })}
                     </div>
+
+                    {/* v6.3: Today's habits — reschedule lenient ones whose window has passed */}
+                    <Phase2HabitsPanel />
 
                     {/* Todoist + Calendar side by side */}
                     <div className="flex flex-col lg:flex-row gap-6 flex-1">
@@ -499,5 +444,114 @@ export function Step3Schedule() {
                 </p>
             </ConfirmModal>
         </WizardLayout>
+    );
+}
+
+/**
+ * v6.3: Step 3 Phase 2 panel — lists today's habit instances. Lenient habits whose
+ * target window has passed get an inline reschedule affordance (time-picker). Strict
+ * habits past their window are filtered out by `computeTodaysHabitInstances` and never
+ * appear here.
+ */
+function Phase2HabitsPanel() {
+    const { plan, dispatch } = useDayPlan();
+    const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+    const [reschedTime, setReschedTime] = useState<string>('');
+
+    if (plan.todaysHabits.length === 0) return null;
+
+    const nowMinutes = (() => {
+        const d = new Date();
+        return d.getHours() * 60 + d.getMinutes();
+    })();
+
+    const isPastWindow = (instance: TodaysHabitInstance) => {
+        if (!instance.targetTime) return false;
+        return timeToMinutes(instance.targetTime) + instance.durationMinutes < nowMinutes;
+    };
+
+    const active = plan.todaysHabits
+        .filter((i) => i.status === 'planned' || i.status === 'engaged')
+        .sort((a, b) => {
+            if (a.targetTime && b.targetTime) return timeToMinutes(a.targetTime) - timeToMinutes(b.targetTime);
+            if (a.targetTime) return -1;
+            if (b.targetTime) return 1;
+            return 0;
+        });
+
+    const handleSaveReschedule = (instance: TodaysHabitInstance) => {
+        dispatch({
+            type: 'RESCHEDULE_HABIT_INSTANCE',
+            instanceId: instance.id,
+            newTargetTime: reschedTime || undefined,
+            now: new Date().toISOString(),
+        });
+        setReschedulingId(null);
+        setReschedTime('');
+    };
+
+    return (
+        <div className="rounded-lg border border-border bg-card px-4 py-3">
+            <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                <span aria-hidden>🔁</span>
+                Today&apos;s habits
+                <span className="text-xs font-normal text-text-light">({plan.todaysHabits.length})</span>
+            </h3>
+            {active.length === 0 ? (
+                <p className="text-xs text-text-light">All habits handled today.</p>
+            ) : (
+                <ul className="space-y-1.5">
+                    {active.map((i) => {
+                        const past = isPastWindow(i);
+                        const isRescheduling = reschedulingId === i.id;
+                        return (
+                            <li key={i.id} className="flex items-center gap-2 text-sm">
+                                <span className="flex-1 truncate">{i.titleSnapshot}</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent tabular-nums">
+                                    {i.targetTime ?? 'anytime'}
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums">
+                                    {i.durationMinutes}m
+                                </span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full capitalize ${i.status === 'engaged' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-surface-dark text-text-light'}`}>
+                                    {i.status}
+                                </span>
+                                {past && !isRescheduling && (
+                                    <button
+                                        onClick={() => { setReschedulingId(i.id); setReschedTime(i.targetTime ?? ''); }}
+                                        className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 cursor-pointer"
+                                        title="Reschedule to a later time today"
+                                    >
+                                        ⤴ Reschedule
+                                    </button>
+                                )}
+                                {isRescheduling && (
+                                    <span className="flex items-center gap-1">
+                                        <input
+                                            type="time"
+                                            value={reschedTime}
+                                            onChange={(e) => setReschedTime(e.target.value)}
+                                            className="px-1 py-0.5 text-xs rounded border border-border bg-card"
+                                        />
+                                        <button
+                                            onClick={() => handleSaveReschedule(i)}
+                                            className="px-2 py-0.5 text-[10px] rounded bg-accent text-white hover:bg-accent/80 cursor-pointer"
+                                        >
+                                            Save
+                                        </button>
+                                        <button
+                                            onClick={() => { setReschedulingId(null); setReschedTime(''); }}
+                                            className="px-2 py-0.5 text-[10px] rounded text-text-light hover:bg-surface-dark cursor-pointer"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </span>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </div>
     );
 }

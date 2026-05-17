@@ -5,7 +5,6 @@ import type { TodoistTask, TodoistProject, TodoistSection } from '../../hooks/us
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { addMinutesToTime, timeToMinutes, todayISO } from '../../lib/time';
 import { collectDescendantIds } from '../../lib/tasks';
-import { isHabitDerivedTask } from '../../lib/habits';
 import type { LinkedTask } from '../../types';
 
 // --- Todoist color map (color name → hex) ---
@@ -81,6 +80,8 @@ interface LinkingProps {
     linkedTaskIds: string[];                  // IDs linked to the current intention (pre-checked)
     allLinkedTasks: LinkedTask[];             // all linked tasks across intentions (for "(linked to: X)" labels)
     intentionTitles: Record<string, string>;  // intentionId → title lookup
+    /** v6.3: Todoist task ids that back today's stabilizer habit instances — surface a 🔁 Habit label instead of Link. */
+    habitTodoistIds?: Set<string>;
     onLinkTask: (todoistId: string) => void;
     onUnlinkTask: (todoistId: string) => void;
 }
@@ -858,14 +859,12 @@ function TaskRow({
 
     // Linking mode state
     const isLinkedToCurrentIntention = linking?.linkedTaskIds.includes(task.id) ?? false;
-    // v6.1: detect orphan habit-tasks so the Link affordance hides in favor of a 🔁 Habit label.
-    const habitRecord = linking?.allLinkedTasks.find(
-        (lt) => lt.todoistId === task.id && isHabitDerivedTask(lt),
-    );
-    const linkedToOther = linking
+    // v6.3: detect habit-backed Todoist tasks so the Link affordance hides in favor of a 🔁 Habit label.
+    const isHabitBacked = linking?.habitTodoistIds?.has(task.id) ?? false;
+    const habitRecord = isHabitBacked ? { todoistId: task.id } : undefined;
+    const linkedToOther = linking && !isHabitBacked
         ? linking.allLinkedTasks.find(
             (lt) => lt.todoistId === task.id
-                && !isHabitDerivedTask(lt)
                 && lt.intentionId !== undefined
                 && lt.intentionId !== linking.linkingIntentionId,
         )

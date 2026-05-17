@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { restCues as defaultRestCues } from '../../data/restCues';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { CueCarousel } from './InsightCard';
 import type { RestCue } from '../../types';
 
 type Variant = 'card' | 'inline' | 'banner';
@@ -36,28 +37,35 @@ export function TrueRestCard({
     const navigate = useNavigate();
     const effectiveCues = (life.restCues && life.restCues.length > 0) ? life.restCues : defaultRestCues;
 
-    const [index, setIndex] = useState(() => Math.floor(Math.random() * effectiveCues.length));
+    const total = effectiveCues.length;
+    const [index, setIndex] = useState(() => Math.floor(Math.random() * total));
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const startInterval = useCallback(() => {
         if (intervalRef.current) clearInterval(intervalRef.current);
         if (cueProp || rotateMs <= 0) return;
-        intervalRef.current = setInterval(() => setIndex((i) => i + 1), rotateMs);
-    }, [cueProp, rotateMs]);
+        intervalRef.current = setInterval(() => setIndex((i) => (i + 1) % total), rotateMs);
+    }, [cueProp, rotateMs, total]);
 
     useEffect(() => {
         startInterval();
         return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [startInterval]);
 
+    const handlePrev = () => {
+        setIndex((i) => (i - 1 + total) % total);
+        startInterval();
+    };
     const handleNext = () => {
-        setIndex((i) => i + 1);
+        setIndex((i) => (i + 1) % total);
         startInterval();
     };
 
-    const rotatingCue = effectiveCues[index % effectiveCues.length];
+    const wrappedIndex = ((index % total) + total) % total;
+    const rotatingCue = effectiveCues[wrappedIndex];
     const cue = cueProp ?? rotatingCue;
     const eyebrow = heading ?? (variant === 'banner' ? 'Between sessions' : 'True Rest');
+    const showCarousel = !cueProp;
 
     if (variant === 'banner') {
         return (
@@ -66,11 +74,22 @@ export function TrueRestCard({
                     <div className="text-[10px] uppercase tracking-wider text-text-light">
                         {eyebrow}
                     </div>
-                    <div className="text-sm">{cue.label}</div>
+                    <div className="text-sm line-clamp-2 min-h-[2.5rem]">{cue.label}</div>
                 </div>
-                <div className="text-xs text-text-light whitespace-nowrap">
+                <div className="text-xs text-text-light whitespace-nowrap self-center">
                     {cue.durationHint}
                 </div>
+                {showCarousel && (
+                    <div className="self-center">
+                        <CueCarousel
+                            index={wrappedIndex}
+                            total={total}
+                            onPrev={handlePrev}
+                            onNext={handleNext}
+                            compact
+                        />
+                    </div>
+                )}
             </div>
         );
     }
@@ -88,33 +107,33 @@ export function TrueRestCard({
     }
 
     return (
-        <div className="bg-surface-dark rounded-lg p-4 text-xs text-text-light space-y-1.5">
-            <div className="flex items-center justify-between mb-2">
-                <p className="font-medium text-text text-[11px] uppercase tracking-wider">
-                    {eyebrow}
-                </p>
-                <button
-                    type="button"
-                    onClick={handleNext}
-                    title="Next cue"
-                    className="text-text-light hover:text-accent transition-colors cursor-pointer leading-none p-0.5 -mr-0.5"
-                >
-                    ›
-                </button>
-            </div>
-            <p className="text-sm text-text">{cue.label}</p>
-            <p className="text-text-light">{cue.durationHint} · {cue.category}</p>
-            <p className="text-[10px] pt-2 italic text-text-light">
-                Recovery, not productivity. No completion required.
+        <div className="bg-surface-dark rounded-lg p-4 text-xs text-text-light flex flex-col min-h-[11rem]">
+            <p className="font-medium text-text text-[11px] uppercase tracking-wider mb-2">
+                {eyebrow}
             </p>
-            <div className="flex justify-end pt-1">
-                <button
-                    type="button"
-                    onClick={() => navigate('/rest-cues')}
-                    className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
-                >
-                    Manage →
-                </button>
+            <p className="text-sm text-text line-clamp-2 min-h-[2.5rem]">{cue.label}</p>
+            <div className="mt-auto pt-2 space-y-1.5">
+                <p className="text-text-light">{cue.durationHint} · {cue.category}</p>
+                <p className="text-[10px] italic text-text-light">
+                    Recovery, not productivity. No completion required.
+                </p>
+                <div className="flex items-center justify-between pt-1">
+                    {showCarousel ? (
+                        <CueCarousel
+                            index={wrappedIndex}
+                            total={total}
+                            onPrev={handlePrev}
+                            onNext={handleNext}
+                        />
+                    ) : <span />}
+                    <button
+                        type="button"
+                        onClick={() => navigate('/rest-cues')}
+                        className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
+                    >
+                        Manage →
+                    </button>
+                </div>
             </div>
         </div>
     );

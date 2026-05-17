@@ -8,12 +8,8 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks/useTodoist';
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
-import { isHabitDerivedTask } from '../../lib/habits';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
-
-/** v6.1: synthetic group key used by SessionCard to render orphan habit-tasks under a "🔁 Habits" header. */
-const HABIT_GROUP_KEY = '__habits__';
 
 /** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
 function getScheduledRange(task: TodoistTask | undefined): string | null {
@@ -89,14 +85,15 @@ interface TaskRowProps {
     sessionId: string;
     drag: ReturnType<typeof useTaskDrag>;
     scheduledRange: string | null;
-    isHabitDerived: boolean;
 }
 
-function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, isHabitDerived }: TaskRowProps) {
+function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
     const { dispatch } = useDayPlan();
     const { completeTask, reopenTask } = useTodoistActions();
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
+    const isEngaged = linkedTask.status === 'engaged';
+    const engagementMinutes = linkedTask.engagement?.totalMinutes ?? 0;
 
     const handleToggle = () => {
         dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title });
@@ -105,6 +102,15 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, 
         } else {
             completeTask(linkedTask.todoistId);
         }
+    };
+
+    const handleEngagementToggle = () => {
+        const nowISO = new Date().toISOString();
+        dispatch({
+            type: isEngaged ? 'STOP_TASK_ENGAGEMENT' : 'START_TASK_ENGAGEMENT',
+            todoistId: linkedTask.todoistId,
+            now: nowISO,
+        });
     };
 
     return (
@@ -135,6 +141,20 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, 
                 </svg>
             </span>
 
+            {!linkedTask.completed && (
+                <button
+                    onClick={handleEngagementToggle}
+                    className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer text-[9px] ${isEngaged
+                        ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300'
+                        : 'text-text-light/60 hover:text-accent hover:bg-accent-subtle'
+                        }`}
+                    aria-label={isEngaged ? 'Stop engagement timer' : 'Start engagement timer'}
+                    title={isEngaged ? 'Stop' : 'Start'}
+                >
+                    {isEngaged ? '■' : '▶'}
+                </button>
+            )}
+
             <button
                 onClick={handleToggle}
                 className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${linkedTask.completed
@@ -153,9 +173,14 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange, 
             <span className={`flex-1 text-sm ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
                 {linkedTask.completed && <span className="mr-1">🎉</span>}
                 {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
-                {isHabitDerived && !linkedTask.completed && <span className="mr-1">🔁</span>}
                 {title}
             </span>
+
+            {isEngaged && engagementMinutes > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0 tabular-nums">
+                    {engagementMinutes}m
+                </span>
+            )}
 
             {scheduledRange && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent flex-shrink-0 tabular-nums">
@@ -204,13 +229,14 @@ function SessionCard({
 }) {
     const tasksInSession = getLinkedTasksByIds(taskIds, linkedTaskMap);
 
-    // Group by intention; orphan habit-tasks fall into the synthetic 🔁 Habits group.
+    // v6.3: group by intention. Habit-derived tasks no longer reach this surface
+    // (stabilizers are TodaysHabitInstance now, rendered separately).
     const tasksByIntention = new Map<string, LinkedTask[]>();
     for (const lt of tasksInSession) {
-        const key = lt.intentionId ?? HABIT_GROUP_KEY;
-        const list = tasksByIntention.get(key) ?? [];
+        if (lt.intentionId === undefined) continue;
+        const list = tasksByIntention.get(lt.intentionId) ?? [];
         list.push(lt);
-        tasksByIntention.set(key, list);
+        tasksByIntention.set(lt.intentionId, list);
     }
 
     // Background nudge banner for active session
@@ -249,9 +275,7 @@ function SessionCard({
             {tasksByIntention.size > 0 ? (
                 <div className="space-y-3">
                     {[...tasksByIntention.entries()].map(([intId, tasks]) => {
-                        const groupTitle = intId === HABIT_GROUP_KEY
-                            ? '🔁 Habits'
-                            : intentions.get(intId)?.title ?? 'Unknown';
+                        const groupTitle = intentions.get(intId)?.title ?? 'Unknown';
                         return (
                             <div key={intId}>
                                 <span className="text-[10px] font-medium text-text-light uppercase tracking-wider px-2">
@@ -272,7 +296,6 @@ function SessionCard({
                                                 sessionId={session.id}
                                                 drag={drag}
                                                 scheduledRange={getScheduledRange(todoistTask)}
-                                                isHabitDerived={isHabitDerivedTask(lt)}
                                             />
                                         );
                                     })}
@@ -290,7 +313,13 @@ function SessionCard({
 
 // ---- CurrentSession: carousel across all sessions, defaulting to active/upcoming ----
 
-export function CurrentSession() {
+interface CurrentSessionProps {
+    /** null = follow auto-selection; otherwise the session the user has pinned. */
+    pinnedSessionId: string | null;
+    onPinnedChange: (sessionId: string | null) => void;
+}
+
+export function CurrentSession({ pinnedSessionId, onPinnedChange }: CurrentSessionProps) {
     const { plan, settings } = useDayPlan();
     const { currentSession, remainingSessions } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
@@ -314,8 +343,11 @@ export function CurrentSession() {
         return Math.max(0, sessions.length - 1);
     }, [currentSession, remainingSessions, sessions]);
 
-    // null = follow auto; number = user has manually pinned a session index.
-    const [pinnedIndex, setPinnedIndex] = useState<number | null>(null);
+    const pinnedIndex = useMemo(() => {
+        if (pinnedSessionId === null) return null;
+        const idx = sessions.findIndex((s) => s.id === pinnedSessionId);
+        return idx === -1 ? null : idx;
+    }, [pinnedSessionId, sessions]);
     const displayIndex = pinnedIndex ?? autoIndex;
     const displayedSession = sessions[displayIndex] ?? null;
 
@@ -364,7 +396,7 @@ export function CurrentSession() {
                 <div className="flex items-center gap-1.5">
                     {pinnedIndex !== null && (
                         <button
-                            onClick={() => setPinnedIndex(null)}
+                            onClick={() => onPinnedChange(null)}
                             className="text-[10px] px-2 py-0.5 rounded-full bg-accent/10 text-accent hover:bg-accent/20 transition-colors cursor-pointer"
                             title={currentSession ? 'Jump to current session' : 'Jump to upcoming session'}
                         >
@@ -372,7 +404,7 @@ export function CurrentSession() {
                         </button>
                     )}
                     <button
-                        onClick={() => setPinnedIndex(Math.max(0, displayIndex - 1))}
+                        onClick={() => onPinnedChange(sessions[Math.max(0, displayIndex - 1)].id)}
                         disabled={displayIndex === 0}
                         className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:text-text hover:bg-surface-dark transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-base leading-none"
                         aria-label="Previous session"
@@ -383,7 +415,7 @@ export function CurrentSession() {
                         {displayIndex + 1} / {sessions.length}
                     </span>
                     <button
-                        onClick={() => setPinnedIndex(Math.min(sessions.length - 1, displayIndex + 1))}
+                        onClick={() => onPinnedChange(sessions[Math.min(sessions.length - 1, displayIndex + 1)].id)}
                         disabled={displayIndex === sessions.length - 1}
                         className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:text-text hover:bg-surface-dark transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-base leading-none"
                         aria-label="Next session"
@@ -426,9 +458,16 @@ export function CurrentSession() {
     );
 }
 
-// ---- SessionTimeline: shows all sessions ----
+// ---- SessionTimeline: shows all sessions + the habit lane ----
 
-export function SessionTimeline() {
+interface SessionTimelineProps {
+    /** Session currently pinned in the carousel below — gets a selected ring here. */
+    pinnedSessionId: string | null;
+    /** Click a session block to pin it in the carousel. */
+    onSelectSession: (sessionId: string) => void;
+}
+
+export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTimelineProps) {
     const { plan, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
@@ -440,6 +479,9 @@ export function SessionTimeline() {
             linkedTasks={plan.linkedTasks}
             taskMap={taskMap}
             currentSessionId={currentSession?.id}
+            selectedSessionId={pinnedSessionId}
+            onSelectSession={onSelectSession}
+            todaysHabits={plan.todaysHabits}
         />
     );
 }

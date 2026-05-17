@@ -1,14 +1,35 @@
 import { useEffect, useMemo, useState } from 'react';
 import { timeToMinutes } from '../../lib/time';
 import { getTaskTitle } from '../../lib/tasks';
-import { isHabitDerivedTask } from '../../lib/habits';
-import type { LinkedTask, SessionSlot } from '../../types';
+import type { LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
 import type { SessionCapacity } from '../../lib/capacity';
 import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
 
 function nowInMinutes(): number {
     const d = new Date();
     return d.getHours() * 60 + d.getMinutes();
+}
+
+/** v6.3: status → pill styling for habit instances rendered in the lane / anytime cluster. */
+function habitPillClass(status: TodaysHabitInstance['status']): string {
+    switch (status) {
+        case 'engaged':
+            return 'border-amber-400/60 bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 animate-pulse';
+        case 'completed':
+            return 'border-success/30 bg-success/10 text-text-light line-through';
+        case 'unfinished':
+            return 'border-dashed border-text-light/40 bg-surface-dark/40 text-text-light/60';
+        case 'skipped':
+            return 'border-border bg-surface-dark/40 text-text-light/50 line-through';
+        case 'planned':
+        default:
+            return 'border-accent/30 bg-accent-subtle text-accent';
+    }
+}
+
+function habitPillPrefix(status: TodaysHabitInstance['status']): string {
+    if (status === 'completed') return '🎉 ';
+    return '🔁 ';
 }
 
 /** Format minutes since midnight to a short label like "6am", "2:30pm". */
@@ -25,7 +46,7 @@ interface SessionTimelineBarProps {
     sessions: SessionSlot[];
     /** Map of sessionId → assigned todoist task IDs. */
     taskSessions: Record<string, string[]>;
-    /** All linked tasks (used to resolve type, habit flag, etc.). */
+    /** All linked tasks (used to resolve type). */
     linkedTasks: LinkedTask[];
     /** Todoist task lookup: id → { content }. */
     taskMap: Map<string, { id: string; content: string }>;
@@ -37,6 +58,9 @@ interface SessionTimelineBarProps {
     currentSessionId?: string | null;
     /** v6: optional per-session capacity data. When provided, each block shows a capacity badge. */
     capacities?: Record<string, SessionCapacity>;
+    /** v6.3: stabilizer habit instances for today. Timed ones render in the habit lane above
+     * the session blocks; untimed ones cluster as "Anytime today" chips above the timeline. */
+    todaysHabits?: TodaysHabitInstance[];
 }
 
 export function SessionTimelineBar({
@@ -48,6 +72,7 @@ export function SessionTimelineBar({
     onSelectSession,
     currentSessionId,
     capacities,
+    todaysHabits,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -97,8 +122,29 @@ export function SessionTimelineBar({
             ? ((now - dayStart) / totalMinutes) * 100
             : null;
 
+    // v6.3: split habit instances into timed (placed on the lane) vs untimed (anytime cluster).
+    // Terminal-state instances (completed/unfinished/skipped) still render but in a muted style.
+    const timedHabits = (todaysHabits ?? []).filter((i) => Boolean(i.targetTime));
+    const anytimeHabits = (todaysHabits ?? []).filter((i) => !i.targetTime);
+
     return (
         <div className="relative space-y-1 pt-5">
+            {/* v6.3: "Anytime today" cluster — untimed habit instances surface above the time-axis. */}
+            {anytimeHabits.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 mb-1">
+                    <span className="text-[9px] uppercase tracking-wider text-text-light/70 mr-1">Anytime</span>
+                    {anytimeHabits.map((i) => (
+                        <span
+                            key={i.id}
+                            className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight border ${habitPillClass(i.status)}`}
+                            title={`${i.titleSnapshot} · ${i.durationMinutes}m`}
+                        >
+                            {habitPillPrefix(i.status)}{i.titleSnapshot}
+                        </span>
+                    ))}
+                </div>
+            )}
+
             {/* Hour labels */}
             <div className="relative h-5">
                 {hourMarks.map((m) => (
@@ -122,6 +168,28 @@ export function SessionTimelineBar({
                     />
                 ))}
             </div>
+
+            {/* v6.3: Habit lane — timed instances positioned by targetTime, width by durationMinutes. */}
+            {timedHabits.length > 0 && totalMinutes > 0 && (
+                <div className="relative h-7">
+                    {timedHabits.map((i) => {
+                        const startM = timeToMinutes(i.targetTime!);
+                        const leftPct = ((startM - dayStart) / totalMinutes) * 100;
+                        const widthPct = Math.max((i.durationMinutes / totalMinutes) * 100, 1.5);
+                        if (leftPct < 0 || leftPct > 100) return null;
+                        return (
+                            <div
+                                key={i.id}
+                                className={`absolute top-0 px-1.5 py-0.5 text-[9px] rounded-full leading-tight truncate border ${habitPillClass(i.status)}`}
+                                style={{ left: `${leftPct}%`, width: `${Math.min(widthPct, 100 - leftPct)}%` }}
+                                title={`${i.titleSnapshot} · ${i.targetTime} · ${i.durationMinutes}m`}
+                            >
+                                {habitPillPrefix(i.status)}{i.titleSnapshot}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
 
             {/* Session blocks — single-cell grid so the cell auto-sizes to the tallest block.
                 Each block layers in the same cell via grid-area, positioned horizontally by margin-left/width. */}
@@ -176,7 +244,7 @@ export function SessionTimelineBar({
                                         key={lt.todoistId}
                                         className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
                                     >
-                                        {lt.completed ? '🎉 ' : isHabitDerivedTask(lt) ? '🔁 ' : ''}{titleFor(lt.todoistId)}
+                                        {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
                                 ))}
                                 {sessionMain.length === 0 && sessionBg.length === 0 && (

@@ -1,4 +1,4 @@
-import type { Habit, LifeContext, LinkedTask } from '../types';
+import type { Habit, LifeContext } from '../types';
 
 export function getActiveHabits(life: LifeContext): Habit[] {
     return life.habits.filter((habit) => habit.active);
@@ -6,11 +6,6 @@ export function getActiveHabits(life: LifeContext): Habit[] {
 
 export function getAnchorHabits(habits: Habit[]): Habit[] {
     return habits.filter((habit) => habit.isAnchor);
-}
-
-/** v6.1: true when the LinkedTask came from a stabilizer Habit (no parent intention). */
-export function isHabitDerivedTask(lt: LinkedTask): boolean {
-    return Boolean(lt.sourceHabitId);
 }
 
 /**

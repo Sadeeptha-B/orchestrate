@@ -6,17 +6,32 @@ export interface Intention {
     brokenDown: boolean;
 }
 
-/** A Todoist task either linked to an intention or surfaced directly from a stabilizer Habit (v6.1). */
+/** v6.3: lifecycle status for a LinkedTask. Treat absent (legacy rows) as 'pending'. */
+export type LinkedTaskStatus = 'pending' | 'engaged' | 'completed' | 'unfinished';
+
+/**
+ * v6.3: engagement record carried on LinkedTask and TodaysHabitInstance. Captures explicit
+ * Start/Stop activity. `totalMinutes` accumulates across multiple cycles.
+ */
+export interface EngagementRecord {
+    startedAt: string;            // ISO — first Start press
+    endedAt?: string;             // ISO — last Stop press
+    totalMinutes?: number;        // accumulated across Start/Stop cycles
+}
+
+/** A Todoist task linked to an intention. v6.3: stabilizers no longer live here (see TodaysHabitInstance). */
 export interface LinkedTask {
     todoistId: string;                                    // Todoist task ID (primary key)
-    intentionId?: string;                                 // v6.1: parent intention; absent = habit-derived orphan task
-    sourceHabitId?: string;                               // v6.1: set when this LinkedTask came from a stabilizer Habit
+    intentionId?: string;                                 // parent intention (always set in v6.3)
     type: 'main' | 'background' | 'unclassified';        // categorization
     assignedSessions: string[];                           // session slot IDs
-    completed: boolean;
+    completed: boolean;                                   // kept; mirrors status === 'completed'
     estimatedMinutes: number | null;                      // null = not yet estimated
     titleSnapshot?: string;                               // cached title for completed tasks no longer in Todoist
-    skippedForToday?: boolean;                            // v6.1: set when user skips a habit-task without completing it
+    status?: LinkedTaskStatus;                            // v6.3: absent = 'pending'
+    engagement?: EngagementRecord;                        // v6.3: explicit Start/Stop record
+    rescheduledFromTodoistId?: string;                    // v6.3: predecessor LinkedTask's todoistId when restored from a backlog entry with engagement
+    rescheduledAt?: string;                               // v6.3: ISO timestamp of the restore
 }
 
 export interface SessionSlot {
@@ -53,13 +68,38 @@ export interface Playlist {
     workTypes: WorkType[];
 }
 
-/** v6.1: pre-computed habit-task to be appended via `INJECT_HABIT_TASKS`. */
-export interface HabitTaskInjection {
-    habitId: string;
-    todoistId: string;
-    name: string;                 // titleSnapshot — protects display if Todoist task is later deleted
-    estimatedMinutes: number;
-    sessionId?: string;           // pre-assigned via Todoist due.datetime → SessionSlot mapping
+/**
+ * v6.3: lifecycle status of a TodaysHabitInstance.
+ *  - planned    : surfaced for today, not yet acted on
+ *  - engaged    : user pressed Start
+ *  - completed  : done (Todoist recurring task occurrence completed)
+ *  - unfinished : engaged then rescheduled or abandoned (terminal)
+ *  - skipped    : user explicitly skipped today (terminal)
+ */
+export type HabitInstanceStatus =
+    | 'planned'
+    | 'engaged'
+    | 'completed'
+    | 'unfinished'
+    | 'skipped';
+
+/**
+ * v6.3: today's manifestation of a stabilizer habit. Lives on `DayPlan.todaysHabits`,
+ * independent of session assignment. Positioned on the timeline via `targetTime`. The
+ * `id` is distinct from `todoistTaskId` so reschedule successors can coexist in the same day.
+ */
+export interface TodaysHabitInstance {
+    id: string;                            // uuid (primary key)
+    habitId: string;                       // → life.habits[i].id
+    todoistTaskId: string;                 // recurring Todoist task id (stable across reschedule chain)
+    titleSnapshot: string;
+    durationMinutes: number;
+    targetTime?: string;                   // "HH:mm" — drives timeline position; absent = "anytime today"
+    status: HabitInstanceStatus;
+    completedAt?: string;                  // ISO
+    engagement?: EngagementRecord;
+    rescheduledFromId?: string;            // predecessor instance id (clone chain)
+    rescheduledAt?: string;                // ISO
 }
 
 /** v6: a logged "pull" from the Light Pool. Never becomes an intention or LinkedTask. */
@@ -76,6 +116,7 @@ export interface DayPlan {
     date: string; // ISO date string (YYYY-MM-DD)
     intentions: Intention[];
     linkedTasks: LinkedTask[];                             // all tasks across all intentions
+    todaysHabits: TodaysHabitInstance[];                  // v6.3: stabilizer instances for today
     taskSessions: Record<string, string[]>;               // sessionId -> todoistId[]
     wizardStep: number; // 1–4
     setupComplete: boolean;
@@ -224,4 +265,5 @@ export interface BacklogEntry {
     reason: 'manual' | 'rollover';
     taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot for pending tasks
     completedTaskTitles?: string[];          // titles of tasks already completed at archive time (context-only)
+    unfinishedTaskRecords?: Record<string, EngagementRecord>;  // v6.3: todoistId → engagement record at archive time
 }

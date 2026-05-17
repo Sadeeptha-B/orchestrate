@@ -2,10 +2,9 @@ import type {
     AppSettings,
     DayPlan,
     Habit,
-    HabitTaskInjection,
     LifeContext,
-    SessionSlot,
     TaskCapDefaults,
+    TodaysHabitInstance,
 } from '../types';
 import type { TodoistActionsValue } from '../context/TodoistContext';
 import type { TodoistProject, TodoistTask } from '../hooks/useTodoist';
@@ -137,20 +136,6 @@ export async function syncHabitToTodoist(args: {
     return created?.id ?? null;
 }
 
-/**
- * Determine which SessionSlot (if any) contains a given "HH:mm" time.
- * Handles slots that don't cross midnight; multi-day spans are not supported.
- */
-function resolveSessionForTime(time: string, slots: SessionSlot[]): string | undefined {
-    const m = timeToMinutes(time);
-    for (const slot of slots) {
-        const start = timeToMinutes(slot.startTime);
-        const end = timeToMinutes(slot.endTime);
-        if (m >= start && m < end) return slot.id;
-    }
-    return undefined;
-}
-
 /** Extract "HH:mm" from a Todoist `due.date` value, which may be "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm:ss". */
 function dueTimeOfDay(dueDate: string): string | null {
     const tIdx = dueDate.indexOf('T');
@@ -160,33 +145,33 @@ function dueTimeOfDay(dueDate: string): string | null {
 }
 
 /**
- * v6.1: compute the list of habit-tasks to inject for today.
+ * v6.3: compute today's stabilizer habit instances.
  *
  * Filters active stabilizer habits to those whose:
- *  - recurrence matches `dateISO`
+ *  - recurrence matches `plan.date`
  *  - season scope matches the active season (or is season-agnostic)
  *  - linked Todoist task exists, is due today, and is unchecked
  *  - `windowBehavior !== 'strict'` OR the current time is still inside the target window
- * Idempotent against habits already present in `plan.linkedTasks` (caller can pass the full list).
+ *
+ * Idempotent against habits already present in `plan.todaysHabits` (caller passes the full plan;
+ * the reducer's `REFRESH_TODAYS_HABITS` further dedupes by `habitId`).
+ *
+ * Each emitted instance gets a fresh uuid, `status: 'planned'`, and `targetTime` derived from the
+ * Todoist `due` time-of-day if set, else the habit's `targetTime`. No session assignment.
  */
-export function computeHabitTasksToInject(args: {
+export function computeTodaysHabitInstances(args: {
     life: LifeContext;
     plan: DayPlan;
     taskMap: Map<string, TodoistTask>;
-    sessionSlots: SessionSlot[];
     now: Date;
     taskCaps: TaskCapDefaults;
-}): HabitTaskInjection[] {
-    const { life, plan, taskMap, sessionSlots, now, taskCaps } = args;
+}): TodaysHabitInstance[] {
+    const { life, plan, taskMap, now, taskCaps } = args;
     const dateISO = plan.date;
     const activeSeasonId = life.activeSeasonId;
-    const existingHabitIds = new Set(
-        plan.linkedTasks
-            .map((lt) => lt.sourceHabitId)
-            .filter((id): id is string => Boolean(id)),
-    );
+    const existingHabitIds = new Set(plan.todaysHabits.map((i) => i.habitId));
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    const out: HabitTaskInjection[] = [];
+    const out: TodaysHabitInstance[] = [];
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
@@ -203,25 +188,50 @@ export function computeHabitTasksToInject(args: {
         const taskDueDate = task.due.date.slice(0, 10);
         if (taskDueDate !== dateISO) continue;
 
-        // Window-behavior gate: 'strict' hides the task if its window has passed.
+        // Window-behavior gate: 'strict' hides the instance if its window has passed.
+        const durationMinutes = habit.targetDurationMinutes ?? taskCaps.stabilizer;
         if (habit.windowBehavior === 'strict' && habit.targetTime) {
-            const windowEnd = timeToMinutes(habit.targetTime) + (habit.targetDurationMinutes ?? taskCaps.stabilizer);
+            const windowEnd = timeToMinutes(habit.targetTime) + durationMinutes;
             if (nowMinutes > windowEnd) continue;
         }
 
-        // Auto-assign session via Todoist `due.date` time-of-day if present, else habit's targetTime.
         const dueTime = dueTimeOfDay(task.due.date);
-        const anchorTime = dueTime ?? habit.targetTime;
-        const sessionId = anchorTime ? resolveSessionForTime(anchorTime, sessionSlots) : undefined;
+        const targetTime = dueTime ?? habit.targetTime;
 
         out.push({
+            id: crypto.randomUUID(),
             habitId: habit.id,
-            todoistId: habit.todoistTaskId,
-            name: task.content || habit.name,
-            estimatedMinutes: habit.targetDurationMinutes ?? taskCaps.stabilizer,
-            ...(sessionId ? { sessionId } : {}),
+            todoistTaskId: habit.todoistTaskId,
+            titleSnapshot: task.content || habit.name,
+            durationMinutes,
+            ...(targetTime ? { targetTime } : {}),
+            status: 'planned',
         });
     }
     return out;
+}
+
+/**
+ * v6.3: clone a TodaysHabitInstance with a new `targetTime`, fresh id, and `rescheduledFromId`
+ * pointing back at the predecessor. The successor starts in `planned` status; the reducer's
+ * `RESCHEDULE_HABIT_INSTANCE` case is responsible for flipping the predecessor to `unfinished` /
+ * `skipped` and appending this clone.
+ */
+export function cloneHabitInstanceForReschedule(
+    predecessor: TodaysHabitInstance,
+    newTargetTime: string | undefined,
+    nowISO: string,
+): TodaysHabitInstance {
+    return {
+        id: crypto.randomUUID(),
+        habitId: predecessor.habitId,
+        todoistTaskId: predecessor.todoistTaskId,
+        titleSnapshot: predecessor.titleSnapshot,
+        durationMinutes: predecessor.durationMinutes,
+        ...(newTargetTime ? { targetTime: newTargetTime } : {}),
+        status: 'planned',
+        rescheduledFromId: predecessor.id,
+        rescheduledAt: nowISO,
+    };
 }
 

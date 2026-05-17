@@ -1,4 +1,4 @@
-> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 6.1. Iterations 1–4 are preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable. Iterations 5+ are shipped-iteration narratives written at the time the work landed.
+> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 6.3. Iterations 1–4 are preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable. Iterations 5+ are shipped-iteration narratives written at the time the work landed.
 >
 > For the durable "why" see [../vision.md](../vision.md); for current implementation state see [../synthesis.md](../synthesis.md). Forward-looking proposals (currently v7+) live in [../backlog.md](../backlog.md).
 >
@@ -128,3 +128,31 @@ Schema bumped to `6.1` (a JSON float, kept aligned with the product label rather
 The scope was deliberately narrow — a structural correction, not a new iteration — so the user-facing label stays at v6.1 rather than v7.
 
 See [plan_v6.1.md](./plan_v6.1.md) for the full implementation plan.
+
+## Iteration 6.2 — Intentions backlog
+
+v6.2 introduces a persistent backlog for parked intentions. Two pressures converged: (a) day rollover was destroying yesterday's unfinished work — `loadPlan` discarded any plan whose date was stale, and `SAVE_DAY` was manual-only, so a missed-save morning erased context; (b) deleting an intention with linked Todoist tasks left those tasks scheduled in Todoist, since `REMOVE_INTENTION` didn't touch Todoist scheduling at all.
+
+The backlog (`life.backlog: BacklogEntry[]`) is the resting place for parked intentions. Manual `📥` (move to backlog) and `🗑` (delete with confirm modal) icon buttons live on every intention row in Step 1 and a new "Today's intentions (N)" overview panel in Step 3 Phase 1. Day rollover harvests unfinished intentions (those with at least one uncompleted intention-bound linked task) automatically with `reason: 'rollover'`. The `HistorySidebar` (renamed from `SavedSessions`) hosts a Backlog tab listing entries with Bring-to-today / Discard affordances.
+
+Completed-task handling on archive: `buildBacklogEntry` strips already-completed task ids from `intention.linkedTaskIds`. Their titles ride along in `BacklogEntry.completedTaskTitles` and render as a `✓ Done: …` annotation under the pending-count line in the Backlog tab. Restore rebuilds `LinkedTask` rows only for the pending ids, so Step 2 never sees a completed task masquerading as fresh `unclassified` work.
+
+Bug fix bundled in: `REMOVE_INTENTION` and all backlog paths now correctly unschedule linked Todoist tasks via `unscheduleIntentionTasks` (`due_string: 'no date'`) through the shared `useIntentionRemoval` hook. Habit-derived orphan tasks (`sourceHabitId` set) are explicitly skipped — they're owned by `syncHabitToTodoist`. Auto-rollover into the backlog is the deliberate exception: yesterday's tasks remain scheduled in Todoist so they show up as overdue.
+
+Schema bumped to `6.2`. No plan-shape changes from v6.1; just stamps the new marker and defaults `life.backlog` to `[]`. The provider's init path consolidates into `loadInitialState()` + `peekRawPlan()` so the rollover-harvest happens in one place.
+
+See [plan_v6.x.md](./plan_v6.x.md) for the full implementation plan (covering both v6.1 and v6.2).
+
+## Iteration 6.3 — Habit/session decoupling + task engagement
+
+v6.3 closes the loop on three intertwined defects in the v6.2 model.
+
+**Stabilizer habits leave `LinkedTask` entirely.** They had been carriers of type `background` with `sourceHabitId` set — orphans alongside intention-bound tasks. The wizard's Step 3 invited users to drop them into sessions ("Unassigned habits" tray; per-session "🔁 Habits" group), conflating recurring rituals with one-shot intention work. v6.3 introduces `TodaysHabitInstance` on `plan.todaysHabits` — its own type with its own lifecycle (planned / engaged / completed / unfinished / skipped). Stabilizers render in a dedicated **habit lane** above the session blocks in `SessionTimelineBar`, positioned by `targetTime`. Untimed habits cluster as "Anytime today" chips above the time axis. They are decoupled from session assignment and excluded from session capacity arithmetic. A new dashboard `HabitInstanceCard` lists today's instances with per-row Start / Stop / Complete / Skip / Reschedule controls.
+
+**Task engagement is explicit.** Each `LinkedTask` and each `TodaysHabitInstance` carries an optional `engagement: { startedAt, endedAt?, totalMinutes? }` record. ▶ and ■ buttons on dashboard rows let the user mark a task or habit instance as engaged; minutes accumulate across Start/Stop cycles. `LinkedTask.status` (`pending | engaged | completed | unfinished`) and `HabitInstanceStatus` (with the additional `planned` and `skipped` states) capture the lifecycle. `TOGGLE_TASK_COMPLETE` writes `status` alongside `completed` and closes any open engagement.
+
+**Reschedule preserves engagement via clone-and-mark-unfinished.** When a user moves an intention with engaged-but-incomplete LinkedTasks to the backlog, the engagement records ride along in `BacklogEntry.unfinishedTaskRecords` (a read-only memo surfaced as a `✱ Engaged earlier: N task(s), Mm` annotation in the Backlog tab). On Bring-to-today, restored LinkedTasks for those ids are stamped with `rescheduledFromTodoistId` + `rescheduledAt`. The same primitive applies to lenient habits: `RESCHEDULE_HABIT_INSTANCE` flips the predecessor to `unfinished` (if engaged) or `skipped` and appends a successor `TodaysHabitInstance` with the new `targetTime` and `rescheduledFromId` set. **No Todoist write** — the recurring task is untouched. Step 3 Phase 2 gains a "Today's habits" panel with a Reschedule affordance for lenient habits past their window; the dashboard's `HabitInstanceCard` has the same control.
+
+Schema bumped to `6.3`. The migration is one-shot and lossless: any `sourceHabitId`-bearing LinkedTask becomes a synthetic `TodaysHabitInstance` (status inferred from `completed` / `skippedForToday`), is dropped from `linkedTasks`, and its id is pruned from every `taskSessions[sessionId]`. Every remaining LinkedTask gets a `status` mirror of `completed`. The `HabitTaskInjection` type, the `INJECT_HABIT_TASKS` / `SKIP_HABIT_TASK` actions, the `isHabitDerivedTask` helper, and the `HABIT_GROUP_KEY` synthetic grouping are all removed.
+
+See [plan_v6.3.md](./plan_v6.3.md) for the full implementation plan.
