@@ -1,6 +1,6 @@
 # Plan v6.3 — Habit/Session Decoupling + Task Engagement & Reschedule Records
 
-> Frozen post-implementation plan. The living docs ([synthesis.md](../synthesis.md), [data-model.md](../data-model.md), [architecture.md](../architecture.md), [user-guide.md](../user-guide.md)) reflect the result. This document preserves the *narrative* of how v6.3 was designed and which tradeoffs landed where.
+> Frozen post-implementation plan. The living docs ([synthesis.md](../synthesis.md), [data-model.md](../data-model.md)) reflect the result. This document preserves the *narrative* of how v6.3 was designed and which tradeoffs landed where.
 
 ## Context
 

@@ -28,9 +28,9 @@ I plan to achieve this through a number of steps
 
 5. Then the app should invite the user to schedule background tasks accordingly within the day based on his main task allocation
 
-6. Refer to [Music Routine](../music_routine.md) that decides on music for the user based on the type of work. The app should then prompt the user to start the "Start work music"
+6. Refer to [Music Routine](../roadmap/music_routine.md) that decides on music for the user based on the type of work. The app should then prompt the user to start the "Start work music"
 
-7. Then the app should show all the different playlists detailed in [Music Routine](../music_routine.md)  in a format so that it is always visible to the user.
+7. Then the app should show all the different playlists detailed in [Music Routine](../roadmap/music_routine.md)  in a format so that it is always visible to the user.
 
 8. Hour by hour the app should prompt the user and ask how his day is going and remind him to recontextualize if necessary. It would also ask him the type of work he's doing and to switch playlists if necessary
 
@@ -73,7 +73,7 @@ We will have to plan this change well.
 
 ## Iteration 5 — Life scaffolding primitives
 
-Iteration 5 lifts Orchestrate from a day-execution engine to a life-scaffolding companion. The motivation is captured in [orchestrate_life_migration_spec.md](../orchestrate_life_migration_spec.md): the user is migrating into a more intentional lifestyle (sleep discipline, weekend degree work, gym, tech growth, side projects) and the app needs to hold context above the day to support that.
+Iteration 5 lifts Orchestrate from a day-execution engine to a life-scaffolding companion. The motivation is captured in [orchestrate_life_migration_spec.md](../roadmap/orchestrate_life_migration_spec.md): the user is migrating into a more intentional lifestyle (sleep discipline, weekend degree work, gym, tech growth, side projects) and the app needs to hold context above the day to support that.
 
 This iteration introduces three first-class concepts above the existing daily plan:
 

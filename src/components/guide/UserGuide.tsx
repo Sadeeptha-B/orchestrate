@@ -4,9 +4,10 @@ import { Logo } from '../ui/Logo';
 import { HeaderControls } from '../ui/HeaderControls';
 
 /**
- * v6.1 User Guide — mental model and how-to for the three execution pathways
+ * User Guide — mental model and how-to for the three execution pathways
  * (Deep Track / Stabilizer / Light Pool) plus manual background, True Rest,
- * and capacity arithmetic. **Mirrors docs/user-guide.md** — keep these in sync.
+ * and capacity arithmetic. This component is the single source for user-facing
+ * guide content.
  */
 export function UserGuide() {
     const navigate = useNavigate();

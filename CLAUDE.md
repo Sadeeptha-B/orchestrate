@@ -7,10 +7,17 @@ For the current state of the app — purpose, feature set, data model essentials
 Deeper references:
 - [docs/vision.md](./docs/vision.md) — the durable "why": problem, approach, constraints, core vocabulary
 - [docs/backlog.md](./docs/backlog.md) — forward-looking proposals not yet built
-- [docs/architecture.md](./docs/architecture.md) — provider tree, routing, integrations, persistence layer
-- [docs/data-model.md](./docs/data-model.md) — types, reducer actions, migration chain, localStorage shape
+- [docs/data-model.md](./docs/data-model.md) — entity semantics, invariants, reducer actions, migration chain, localStorage shape
 
 Frozen historical artifacts live in [docs/history/](./docs/history/) — implementation plans (`plan*.md`) and the iteration narrative (`iterations.md`). They are useful for understanding *how* the app got here, but **do not treat them as current state**.
+
+Requirement sketches live in [docs/roadmap/](./docs/roadmap/) — aspirational requirements and framing that haven't been consolidated into the backlog yet. **Agents: ignore these unless the user explicitly directs you to them.**
+
+## Key conventions
+
+- **Types live in code, not docs.** For current type definitions, read [`src/types/index.ts`](./src/types/index.ts) directly. `data-model.md` describes semantics, invariants, lifecycle rules, and relationships — not type shapes. Do not add type mirrors to docs.
+- **The in-app user guide** ([`src/components/guide/UserGuide.tsx`](./src/components/guide/UserGuide.tsx)) is the single source for user-facing mental model documentation. There is no separate markdown mirror.
+- **Version tracking uses git**, not manual headers. Do not add or maintain "Last updated:", "Reflects:", or schema-version headers in docs. Use `git blame` or `git log` when you need to know when a doc was last touched. Note: older commits may not include a version number in the message — check `_schemaVersion` in `src/context/DayPlanContext.tsx` for the current schema version.
 
 ## Documentation discipline
 
@@ -18,13 +25,12 @@ When making changes that affect long-term context, update the relevant doc(s) **
 
 | Change touches... | Update... |
 |---|---|
-| Provider tree, routing, integrations, persistence layer | `docs/architecture.md` |
-| Type definitions, reducer actions, migration chain, localStorage shape | `docs/data-model.md` |
-| User-visible feature set or current-state summary | `docs/synthesis.md` (and bump `Last updated:` + `Reflects:` in the header) |
-| Mental model for habits / intentions / tasks / Light Pool / True Rest / capacity (anything user-facing in the day-to-day flow) | `docs/user-guide.md` **and** [src/components/guide/UserGuide.tsx](./src/components/guide/UserGuide.tsx) — the in-app guide at `/guide` mirrors the markdown and must be kept in sync. |
+| Entity semantics, invariants, reducer actions, migration chain, localStorage shape | `docs/data-model.md` (describe semantics and rules — do **not** mirror type definitions) |
+| Provider tree, routing, integrations, persistence layer, user-visible feature set or current-state summary | `docs/synthesis.md` |
+| User-facing mental model (habits, intentions, tasks, Light Pool, True Rest, capacity) | [`src/components/guide/UserGuide.tsx`](./src/components/guide/UserGuide.tsx) — the in-app guide at `/guide` |
 | Durable "why" / principles / constraints | `docs/vision.md` |
 | New forward-looking proposals | `docs/backlog.md` |
-| A backlog item ships | Remove from `docs/backlog.md`; append a narrative entry to `docs/history/iterations.md`; drop the implementation plan into `docs/history/plan_v{N}.md` |
+| A backlog item ships | Remove from `docs/backlog.md`; drop the implementation plan into `docs/history/plan_v{N}.md` |
 
 When in doubt, update `synthesis.md` — it is the document agents read first, so stale state there is the highest-cost staleness.
 

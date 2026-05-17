@@ -2,7 +2,7 @@
 >
 > When an item ships: write the implementation plan into [history/](./history/) (e.g. `plan_v7.md`), append a narrative entry to [history/iterations.md](./history/iterations.md), update [synthesis.md](./synthesis.md) to reflect the new current state, and remove the item from this file.
 >
-> See [vision.md](./vision.md) for the durable "why", [synthesis.md](./synthesis.md) for the current state, and the most recent shipped plan: [history/plan_v6.x.md](./history/plan_v6.x.md).
+> See [vision.md](./vision.md) for the durable "why", [synthesis.md](./synthesis.md) for the current state, and the most recent shipped plan: [history/plan_v6.3.md](./history/plan_v6.3.md).
 
 # Orchestrate — Backlog
 

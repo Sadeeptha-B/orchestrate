@@ -67,10 +67,8 @@ Deployed to GitHub Pages via GitHub Actions on every push to `main`.
 
 ## Documentation
 
-- [docs/synthesis.md](docs/synthesis.md) — start here: purpose, current feature set, operating model
-- [docs/user-guide.md](docs/user-guide.md) — mental model and how-to for habits, intentions, tasks, and the rest
-- [docs/architecture.md](docs/architecture.md) — provider tree, routing, integrations, persistence
-- [docs/data-model.md](docs/data-model.md) — types, reducer actions, migration chain
+- [docs/synthesis.md](docs/synthesis.md) — start here: purpose, architecture, current feature set
+- [docs/data-model.md](docs/data-model.md) — entity semantics, invariants, reducer actions, migration chain
 - [docs/vision.md](docs/vision.md) — the durable "why"
 - [docs/backlog.md](docs/backlog.md) — forward-looking proposals (modes, rituals, reviews)
 

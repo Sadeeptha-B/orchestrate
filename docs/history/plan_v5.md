@@ -6,7 +6,7 @@
 
 ## Context
 
-The user authored [orchestrate_life_migration_spec.md](../orchestrate_life_migration_spec.md), which expands Orchestrate's mission from "day-execution and contextualization engine" to "executive-function and life-scaffolding companion." The spec spans four phases (life primitives, capacity intelligence, modes/rituals/recovery, reviews/drift). v5 implements **Phase 1 only**, intentionally.
+The user authored [orchestrate_life_migration_spec.md](../roadmap/orchestrate_life_migration_spec.md), which expands Orchestrate's mission from "day-execution and contextualization engine" to "executive-function and life-scaffolding companion." The spec spans four phases (life primitives, capacity intelligence, modes/rituals/recovery, reviews/drift). v5 implements **Phase 1 only**, intentionally.
 
 ## Decisions
 
