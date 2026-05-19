@@ -22,7 +22,7 @@ The user's proposed mechanic — **on reschedule of an engaged task, generate an
 | Habit positioning | **Dedicated habit lane** above the session blocks in `SessionTimelineBar`. Untimed habits cluster as "Anytime today" chips above the time axis. | Clear semantic separation from sessions. Spatial-time link is preserved (vs. a sidebar list). Floating overlays on session blocks were considered but rejected as visually entangling. |
 | Engagement detection | **Explicit Start/Stop button** (▶/■) on each LinkedTask row and HabitInstance row. | Implicit detection is too easy to false-positive (any reorder/expand triggers it). Explicit user action keeps the engagement record meaningful. |
 | Capacity inclusion | **Habits do not consume session capacity** | Matches the "habits aren't session-scoped" principle. If a user packs a session that overlaps a 30-min stabilizer, the timeline visualization makes the overlap obvious — no need to fold habit duration into the capacity arithmetic. |
-| Reschedule mechanic for lenient habits | **Clone-and-mark-unfinished, Orchestrate-side only** | Don't touch the recurring Todoist task. Predecessor flips to `unfinished` (if engaged) or `skipped` (if untouched); successor with new `targetTime` is appended to `todaysHabits` with `rescheduledFromId`. Todoist's recurrence stays clean. |
+| Reschedule mechanic for habits | **In-place update on the existing instance.** Status, engagement record, and id preserved; `targetTime` changes; `rescheduledAt` stamped as a "user-chose-this-time" sentinel. | Don't touch the recurring Todoist task — Todoist's recurrence stays clean. An earlier clone-and-mark-unfinished design was tried first but produced a strikethrough trail on the predecessor that didn't match user intent (rescheduling is moving the instance, not creating a record of failure). The `rescheduledAt` sentinel lets `REFRESH_TODAYS_HABITS` distinguish "user chose this time" from "habit-form edit should propagate." |
 | Engagement carryover on backlog | **`BacklogEntry.unfinishedTaskRecords: Record<todoistId, EngagementRecord>`** | Engagement memo lives on the BacklogEntry only — restored LinkedTasks get a `rescheduledFromTodoistId` stamp but no copy of the engagement record. The annotation in the Backlog tab is the user-facing surface. |
 | `completed: boolean` vs `status` | **Keep `completed` as a mirror** of `status === 'completed'` | Migration safety net. Many callers (capacity calc, session-card visuals, completion counter) still read `completed`. Both fields are written together in `TOGGLE_TASK_COMPLETE`. |
 | Schema version | **`6.3`** (JSON float). | Matches the product label. Stamped on plan, settings, life, and saved-session payloads. |
@@ -32,29 +32,30 @@ The user's proposed mechanic — **on reschedule of an engaged task, generate an
 
 No new contexts. The reducer surface grows; the existing providers carry through.
 
-- **New types** (`src/types/index.ts`): `TodaysHabitInstance`, `HabitInstanceStatus`, `EngagementRecord`, `LinkedTaskStatus`. Extended: `LinkedTask` (adds `status`, `engagement`, `rescheduledFromTodoistId`, `rescheduledAt`; drops `sourceHabitId`, `skippedForToday`). Extended: `DayPlan` (adds `todaysHabits`). Extended: `BacklogEntry` (adds `unfinishedTaskRecords`). Removed: `HabitTaskInjection`.
+- **New types** (`src/types/index.ts`): `TodaysHabitInstance` (`id`, `habitId`, `todoistTaskId`, `titleSnapshot`, `durationMinutes`, optional `targetTime`, `status`, optional `completedAt`/`engagement`/`rescheduledAt`), `HabitInstanceStatus`, `EngagementRecord`, `LinkedTaskStatus`. Extended: `LinkedTask` (adds `status`, `engagement`, `rescheduledFromTodoistId`, `rescheduledAt`; drops `sourceHabitId`, `skippedForToday`). Extended: `DayPlan` (adds `todaysHabits`). Extended: `BacklogEntry` (adds `unfinishedTaskRecords`). Removed: `HabitTaskInjection`.
 
 - **Reducer actions**:
   - Replaced: `INJECT_HABIT_TASKS` → `REFRESH_TODAYS_HABITS { instances: TodaysHabitInstance[] }`. `SKIP_HABIT_TASK` → `SKIP_HABIT_INSTANCE { instanceId }`.
-  - Added: `START_HABIT_INSTANCE`, `STOP_HABIT_INSTANCE`, `COMPLETE_HABIT_INSTANCE`, `RESCHEDULE_HABIT_INSTANCE`, `START_TASK_ENGAGEMENT`, `STOP_TASK_ENGAGEMENT`.
+  - Added: `START_HABIT_INSTANCE`, `STOP_HABIT_INSTANCE`, `COMPLETE_HABIT_INSTANCE`, `RESCHEDULE_HABIT_INSTANCE` (in-place update of `targetTime` + `rescheduledAt`), `START_TASK_ENGAGEMENT`, `STOP_TASK_ENGAGEMENT`.
+  - `REFRESH_TODAYS_HABITS` merges into existing planned instances (refreshes `targetTime`/`durationMinutes`/`titleSnapshot` from the latest habit definition, but preserves `targetTime` when `rescheduledAt` is set — so habit-form edits propagate while user reschedules stick).
   - Modified: `TOGGLE_TASK_COMPLETE` now also sets `status` and closes engagement. `MOVE_INTENTION_TO_BACKLOG` captures engagement into `unfinishedTaskRecords`. `RESTORE_FROM_BACKLOG` accepts a `now` arg and stamps `rescheduledFromTodoistId`/`rescheduledAt` on rebuilt LinkedTasks that had engagement.
   - `DELETE_HABIT` cleanup pivots from `plan.linkedTasks` (drop `sourceHabitId` matches) to `plan.todaysHabits` (drop `habitId` matches).
 
 - **Helpers**:
-  - `lib/habitsTodoistSync.ts` — renamed `computeHabitTasksToInject` → `computeTodaysHabitInstances`; added `cloneHabitInstanceForReschedule`. Drops the `resolveSessionForTime` branch (no session pre-assignment).
+  - `lib/habitsTodoistSync.ts` — renamed `computeHabitTasksToInject` → `computeTodaysHabitInstances`. Drops the `resolveSessionForTime` branch (no session pre-assignment).
   - `lib/backlog.ts` — `buildBacklogEntry` walks engagement records; `rebuildLinkedTasksForBacklogEntry` accepts `nowISO` and stamps reschedule fields for engaged ids.
   - `lib/habits.ts` — `isHabitDerivedTask` removed (no callers).
   - `lib/intentionUnschedule.ts` — the `sourceHabitId` skip branch is now structurally unreachable; the arg list is preserved for API stability.
   - `context/DayPlanContext.tsx` — new `closeEngagement(record, nowISO)` helper accumulates minutes across cycles.
 
 - **UI**:
-  - **New** `src/components/dashboard/HabitInstanceCard.tsx` — lists today's stabilizer instances with per-row Start/Stop/Complete/Skip/Reschedule controls.
+  - **New** `src/components/dashboard/HabitInstanceCard.tsx` — single sorted list of today's stabilizer instances (no separate completed/skipped log) with per-row Start/Stop/Complete/Skip/Reschedule controls. Completed/skipped rows render in place with terminal styling; controls hidden.
   - **Modified** `src/components/ui/SessionTimelineBar.tsx` — adds the habit lane above session blocks, "Anytime today" cluster above the time axis. Drops the `isHabitDerivedTask(lt) && '🔁 '` prefix logic from session-block task pills.
   - **Modified** `src/components/dashboard/SessionTimeline.tsx` — removes `HABIT_GROUP_KEY` synthetic grouping; pass `plan.todaysHabits` through to `SessionTimelineBar`; adds Start/Stop button to `TaskRow`.
   - **Modified** `src/components/dashboard/Dashboard.tsx` — mounts `HabitInstanceCard` between Timeline and CurrentSession.
   - **Modified** `src/components/wizard/Step1Intentions.tsx` — dispatches `REFRESH_TODAYS_HABITS` from `computeTodaysHabitInstances`. Chip copy updated. Passes `habitTodoistIds` to `TodoistPanel.linking` for the "🔁 Habit" label.
   - **Modified** `src/components/wizard/Step2Refine.tsx` — drops the "Stabilizer habits skip this step entirely" tip text.
-  - **Modified** `src/components/wizard/Step3Schedule.tsx` — removes the "Unassigned habits" tray and the "🔁 Habits" group from the selected-session detail. Removes the 🔁 prefix on the Add-background buttons and Phase 2 session summary. Passes `todaysHabits` to `SessionTimelineBar`. Adds a new `Phase2HabitsPanel` above the Todoist + Calendar split with a per-row Reschedule affordance for lenient habits past their window.
+  - **Modified** `src/components/wizard/Step3Schedule.tsx` — removes the "Unassigned habits" tray and the "🔁 Habits" group from the selected-session detail. Removes the 🔁 prefix on the Add-background buttons and Phase 2 session summary. Passes `todaysHabits` to `SessionTimelineBar`. Adds a new `Step3HabitsPanel` rendered in **both** Phase 1 (below the timeline) and Phase 2 (above the Todoist + Calendar split), with a Reschedule affordance on every active instance — Step 3 is the planning step, so the user should be able to set/change times regardless of whether the target window has elapsed.
   - **Modified** `src/components/todoist/TodoistPanel.tsx` — `LinkingProps` gains `habitTodoistIds: Set<string>`; the habit-detection logic checks the Set instead of `LinkedTask.sourceHabitId`.
   - **Modified** `src/components/dashboard/BacklogTab.tsx` — renders a `✱ Engaged earlier: N task(s), Mm` annotation when `entry.unfinishedTaskRecords` is populated.
 

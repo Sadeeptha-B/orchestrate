@@ -180,6 +180,9 @@ export function Step3Schedule() {
                         todaysHabits={plan.todaysHabits}
                     />
 
+                    {/* v6.3: Habit instances panel — reschedule is available from planning. */}
+                    <Step3HabitsPanel />
+
                     {/* ── Selected session detail panel ── */}
                     {selectedSession && (() => {
                         const assignedIds = plan.taskSessions[selectedSession.id] ?? [];
@@ -411,8 +414,8 @@ export function Step3Schedule() {
                         })}
                     </div>
 
-                    {/* v6.3: Today's habits — reschedule lenient ones whose window has passed */}
-                    <Phase2HabitsPanel />
+                    {/* v6.3: Habit instances panel — reschedule remains available. */}
+                    <Step3HabitsPanel />
 
                     {/* Todoist + Calendar side by side */}
                     <div className="flex flex-col lg:flex-row gap-6 flex-1">
@@ -448,27 +451,16 @@ export function Step3Schedule() {
 }
 
 /**
- * v6.3: Step 3 Phase 2 panel — lists today's habit instances. Lenient habits whose
- * target window has passed get an inline reschedule affordance (time-picker). Strict
- * habits past their window are filtered out by `computeTodaysHabitInstances` and never
- * appear here.
+ * v6.3: Step 3 habits panel — lists today's active habit instances (planned + engaged).
+ * Each row exposes a Reschedule affordance unconditionally (Step 3 IS the planning step,
+ * so the user should be able to set/change times here without waiting for the target
+ * window to elapse). Strict habits past their window were already filtered out by
+ * `computeTodaysHabitInstances` and never appear. Rendered in both Phase 1 and Phase 2.
  */
-function Phase2HabitsPanel() {
+function Step3HabitsPanel() {
     const { plan, dispatch } = useDayPlan();
     const [reschedulingId, setReschedulingId] = useState<string | null>(null);
     const [reschedTime, setReschedTime] = useState<string>('');
-
-    if (plan.todaysHabits.length === 0) return null;
-
-    const nowMinutes = (() => {
-        const d = new Date();
-        return d.getHours() * 60 + d.getMinutes();
-    })();
-
-    const isPastWindow = (instance: TodaysHabitInstance) => {
-        if (!instance.targetTime) return false;
-        return timeToMinutes(instance.targetTime) + instance.durationMinutes < nowMinutes;
-    };
 
     const active = plan.todaysHabits
         .filter((i) => i.status === 'planned' || i.status === 'engaged')
@@ -478,6 +470,8 @@ function Phase2HabitsPanel() {
             if (b.targetTime) return 1;
             return 0;
         });
+
+    if (active.length === 0) return null;
 
     const handleSaveReschedule = (instance: TodaysHabitInstance) => {
         dispatch({
@@ -495,63 +489,59 @@ function Phase2HabitsPanel() {
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
                 <span aria-hidden>🔁</span>
                 Today&apos;s habits
-                <span className="text-xs font-normal text-text-light">({plan.todaysHabits.length})</span>
+                <span className="text-xs font-normal text-text-light">({active.length})</span>
             </h3>
-            {active.length === 0 ? (
-                <p className="text-xs text-text-light">All habits handled today.</p>
-            ) : (
-                <ul className="space-y-1.5">
-                    {active.map((i) => {
-                        const past = isPastWindow(i);
-                        const isRescheduling = reschedulingId === i.id;
-                        return (
-                            <li key={i.id} className="flex items-center gap-2 text-sm">
-                                <span className="flex-1 truncate">{i.titleSnapshot}</span>
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent tabular-nums">
-                                    {i.targetTime ?? 'anytime'}
+            <ul className="space-y-1.5">
+                {active.map((i) => {
+                    const isRescheduling = reschedulingId === i.id;
+                    return (
+                        <li key={i.id} className="flex items-center gap-2 text-sm">
+                            <span className="flex-1 truncate">{i.titleSnapshot}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent tabular-nums">
+                                {i.targetTime ?? 'anytime'}
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums">
+                                {i.durationMinutes}m
+                            </span>
+                            {i.status === 'engaged' && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 capitalize">
+                                    engaged
                                 </span>
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums">
-                                    {i.durationMinutes}m
-                                </span>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full capitalize ${i.status === 'engaged' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-surface-dark text-text-light'}`}>
-                                    {i.status}
-                                </span>
-                                {past && !isRescheduling && (
+                            )}
+                            {isRescheduling ? (
+                                <span className="flex items-center gap-1">
+                                    <input
+                                        type="time"
+                                        value={reschedTime}
+                                        onChange={(e) => setReschedTime(e.target.value)}
+                                        className="px-1 py-0.5 text-xs rounded border border-border bg-card"
+                                    />
                                     <button
-                                        onClick={() => { setReschedulingId(i.id); setReschedTime(i.targetTime ?? ''); }}
-                                        className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 cursor-pointer"
-                                        title="Reschedule to a later time today"
+                                        onClick={() => handleSaveReschedule(i)}
+                                        className="px-2 py-0.5 text-[10px] rounded bg-accent text-white hover:bg-accent/80 cursor-pointer"
                                     >
-                                        ⤴ Reschedule
+                                        Save
                                     </button>
-                                )}
-                                {isRescheduling && (
-                                    <span className="flex items-center gap-1">
-                                        <input
-                                            type="time"
-                                            value={reschedTime}
-                                            onChange={(e) => setReschedTime(e.target.value)}
-                                            className="px-1 py-0.5 text-xs rounded border border-border bg-card"
-                                        />
-                                        <button
-                                            onClick={() => handleSaveReschedule(i)}
-                                            className="px-2 py-0.5 text-[10px] rounded bg-accent text-white hover:bg-accent/80 cursor-pointer"
-                                        >
-                                            Save
-                                        </button>
-                                        <button
-                                            onClick={() => { setReschedulingId(null); setReschedTime(''); }}
-                                            className="px-2 py-0.5 text-[10px] rounded text-text-light hover:bg-surface-dark cursor-pointer"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </span>
-                                )}
-                            </li>
-                        );
-                    })}
-                </ul>
-            )}
+                                    <button
+                                        onClick={() => { setReschedulingId(null); setReschedTime(''); }}
+                                        className="px-2 py-0.5 text-[10px] rounded text-text-light hover:bg-surface-dark cursor-pointer"
+                                    >
+                                        Cancel
+                                    </button>
+                                </span>
+                            ) : (
+                                <button
+                                    onClick={() => { setReschedulingId(i.id); setReschedTime(i.targetTime ?? ''); }}
+                                    className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 cursor-pointer"
+                                    title="Set or change time for this habit today"
+                                >
+                                    ⤴ Reschedule
+                                </button>
+                            )}
+                        </li>
+                    );
+                })}
+            </ul>
         </div>
     );
 }

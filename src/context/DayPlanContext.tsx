@@ -828,22 +828,51 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'REFRESH_TODAYS_HABITS': {
-            // v6.3: idempotent merge by habitId. Preserves any existing instance for a given habit
-            // (engaged/completed/unfinished/skipped state lives only here). Only adds new ones.
-            const knownHabitIds = new Set(plan.todaysHabits.map((i) => i.habitId));
-            const fresh = action.instances.filter((i) => !knownHabitIds.has(i.habitId));
-            if (fresh.length === 0) return state;
+            // v6.3: merge by habitId. For each incoming instance:
+            //   - no existing match → append.
+            //   - existing match is `planned` and not user-rescheduled → refresh `targetTime`,
+            //     `durationMinutes`, `titleSnapshot` from the helper (picks up habit-form edits).
+            //   - existing match is `planned` and user-rescheduled (`rescheduledAt` set) → only
+            //     refresh `durationMinutes` + `titleSnapshot`. Preserve the user's chosen time.
+            //   - existing match is in any other status → leave alone (engaged/completed/skipped
+            //     state lives only here).
+            const incomingByHabitId = new Map(action.instances.map((i) => [i.habitId, i]));
+            const seenHabitIds = new Set<string>();
+            const merged = plan.todaysHabits.map((existing) => {
+                const incoming = incomingByHabitId.get(existing.habitId);
+                if (!incoming) return existing;
+                seenHabitIds.add(existing.habitId);
+                if (existing.status !== 'planned') return existing;
+                const userRescheduled = Boolean(existing.rescheduledAt);
+                return {
+                    ...existing,
+                    durationMinutes: incoming.durationMinutes,
+                    titleSnapshot: incoming.titleSnapshot,
+                    ...(userRescheduled
+                        ? {}
+                        : incoming.targetTime !== undefined
+                            ? { targetTime: incoming.targetTime }
+                            : { targetTime: undefined }),
+                };
+            });
+            const appended = action.instances.filter((i) => !seenHabitIds.has(i.habitId));
+            if (appended.length === 0 && merged.every((m, idx) => m === plan.todaysHabits[idx])) {
+                return state;
+            }
             return {
                 ...state,
-                plan: { ...plan, todaysHabits: [...plan.todaysHabits, ...fresh] },
+                plan: { ...plan, todaysHabits: [...merged, ...appended] },
             };
         }
 
         case 'START_HABIT_INSTANCE': {
+            // v6.3: starting (or resuming after a stop) opens a fresh segment. We update
+            // `startedAt` to `now` on every Start so the next `closeEngagement` measures
+            // only the current segment — previous cycles are already in `totalMinutes`.
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
                 const engagement: EngagementRecord = i.engagement
-                    ? { ...i.engagement, endedAt: undefined }
+                    ? { ...i.engagement, startedAt: action.now, endedAt: undefined }
                     : { startedAt: action.now };
                 return { ...i, status: 'engaged' as const, engagement };
             });
@@ -851,10 +880,13 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'STOP_HABIT_INSTANCE': {
+            // v6.3: stopping closes the current segment AND returns the instance to `planned`
+            // so the toggle button flips back to ▶ Start. Resuming (Start again) preserves the
+            // existing `totalMinutes` and opens a new segment.
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId || !i.engagement) return i;
                 const engagement = closeEngagement(i.engagement, action.now);
-                return { ...i, engagement };
+                return { ...i, status: 'planned' as const, engagement };
             });
             return { ...state, plan: { ...plan, todaysHabits } };
         }
@@ -883,32 +915,24 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'RESCHEDULE_HABIT_INSTANCE': {
-            const predecessor = plan.todaysHabits.find((i) => i.id === action.instanceId);
-            if (!predecessor) return state;
-            const wasEngaged = Boolean(predecessor.engagement);
-            const predecessorEngagement = wasEngaged && predecessor.engagement && !predecessor.engagement.endedAt
-                ? closeEngagement(predecessor.engagement, action.now)
-                : predecessor.engagement;
+            // v6.3 (revised): in-place update. The instance keeps its id, its engagement record,
+            // and its status. Only `targetTime` changes. `rescheduledAt` is stamped so a later
+            // `REFRESH_TODAYS_HABITS` won't clobber the user's chosen time. No clone trail, no
+            // strikethrough — rescheduling is just moving the instance on the timeline.
+            const target = plan.todaysHabits.find((i) => i.id === action.instanceId);
+            if (!target) return state;
+            if (target.status !== 'planned' && target.status !== 'engaged') return state;
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
                 return {
                     ...i,
-                    status: (wasEngaged ? 'unfinished' : 'skipped') as 'unfinished' | 'skipped',
-                    ...(predecessorEngagement ? { engagement: predecessorEngagement } : {}),
+                    ...(action.newTargetTime
+                        ? { targetTime: action.newTargetTime }
+                        : { targetTime: undefined }),
+                    rescheduledAt: action.now,
                 };
             });
-            const successor: TodaysHabitInstance = {
-                id: crypto.randomUUID(),
-                habitId: predecessor.habitId,
-                todoistTaskId: predecessor.todoistTaskId,
-                titleSnapshot: predecessor.titleSnapshot,
-                durationMinutes: predecessor.durationMinutes,
-                ...(action.newTargetTime ? { targetTime: action.newTargetTime } : {}),
-                status: 'planned',
-                rescheduledFromId: predecessor.id,
-                rescheduledAt: action.now,
-            };
-            return { ...state, plan: { ...plan, todaysHabits: [...todaysHabits, successor] } };
+            return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         case 'START_TASK_ENGAGEMENT': {

@@ -91,15 +91,17 @@ export type HabitInstanceStatus =
 export interface TodaysHabitInstance {
     id: string;                            // uuid (primary key)
     habitId: string;                       // → life.habits[i].id
-    todoistTaskId: string;                 // recurring Todoist task id (stable across reschedule chain)
+    todoistTaskId: string;                 // recurring Todoist task id
     titleSnapshot: string;
     durationMinutes: number;
     targetTime?: string;                   // "HH:mm" — drives timeline position; absent = "anytime today"
     status: HabitInstanceStatus;
     completedAt?: string;                  // ISO
     engagement?: EngagementRecord;
-    rescheduledFromId?: string;            // predecessor instance id (clone chain)
-    rescheduledAt?: string;                // ISO
+    rescheduledAt?: string;                // v6.3: ISO timestamp of the last user reschedule.
+                                           //       When set, `REFRESH_TODAYS_HABITS` preserves
+                                           //       the user-chosen `targetTime` instead of
+                                           //       re-deriving it from the habit definition.
 }
 
 /** v6: a logged "pull" from the Light Pool. Never becomes an intention or LinkedTask. */

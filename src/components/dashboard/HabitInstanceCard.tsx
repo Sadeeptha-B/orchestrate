@@ -22,23 +22,16 @@ export function HabitInstanceCard() {
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
 
-    const active: TodaysHabitInstance[] = [];
-    const done: TodaysHabitInstance[] = [];
-    for (const i of plan.todaysHabits) {
-        if (i.status === 'planned' || i.status === 'engaged') active.push(i);
-        else done.push(i);
-    }
-    // Sort: timed first (by targetTime), then untimed.
+    if (plan.todaysHabits.length === 0) return null;
+
+    // Sort: timed first (by targetTime), then untimed. Single list — no separate "today so far" log.
     const sortByTime = (a: TodaysHabitInstance, b: TodaysHabitInstance) => {
         if (a.targetTime && b.targetTime) return timeToMinutes(a.targetTime) - timeToMinutes(b.targetTime);
         if (a.targetTime) return -1;
         if (b.targetTime) return 1;
         return 0;
     };
-    active.sort(sortByTime);
-    done.sort(sortByTime);
-
-    if (plan.todaysHabits.length === 0) return null;
+    const instances = [...plan.todaysHabits].sort(sortByTime);
 
     const handleStartStop = (instance: TodaysHabitInstance) => {
         const nowISO = new Date().toISOString();
@@ -85,48 +78,60 @@ export function HabitInstanceCard() {
                 <h4 className="text-sm font-semibold flex items-center gap-2">
                     <span aria-hidden>🔁</span>
                     Today&apos;s habits
-                    <span className="text-xs font-normal text-text-light">({plan.todaysHabits.length})</span>
+                    <span className="text-xs font-normal text-text-light">({instances.length})</span>
                 </h4>
             </div>
 
-            {active.length > 0 ? (
-                <ul className="space-y-2">
-                    {active.map((i) => {
-                        const habit = habitById.get(i.habitId);
-                        const isEngaged = i.status === 'engaged';
-                        const engagementMinutes = i.engagement?.totalMinutes ?? 0;
-                        const isRescheduling = reschedulingId === i.id;
-                        return (
-                            <li
-                                key={i.id}
-                                className={`flex items-center gap-2 px-2 py-1.5 rounded transition-colors ${isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}
-                            >
-                                <span className="text-sm" aria-hidden>🔁</span>
-                                <span className="flex-1 text-sm truncate" title={i.titleSnapshot}>
-                                    {i.titleSnapshot}
-                                    {habit?.minimumViable && (
-                                        <span className="ml-2 text-[11px] text-text-light/70">· {habit.minimumViable}</span>
-                                    )}
-                                </span>
-                                {i.targetTime ? (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent tabular-nums flex-shrink-0">
-                                        {i.targetTime}
-                                    </span>
-                                ) : (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light flex-shrink-0">
-                                        Anytime
-                                    </span>
+            <ul className="space-y-2">
+                {instances.map((i) => {
+                    const habit = habitById.get(i.habitId);
+                    const isEngaged = i.status === 'engaged';
+                    const isCompleted = i.status === 'completed';
+                    const isSkipped = i.status === 'skipped';
+                    const isTerminal = isCompleted || isSkipped || i.status === 'unfinished';
+                    const engagementMinutes = i.engagement?.totalMinutes ?? 0;
+                    const isRescheduling = reschedulingId === i.id;
+                    return (
+                        <li
+                            key={i.id}
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded transition-colors ${
+                                isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
+                                : isTerminal ? 'opacity-60'
+                                : ''
+                            }`}
+                        >
+                            <span className="text-sm" aria-hidden>{isCompleted ? '🎉' : '🔁'}</span>
+                            <span className={`flex-1 text-sm truncate ${isCompleted ? 'line-through text-text-light' : ''}`} title={i.titleSnapshot}>
+                                {i.titleSnapshot}
+                                {!isTerminal && habit?.minimumViable && (
+                                    <span className="ml-2 text-[11px] text-text-light/70">· {habit.minimumViable}</span>
                                 )}
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
-                                    {i.durationMinutes}m
+                            </span>
+                            {i.targetTime ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent tabular-nums flex-shrink-0">
+                                    {i.targetTime}
                                 </span>
-                                {isEngaged && engagementMinutes > 0 && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 tabular-nums flex-shrink-0">
-                                        {engagementMinutes}m engaged
-                                    </span>
-                                )}
+                            ) : (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light flex-shrink-0">
+                                    Anytime
+                                </span>
+                            )}
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
+                                {i.durationMinutes}m
+                            </span>
+                            {isEngaged && engagementMinutes > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 tabular-nums flex-shrink-0">
+                                    {engagementMinutes}m engaged
+                                </span>
+                            )}
+                            {isSkipped && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light/70 capitalize flex-shrink-0">
+                                    skipped
+                                </span>
+                            )}
 
-                                {isRescheduling ? (
+                            {!isTerminal && (
+                                isRescheduling ? (
                                     <span className="flex items-center gap-1 flex-shrink-0">
                                         <input
                                             type="time"
@@ -168,7 +173,7 @@ export function HabitInstanceCard() {
                                         <button
                                             onClick={() => openReschedule(i)}
                                             className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
-                                            title="Reschedule to later"
+                                            title="Reschedule"
                                             aria-label="Reschedule"
                                         >
                                             ⤴
@@ -182,29 +187,12 @@ export function HabitInstanceCard() {
                                             ✕
                                         </button>
                                     </span>
-                                )}
-                            </li>
-                        );
-                    })}
-                </ul>
-            ) : (
-                <p className="text-xs text-text-light px-2">All habits handled today.</p>
-            )}
-
-            {done.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-border/60 space-y-1">
-                    <span className="text-[10px] uppercase tracking-wider text-text-light/70 px-2">Today so far</span>
-                    {done.map((i) => (
-                        <div key={i.id} className="flex items-center gap-2 px-2 py-1 text-xs text-text-light">
-                            <span aria-hidden>{i.status === 'completed' ? '🎉' : i.status === 'skipped' ? '⤼' : '⚠'}</span>
-                            <span className={`flex-1 truncate ${i.status !== 'completed' ? '' : 'line-through'}`}>
-                                {i.titleSnapshot}
-                            </span>
-                            <span className="text-[10px] capitalize text-text-light/70">{i.status}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
+                                )
+                            )}
+                        </li>
+                    );
+                })}
+            </ul>
         </Card>
     );
 }
