@@ -211,27 +211,3 @@ export function computeTodaysHabitInstances(args: {
     return out;
 }
 
-/**
- * v6.3: clone a TodaysHabitInstance with a new `targetTime`, fresh id, and `rescheduledFromId`
- * pointing back at the predecessor. The successor starts in `planned` status; the reducer's
- * `RESCHEDULE_HABIT_INSTANCE` case is responsible for flipping the predecessor to `unfinished` /
- * `skipped` and appending this clone.
- */
-export function cloneHabitInstanceForReschedule(
-    predecessor: TodaysHabitInstance,
-    newTargetTime: string | undefined,
-    nowISO: string,
-): TodaysHabitInstance {
-    return {
-        id: crypto.randomUUID(),
-        habitId: predecessor.habitId,
-        todoistTaskId: predecessor.todoistTaskId,
-        titleSnapshot: predecessor.titleSnapshot,
-        durationMinutes: predecessor.durationMinutes,
-        ...(newTargetTime ? { targetTime: newTargetTime } : {}),
-        status: 'planned',
-        rescheduledFromId: predecessor.id,
-        rescheduledAt: nowISO,
-    };
-}
-

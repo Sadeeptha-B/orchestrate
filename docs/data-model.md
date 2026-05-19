@@ -42,10 +42,16 @@ A stabilizer habit's manifestation for today. Lives on `DayPlan.todaysHabits`, i
 - **planned** — surfaced for today, not yet acted on.
 - **engaged** — user pressed Start on the `HabitInstanceCard`.
 - **completed** — done. Caller also fires `actions.completeTask(todoistTaskId)` to close Todoist's current occurrence.
-- **unfinished** — terminal: was engaged, then rescheduled or abandoned. Engagement record retained.
-- **skipped** — terminal: user explicitly skipped, or predecessor of a reschedule with no prior engagement.
+- **skipped** — terminal: user explicitly skipped today (✕ button).
+- **unfinished** — retained in the union for forward-compatibility; no current reducer path writes it.
 
-**Reschedule (clone) primitive:** `RESCHEDULE_HABIT_INSTANCE` flips the predecessor to `unfinished` (if engaged) or `skipped` (if untouched), then appends a successor with fresh `status: 'planned'` and `rescheduledFromId`. **No Todoist write** — the recurring task is untouched. Multiple instances per habit per day can coexist (predecessor stays terminal, successor active).
+**Reschedule (in-place):** `RESCHEDULE_HABIT_INSTANCE` updates the instance's `targetTime` in place and stamps `rescheduledAt`. Status, engagement record, and `id` are preserved. **No clone, no strikethrough trail, no Todoist write** — rescheduling is just moving the instance on the timeline. One instance per habit per day. The `rescheduledAt` stamp acts as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
+
+**Refresh merge (`REFRESH_TODAYS_HABITS`):** Called on Step 1 mount and whenever habits / Todoist cache change. For each habit:
+- If no existing instance → append the computed one.
+- If existing is `planned` and `rescheduledAt` is unset → update `targetTime`, `durationMinutes`, and `titleSnapshot` from the helper (this is how habit-form edits propagate to today's instance).
+- If existing is `planned` and `rescheduledAt` is set → only update `durationMinutes` and `titleSnapshot`; preserve the user's chosen time.
+- If existing is in any other status → leave alone.
 
 **Capacity exclusion:** Habits do not consume session capacity. The timeline visualization makes overlap obvious without folding habit duration into capacity arithmetic.
 
@@ -178,7 +184,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes engagement segment, accumulates minutes. Status stays `'engaged'`. |
 | `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes engagement. Caller completes Todoist task. |
 | `SKIP_HABIT_INSTANCE` | `instanceId` | Sets `status = 'skipped'`. Terminal. |
-| `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | Predecessor -> `unfinished`/`skipped`. Appends successor with new `targetTime`. No Todoist write. |
+| `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | In-place update: sets `targetTime` and stamps `rescheduledAt` on the existing instance. Engagement record, status, and id preserved. No clone, no Todoist write. |
 
 ### 3.4 Backlog Actions
 

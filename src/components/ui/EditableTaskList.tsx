@@ -7,9 +7,11 @@ import { useConfirmModal } from '../../hooks/useConfirmModal';
 
 interface EditableTaskListProps {
     tasks: Intention[];
+    onReorder?: (reorderedIds: string[]) => void;
+    onSelect?: (id: string) => void;
 }
 
-export function EditableTaskList({ tasks }: EditableTaskListProps) {
+export function EditableTaskList({ tasks, onReorder, onSelect }: EditableTaskListProps) {
     const { dispatch } = useDayPlan();
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -89,11 +91,15 @@ export function EditableTaskList({ tasks }: EditableTaskListProps) {
             reordered.splice(fromIndex, 1);
             reordered.splice(toIndex, 0, dragId);
 
-            dispatch({ type: 'REORDER_INTENTIONS', intentionIds: reordered });
+            if (onReorder) {
+                onReorder(reordered);
+            } else {
+                dispatch({ type: 'REORDER_INTENTIONS', intentionIds: reordered });
+            }
             setDragId(null);
             setDragOverId(null);
         },
-        [dragId, tasks, dispatch],
+        [dragId, tasks, onReorder, dispatch],
     );
 
     const handleDragEnd = useCallback(() => {
@@ -164,6 +170,15 @@ export function EditableTaskList({ tasks }: EditableTaskListProps) {
 
                             {/* Right side: custom actions, backlog, delete (v6.2) */}
                             <div className="flex items-center gap-1 flex-shrink-0">
+                                {onSelect && (
+                                    <button
+                                        onClick={() => onSelect(task.id)}
+                                        className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-xs cursor-pointer"
+                                        title="Map this intention now"
+                                    >
+                                        Map →
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => void moveToBacklog(task.id)}
                                     className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-sm cursor-pointer"

@@ -87,7 +87,7 @@ Life routes are always reachable (no `setupComplete` gate) — `setupComplete` i
 | **Season** | A medium-horizon focus period (4-12 weeks) with theme, goals, non-goals, success criteria, optional capacity budget. Exactly one active at a time. |
 | **Habit** | A first-class recurring entity. Discriminated by `kind` into **stabilizer** and **light-coherent**. Owns recurrence rule, minimum-viable form, trigger cue, anchor flag, season scope. |
 | **Stabilizer** | `kind: 'stabilizer'` habit. Synced to Todoist as a recurring task. Surfaces as a `TodaysHabitInstance` positioned on the timeline by `targetTime`, independent of session assignment. Has its own Start/Stop/Complete/Skip/Reschedule lifecycle. |
-| **TodaysHabitInstance** | A stabilizer's manifestation for today. Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/unfinished/skipped), `engagement`, and `rescheduledFromId` for the clone-on-reschedule chain. Never enters session capacity. |
+| **TodaysHabitInstance** | A stabilizer's manifestation for today. Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/skipped), `engagement`, and `rescheduledAt` (user-rescheduled sentinel). Reschedules update in place — one instance per habit per day. Never enters session capacity. |
 | **Light-coherent** | `kind: 'light-coherent'` habit. Micro-gap filler. Surfaces in the **Light Pool**, logged via `plan.habitLog`. Never enters the task plan. |
 | **Light Pool** | Dashboard panel + `/life` section listing today's active light-coherent habits. Start/Complete writes a `HabitLogEntry`. |
 | **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via `/rest-cues`. Surfaced on Dashboard `InsightCard`, in the check-in modal for low-energy states, and as a between-session banner. |
@@ -188,7 +188,7 @@ Manages:
 - Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; UI offers to deactivate first).
 - Deleting a habit also drops any `TodaysHabitInstance` rows for it from `plan.todaysHabits`.
 - `REFRESH_TODAYS_HABITS` is idempotent -- skips habits already represented. Payload precomputed by `lib/habitsTodoistSync.ts -> computeTodaysHabitInstances(...)`. Only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify.
-- Habit instance lifecycle: `START/STOP_HABIT_INSTANCE` accumulate engagement minutes; `COMPLETE_HABIT_INSTANCE` sets status + caller closes the Todoist occurrence; `SKIP_HABIT_INSTANCE` keeps the instance (prevents re-add); `RESCHEDULE_HABIT_INSTANCE` marks predecessor terminal + appends successor -- **no Todoist write**.
+- Habit instance lifecycle: `START/STOP_HABIT_INSTANCE` accumulate engagement minutes; `COMPLETE_HABIT_INSTANCE` sets status + caller closes the Todoist occurrence; `SKIP_HABIT_INSTANCE` keeps the instance (prevents re-add); `RESCHEDULE_HABIT_INSTANCE` updates `targetTime` in place + stamps `rescheduledAt` -- **no clone, no Todoist write**. `REFRESH_TODAYS_HABITS` merges habit-form edits into existing planned instances (refreshes `targetTime`/`durationMinutes`/`titleSnapshot`), but preserves the user-chosen time when `rescheduledAt` is set.
 - `TOGGLE_TASK_COMPLETE` also sets `status` and closes any open engagement. `START/STOP_TASK_ENGAGEMENT` are explicit user actions; minutes accumulate across cycles.
 - Light-coherent habits surface only via the Light Pool (`plan.habitLog`), never touching intentions/linkedTasks/taskSessions/todaysHabits.
 - `MOVE_INTENTION_TO_BACKLOG` scrubs plan-side state and appends a `BacklogEntry` (splits pending vs completed tasks; captures engagement records). `RESTORE_FROM_BACKLOG` is idempotent; stamps reschedule fields on previously-engaged tasks.
@@ -292,7 +292,7 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible stabilizers and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope and `windowBehavior === 'strict'`. No session auto-assignment -- `targetTime` drives timeline positioning only.
 
-**Reschedule semantics**: `RESCHEDULE_HABIT_INSTANCE` marks predecessor terminal + appends successor with new `targetTime`. No Todoist write -- the recurring task's `due_string` stays unchanged.
+**Reschedule semantics**: `RESCHEDULE_HABIT_INSTANCE` updates `targetTime` in place on the existing instance and stamps `rescheduledAt`. Engagement record, status, and id are preserved. No clone, no Todoist write -- the recurring task's `due_string` stays unchanged.
 
 **Habits Library** (`/habits`): shows a "needs sync" banner for stabilizers that are either unsynced or whose Todoist task is missing. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races.
 

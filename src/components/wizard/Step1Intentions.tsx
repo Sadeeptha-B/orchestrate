@@ -5,6 +5,10 @@ import { useTodoistData } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { useConfirmModal } from '../../hooks/useConfirmModal';
+import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
+import type { Intention } from '../../types';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
@@ -40,6 +44,10 @@ export function Step1Intentions() {
     );
     const [collapsedIntentions, setCollapsedIntentions] = useState<Set<string>>(() => new Set());
     const [currentTasksCollapsed, setCurrentTasksCollapsed] = useState(false);
+    const [selectedIntentionId, setSelectedIntentionId] = useState<string | null>(null);
+
+    const { moveToBacklog, removeIntention } = useIntentionRemoval();
+    const confirmDeleteCurrent = useConfirmModal<Intention>();
 
     const toggleCollapsed = useCallback((id: string) => {
         setCollapsedIntentions((prev) => {
@@ -68,13 +76,14 @@ export function Step1Intentions() {
 
     const commitTitleEdit = useCallback(() => {
         const trimmed = editValue.trim();
-        const current = plan.intentions.find((i) => !i.brokenDown);
+        const current = plan.intentions.find((i) => i.id === selectedIntentionId && !i.brokenDown)
+            ?? plan.intentions.find((i) => !i.brokenDown);
         if (trimmed && current && current.title !== trimmed) {
             dispatch({ type: 'UPDATE_INTENTION', intention: { ...current, title: trimmed } });
         }
         setEditingTitle(false);
         setEditValue('');
-    }, [editValue, plan.intentions, dispatch]);
+    }, [editValue, selectedIntentionId, plan.intentions, dispatch]);
 
     const handleEditKeyDown = useCallback(
         (e: KeyboardEvent) => {
@@ -124,12 +133,17 @@ export function Step1Intentions() {
         }
     };
 
-    const currentMappingIntention = plan.intentions.find((i) => !i.brokenDown);
+    const currentMappingIntention = mappingStarted
+        ? (plan.intentions.find((i) => i.id === selectedIntentionId && !i.brokenDown)
+            ?? plan.intentions.find((i) => !i.brokenDown)
+            ?? null)
+        : null;
     const brokenDownCount = plan.intentions.filter((i) => i.brokenDown).length;
     const allBrokenDown = plan.intentions.length > 0 && plan.intentions.every((i) => i.brokenDown);
-    const upcomingCount = currentMappingIntention
-        ? plan.intentions.filter((i) => !i.brokenDown && i.id !== currentMappingIntention.id).length
-        : 0;
+    const upcomingIntentions = currentMappingIntention
+        ? plan.intentions.filter((i) => !i.brokenDown && i.id !== currentMappingIntention.id)
+        : [];
+    const upcomingCount = upcomingIntentions.length;
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 2 });
@@ -401,10 +415,24 @@ export function Step1Intentions() {
                             {currentMappingIntention && (
                                 <div className="bg-card rounded-lg border-2 border-accent/30 p-5 space-y-3">
                                     <div>
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-xs font-medium text-accent uppercase tracking-wider">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-medium text-accent uppercase tracking-wider flex-1">
                                                 Current
                                             </span>
+                                            <button
+                                                onClick={() => void moveToBacklog(currentMappingIntention.id)}
+                                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors text-sm cursor-pointer"
+                                                title="Move to backlog"
+                                            >
+                                                📥
+                                            </button>
+                                            <button
+                                                onClick={() => confirmDeleteCurrent.open(currentMappingIntention)}
+                                                className="px-1.5 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors text-sm cursor-pointer"
+                                                title="Delete"
+                                            >
+                                                🗑
+                                            </button>
                                         </div>
                                         {editingTitle ? (
                                             <input
@@ -497,11 +525,22 @@ export function Step1Intentions() {
                                 </div>
                             )}
 
-                            {/* Upcoming count */}
+                            {/* Upcoming intentions */}
                             {upcomingCount > 0 && (
-                                <p className="text-xs text-text-light">
-                                    {upcomingCount} more intention{upcomingCount !== 1 ? 's' : ''} after this
-                                </p>
+                                <div>
+                                    <EditableTaskList
+                                        tasks={upcomingIntentions}
+                                        onReorder={(reorderedUpcomingIds) => {
+                                            const upcomingSet = new Set(reorderedUpcomingIds);
+                                            let upcomingIdx = 0;
+                                            const fullReordered = plan.intentions.map((i) =>
+                                                upcomingSet.has(i.id) ? reorderedUpcomingIds[upcomingIdx++] : i.id,
+                                            );
+                                            dispatch({ type: 'REORDER_INTENTIONS', intentionIds: fullReordered });
+                                        }}
+                                        onSelect={(id) => setSelectedIntentionId(id)}
+                                    />
+                                </div>
                             )}
 
                             {/* All done */}
@@ -516,13 +555,6 @@ export function Step1Intentions() {
                                 </div>
                             )}
 
-                            {/* Restart mapping link — always visible during Phase 2 */}
-                            <button
-                                onClick={restartMapping}
-                                className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
-                            >
-                                Want to start over? Restart mapping
-                            </button>
                         </>
                     )}
                 </div>
@@ -560,6 +592,23 @@ export function Step1Intentions() {
             <Modal open={showSetup} onClose={() => setShowSetup(false)} title="Integrations">
                 <TodoistSetup />
             </Modal>
+
+            <ConfirmModal
+                open={confirmDeleteCurrent.value !== null}
+                onClose={confirmDeleteCurrent.close}
+                onConfirm={() => confirmDeleteCurrent.value
+                    ? removeIntention(confirmDeleteCurrent.value.id)
+                    : Promise.resolve()
+                }
+                title="Delete intention permanently?"
+                confirmLabel="Delete"
+            >
+                <p className="text-sm text-text-light mb-4">
+                    <strong>{confirmDeleteCurrent.value?.title}</strong> will be removed from today.
+                    Any linked tasks that are scheduled will be unscheduled.
+                    To park it for later instead, cancel and click 📥.
+                </p>
+            </ConfirmModal>
         </WizardLayout>
     );
 }
