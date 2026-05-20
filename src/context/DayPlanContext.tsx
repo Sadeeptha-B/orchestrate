@@ -470,7 +470,7 @@ type Action =
     | { type: 'START_HABIT_INSTANCE'; instanceId: string; now: string }
     | { type: 'STOP_HABIT_INSTANCE'; instanceId: string; now: string }
     | { type: 'COMPLETE_HABIT_INSTANCE'; instanceId: string; now: string }
-    | { type: 'SKIP_HABIT_INSTANCE'; instanceId: string }
+    | { type: 'SKIP_HABIT_INSTANCE'; instanceId: string; now: string }
     | { type: 'RESCHEDULE_HABIT_INSTANCE'; instanceId: string; newTargetTime?: string; now: string }
     // ---- v6.3: Task engagement ----
     | { type: 'START_TASK_ENGAGEMENT'; todoistId: string; now: string }
@@ -924,9 +924,21 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'SKIP_HABIT_INSTANCE': {
-            const todaysHabits = plan.todaysHabits.map((i) =>
-                i.id === action.instanceId ? { ...i, status: 'skipped' as const } : i,
-            );
+            // v6.4: close any open engagement segment so the in-flight minutes land in
+            // `totalMinutes` before the instance goes terminal. Mirrors the lifecycle in
+            // COMPLETE_HABIT_INSTANCE. Without this, a user who hit ▶ Start and then ✕ Skip
+            // (without ■ Stop) would leave an `endedAt`-less record forever.
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId) return i;
+                const engagement = i.engagement && !i.engagement.endedAt
+                    ? closeEngagement(i.engagement, action.now)
+                    : i.engagement;
+                return {
+                    ...i,
+                    status: 'skipped' as const,
+                    ...(engagement ? { engagement } : {}),
+                };
+            });
             return { ...state, plan: { ...plan, todaysHabits } };
         }
 

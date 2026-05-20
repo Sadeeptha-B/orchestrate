@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo, useEffect, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../hooks/useDayPlan';
-import { useTodoistData } from '../../hooks/useTodoist';
+import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
@@ -13,13 +13,18 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
-import { computeTodaysHabitInstances } from '../../lib/habitsTodoistSync';
+import {
+    computeTodaysHabitInstances,
+    findOverdueStabilizers,
+    reconcileOverdueStabilizers,
+} from '../../lib/habitsTodoistSync';
 import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
 import type { LinkedTask } from '../../types';
 
 export function Step1Intentions() {
     const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
+    const actions = useTodoistActions();
 
     // v6.3: surface today's stabilizer habits as TodaysHabitInstance entries on the timeline.
     // Re-fires when the Todoist cache size, habits, active season, or existing instances change.
@@ -37,6 +42,40 @@ export function Step1Intentions() {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [taskMap.size, life.habits, life.activeSeasonId, plan.todaysHabits, settings.taskCapDefaults, dispatch]);
+
+    // v6.4: reconcile overdue stabilizers. Todoist's recurrence engine only advances on
+    // completion, so a habit missed yesterday stays "due yesterday" and falls outside the
+    // "due today" filter above. Once per mount (after taskMap hydrates), bump each overdue
+    // stabilizer's Todoist due date forward to today, then recompute against an
+    // optimistically-patched taskMap so the bumped habits land in plan.todaysHabits without
+    // waiting for the next React render.
+    const reconciledRef = useRef(false);
+    useEffect(() => {
+        if (reconciledRef.current) return;
+        if (taskMap.size === 0) return;
+        reconciledRef.current = true;
+
+        const overdue = findOverdueStabilizers({ life, taskMap, dateISO: plan.date });
+        if (overdue.length === 0) return;
+
+        (async () => {
+            const patched = await reconcileOverdueStabilizers({ overdue, actions, dateISO: plan.date });
+            if (patched.size === 0) return;
+            const merged = new Map(taskMap);
+            patched.forEach((t, id) => merged.set(id, t));
+            const instances = computeTodaysHabitInstances({
+                life,
+                plan,
+                taskMap: merged,
+                now: new Date(),
+                taskCaps: settings.taskCapDefaults ?? DEFAULT_TASK_CAPS,
+            });
+            if (instances.length > 0) {
+                dispatch({ type: 'REFRESH_TODAYS_HABITS', instances });
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [taskMap.size]);
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(

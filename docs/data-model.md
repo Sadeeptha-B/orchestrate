@@ -112,6 +112,8 @@ A first-class recurring entity. Discriminated by `kind`:
 
 **Today's instances** (`computeTodaysHabitInstances`): filters to active stabilizers with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; applies `windowBehavior === 'strict'` to drop past-window instances. The reducer is idempotent — any habit already represented in `plan.todaysHabits` is skipped.
 
+**Overdue reconcile** (v6.4, `findOverdueStabilizers` + `reconcileOverdueStabilizers`): Todoist's recurrence engine only advances on completion, so a habit missed yesterday sits at yesterday's due date and never surfaces. On Step 1 mount (once per session), overdue stabilizers whose recurrence + season still match today get their Todoist `due_datetime` (or `due_date`) bumped forward to today; `due_string` is preserved so the rule continues to drive future occurrences. The helper returns an optimistic patch map so `computeTodaysHabitInstances` runs against the bumped state in the same tick. Skip is handled in the UI by also calling Todoist `completeTask` so the recurrence engine advances cleanly without needing the next-day bump — see `SKIP_HABIT_INSTANCE`.
+
 ### BacklogEntry
 
 A parked intention stored on `LifeContext.backlog`.
@@ -192,7 +194,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`. Opens a fresh segment: `startedAt = now`, `endedAt` cleared. Preserves `totalMinutes` if engagement already existed. |
 | `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes engagement segment (adds `now - startedAt` to `totalMinutes`), returns `status` to `'planned'`. Resume via `START_HABIT_INSTANCE` preserves `totalMinutes` and opens a fresh segment. |
 | `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes engagement. Caller completes Todoist task. |
-| `SKIP_HABIT_INSTANCE` | `instanceId` | Sets `status = 'skipped'`. Terminal. |
+| `SKIP_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'skipped'`. Terminal. Closes any open engagement segment (v6.4) so in-flight minutes land in `totalMinutes`. Caller (v6.4) posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task, then fires `completeTask` so the recurrence engine advances and the habit resurfaces on its next occurrence. |
 | `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | Branches on engagement. No engagement → in-place `targetTime` update + `rescheduledAt` stamp. Engagement present → clone: predecessor → terminal `'unfinished'` with engagement preserved; successor → fresh `'planned'` at new time with `rescheduledAt` set. No Todoist write either way. |
 
 ### 3.4 Backlog Actions

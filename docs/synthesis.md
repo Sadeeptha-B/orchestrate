@@ -292,6 +292,8 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible stabilizers and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope and `windowBehavior === 'strict'`. No session auto-assignment -- `targetTime` drives timeline positioning only.
 
+**Overdue reconcile** (v6.4, on Step 1 mount, once per session): `findOverdueStabilizers(...)` surfaces active stabilizers whose Todoist task is unchecked and due *before* today (Todoist only advances recurrence on completion, so a missed habit gets stuck at yesterday's date). `reconcileOverdueStabilizers(...)` bumps each via `updateTask({ due_datetime | due_date })` while preserving the `due_string` recurrence rule, then returns an optimistic patch map so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+
 **Reschedule semantics**: `RESCHEDULE_HABIT_INSTANCE` branches on whether the target has engagement. Without engagement: in-place `targetTime` update + `rescheduledAt` stamp. With engagement: clone — predecessor becomes terminal `'unfinished'` with its engagement record intact (rendered as a historical row in the dashboard's `HabitInstanceCard` with the engagement-minutes chip + "rescheduled" tag); successor is a fresh planned instance at the new time. The recurring Todoist task's `due_string` stays unchanged in both paths -- Todoist's recurrence engine is unaffected.
 
 **Habits Library** (`/habits`): shows a "needs sync" banner for stabilizers that are either unsynced or whose Todoist task is missing. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races.
@@ -404,7 +406,7 @@ src/
 |   +-- crypto.ts               # AES-256-GCM encryption/decryption
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)
 |   +-- habits.ts               # habitMatchesDate, getLightPoolHabits, getActiveHabits, getAnchorHabits
-|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances
+|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findOverdueStabilizers, reconcileOverdueStabilizers
 |   +-- backlog.ts              # hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry
 |   +-- intentionUnschedule.ts  # unscheduleIntentionTasks pure helper
 |   +-- seasons.ts              # findActiveSeason, getSeasonProgress
