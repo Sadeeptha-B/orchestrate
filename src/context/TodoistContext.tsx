@@ -127,6 +127,7 @@ export interface TodoistActionsValue {
     completeTask: (taskId: string) => Promise<void>;
     reopenTask: (taskId: string) => Promise<void>;
     deleteTask: (taskId: string) => Promise<void>;
+    createTaskComment: (taskId: string, content: string) => Promise<void>;
     createProject: (name: string, opts?: CreateProjectOpts) => Promise<TodoistProject | null>;
     deleteProject: (projectId: string) => Promise<void>;
     refreshTasks: (opts?: RefreshOpts) => Promise<void>;
@@ -443,6 +444,19 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [resolveToken, handleApiError]);
 
+    const createTaskComment = useCallback(async (taskId: string, content: string) => {
+        const token = await resolveToken();
+        if (!token) return;
+        try {
+            await apiFetch(token, '/comments', {
+                method: 'POST',
+                body: JSON.stringify({ task_id: taskId, content }),
+            });
+        } catch (e) {
+            handleApiError(e, 'Failed to post comment');
+        }
+    }, [resolveToken, handleApiError]);
+
     const deleteTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
         if (!token) return;
@@ -499,9 +513,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     }), [tasks, projects, sections, taskMap, loading, error, isConfigured, authFailed]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
-        createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask,
+        createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask, createTaskComment,
         createProject, deleteProject, refreshTasks, refreshProjects, refreshSections,
-    }), [createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask,
+    }), [createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask, createTaskComment,
         createProject, deleteProject, refreshTasks, refreshProjects, refreshSections]);
 
     return (

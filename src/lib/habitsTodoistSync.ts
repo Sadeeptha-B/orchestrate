@@ -211,3 +211,85 @@ export function computeTodaysHabitInstances(args: {
     return out;
 }
 
+export interface OverdueStabilizerInfo {
+    habit: Habit;
+    task: TodoistTask;
+}
+
+/**
+ * v6.4: find active stabilizer habits whose Todoist task is overdue (due before `dateISO`),
+ * unchecked, and whose recurrence rule + season scope match today. Todoist's recurrence
+ * engine only advances on completion, so a missed habit sits stuck at yesterday's date —
+ * `computeTodaysHabitInstances` filters it out by the "due today" gate, and the habit
+ * silently disappears. This helper surfaces those for the reconcile step to bump forward.
+ *
+ * Filter chain mirrors `computeTodaysHabitInstances` except the date gate: here we want
+ * `task.due.date < dateISO` (strictly before).
+ */
+export function findOverdueStabilizers(args: {
+    life: LifeContext;
+    taskMap: Map<string, TodoistTask>;
+    dateISO: string;
+}): OverdueStabilizerInfo[] {
+    const { life, taskMap, dateISO } = args;
+    const activeSeasonId = life.activeSeasonId;
+    const out: OverdueStabilizerInfo[] = [];
+
+    for (const habit of life.habits) {
+        if (!habit.active) continue;
+        if (habit.kind !== 'stabilizer') continue;
+        if (!habit.todoistTaskId) continue;
+        if (!habitMatchesDate(habit, dateISO)) continue;
+        if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;
+
+        const task = taskMap.get(habit.todoistTaskId);
+        if (!task || task.checked) continue;
+        if (!task.due) continue;
+        const taskDueDate = task.due.date.slice(0, 10);
+        // Lexical comparison works for YYYY-MM-DD. Skip if already due today/future.
+        if (taskDueDate >= dateISO) continue;
+
+        out.push({ habit, task });
+    }
+    return out;
+}
+
+/**
+ * v6.4: bump overdue stabilizer Todoist tasks to `dateISO`, preserving the recurrence
+ * rule (`due_string`) and time-of-day. Returns an optimistic patch map (todoistTaskId →
+ * patched task) so the caller can recompute today's instances immediately, without
+ * waiting for React to re-render against the updated Todoist cache.
+ *
+ *  - Timed tasks → `due_datetime: '<dateISO>T<HH:mm:ss>'` (floating, user TZ).
+ *  - Untimed tasks → `due_date: '<dateISO>'`.
+ *
+ * `due_string` is intentionally left untouched — Todoist's recurrence engine re-applies
+ * it on the next user-driven completion. Per-task failures are logged and skipped
+ * (non-blocking); the next mount will reconcile them on the next try.
+ */
+export async function reconcileOverdueStabilizers(args: {
+    overdue: OverdueStabilizerInfo[];
+    actions: TodoistActionsValue;
+    dateISO: string;
+}): Promise<Map<string, TodoistTask>> {
+    const { overdue, actions, dateISO } = args;
+    const patched = new Map<string, TodoistTask>();
+
+    for (const { habit, task } of overdue) {
+        const hasTime = Boolean(task.due && task.due.date.includes('T'));
+        const newDueDate = hasTime
+            ? `${dateISO}T${task.due!.date.slice(task.due!.date.indexOf('T') + 1)}`
+            : dateISO;
+        const updates = hasTime ? { due_datetime: newDueDate } : { due_date: newDueDate };
+        try {
+            await actions.updateTask(task.id, updates);
+            patched.set(task.id, {
+                ...task,
+                due: task.due ? { ...task.due, date: newDueDate } : null,
+            });
+        } catch (e) {
+            console.warn(`[v6.4] failed to bump overdue stabilizer ${habit.id}:`, e);
+        }
+    }
+    return patched;
+}

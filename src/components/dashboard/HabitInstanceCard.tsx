@@ -16,7 +16,7 @@ import type { TodaysHabitInstance } from '../../types';
  */
 export function HabitInstanceCard() {
     const { plan, life, dispatch } = useDayPlan();
-    const { completeTask } = useTodoistActions();
+    const { completeTask, createTaskComment } = useTodoistActions();
     const [reschedulingId, setReschedulingId] = useState<string | null>(null);
     const [reschedTime, setReschedTime] = useState<string>('');
 
@@ -52,7 +52,18 @@ export function HabitInstanceCard() {
     };
 
     const handleSkip = (instance: TodaysHabitInstance) => {
-        dispatch({ type: 'SKIP_HABIT_INSTANCE', instanceId: instance.id });
+        const nowISO = new Date().toISOString();
+        dispatch({ type: 'SKIP_HABIT_INSTANCE', instanceId: instance.id, now: nowISO });
+        // v6.4: Todoist has no native "skip" semantic — completion looks the same as a
+        // done. Post a comment first so the skip is traceable in Todoist's own task
+        // history, then complete the occurrence so its recurrence engine advances.
+        // The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+        createTaskComment(instance.todoistTaskId, `Skipped via Orchestrate on ${plan.date}`).catch((err) => {
+            console.warn(`[v6.4] failed to post skip comment ${instance.todoistTaskId}:`, err);
+        });
+        completeTask(instance.todoistTaskId).catch((err) => {
+            console.warn(`[v6.4] failed to complete skipped habit Todoist task ${instance.todoistTaskId}:`, err);
+        });
     };
 
     const openReschedule = (instance: TodaysHabitInstance) => {
