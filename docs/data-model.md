@@ -25,10 +25,12 @@ A Todoist task surfaced inside the plan, always bound to an intention via `inten
 
 **Engagement lifecycle:**
 1. New / restored task: `status = 'pending'`, no engagement.
-2. User presses Start: `START_TASK_ENGAGEMENT` sets `status = 'engaged'` and `engagement.startedAt`.
-3. User presses Stop: `STOP_TASK_ENGAGEMENT` stamps `endedAt`, accumulates `totalMinutes`. Status stays `'engaged'` (resumable).
-4. User checks complete: `TOGGLE_TASK_COMPLETE` flips to `status = 'completed'`, closes any open engagement.
+2. User presses Start: `START_TASK_ENGAGEMENT` sets `status = 'engaged'`, opens a fresh segment (`startedAt = now`, `endedAt` cleared). On resume after a prior Stop, `totalMinutes` is preserved.
+3. User presses Stop: `STOP_TASK_ENGAGEMENT` closes the current segment (adds `now - startedAt` to `totalMinutes`, stamps `endedAt`) AND returns `status` to `pending` so the ▶/■ button flips back.
+4. User checks complete: `TOGGLE_TASK_COMPLETE` flips to `status = 'completed'`, closes any open segment.
 5. Moved to backlog while engaged: engagement record copied into `BacklogEntry.unfinishedTaskRecords`.
+
+**Engagement segment semantics:** `startedAt` represents the **current segment's** start, not the original first-Start. It is overwritten on every Start so `closeEngagement` measures only the current cycle. `totalMinutes` accumulates across cycles. This avoids the prior-design bug where resume measured elapsed since the very first Start.
 
 **`completed` vs `status`:** `completed` mirrors `status === 'completed'`. Both are written together by the reducer. `completed` is retained for backward compat — many callers (capacity calc, completion counter, session visuals) still read it.
 
@@ -43,9 +45,16 @@ A stabilizer habit's manifestation for today. Lives on `DayPlan.todaysHabits`, i
 - **engaged** — user pressed Start on the `HabitInstanceCard`.
 - **completed** — done. Caller also fires `actions.completeTask(todoistTaskId)` to close Todoist's current occurrence.
 - **skipped** — terminal: user explicitly skipped today (✕ button).
-- **unfinished** — retained in the union for forward-compatibility; no current reducer path writes it.
+- **unfinished** — terminal: this is the **predecessor of an engagement-aware reschedule clone**. The engagement record (segments + `totalMinutes`) is preserved as the durable in-day record of "the user worked N minutes here earlier". Rendered as a historical row at the original `targetTime` with the engagement chip visible.
 
-**Reschedule (in-place):** `RESCHEDULE_HABIT_INSTANCE` updates the instance's `targetTime` in place and stamps `rescheduledAt`. Status, engagement record, and `id` are preserved. **No clone, no strikethrough trail, no Todoist write** — rescheduling is just moving the instance on the timeline. One instance per habit per day. The `rescheduledAt` stamp acts as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
+**Reschedule — branched on engagement:** `RESCHEDULE_HABIT_INSTANCE` picks one of two paths:
+
+- **No engagement on target → in-place update.** Keep `id`, `status`, only `targetTime` changes; stamp `rescheduledAt`. No predecessor — nothing happened to record.
+- **Engagement present → clone.** Predecessor flips to terminal `'unfinished'` with its `engagement` record intact (any open segment is closed via `closeEngagement` first). Successor is a fresh `'planned'` instance at the new time with `rescheduledAt` set (so REFRESH preserves its chosen time). Both predecessor and successor share `habitId` and `todoistTaskId`; they coexist in `plan.todaysHabits` for the rest of the day.
+
+The recurring Todoist task is **never** touched in either path — Todoist's recurrence engine keeps producing tomorrow's occurrence as if nothing happened today. The `rescheduledAt` stamp acts as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
+
+**Why a clone-on-engagement?** Orchestrate has no separate engagement log today (planned for a future iteration — see [history/plan_v6.3.md](history/plan_v6.3.md)'s suggestion list). The unfinished predecessor IS the engagement record: it captures `{ startedAt, endedAt, totalMinutes }` for the work done before the reschedule. A future engagement-log migration can harvest these unfinished instances into `life.engagementHistory` without losing the data.
 
 **Refresh merge (`REFRESH_TODAYS_HABITS`):** Called on Step 1 mount and whenever habits / Todoist cache change. For each habit:
 - If no existing instance → append the computed one.
@@ -172,19 +181,19 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `TOGGLE_TASK_COMPLETE` | `todoistId, titleSnapshot?` | Toggles `completed` + `status`. Optionally stores title snapshot. Closes any open engagement. |
 | `SYNC_TASK_SNAPSHOTS` | `snapshots` | Batch-updates `titleSnapshot` when Todoist titles change |
 | `REORDER_SESSION_TASKS` | `sessionId, taskIds` | Replaces task order within a session |
-| `START_TASK_ENGAGEMENT` | `todoistId, now` | Sets `status = 'engaged'`, initializes/reopens engagement |
-| `STOP_TASK_ENGAGEMENT` | `todoistId, now` | Closes current engagement segment, accumulates minutes. Status stays `'engaged'`. |
+| `START_TASK_ENGAGEMENT` | `todoistId, now` | Sets `status = 'engaged'`. Opens a fresh segment: `startedAt = now`, `endedAt` cleared. Preserves `totalMinutes` if engagement already existed. |
+| `STOP_TASK_ENGAGEMENT` | `todoistId, now` | Closes current engagement segment (adds `now - startedAt` to `totalMinutes`), returns `status` to `'pending'`. Resume via `START_TASK_ENGAGEMENT` preserves `totalMinutes` and opens a fresh segment. |
 
 ### 3.3 Habit Instance Actions
 
 | Action | Payload | Effect |
 |---|---|---|
 | `REFRESH_TODAYS_HABITS` | `instances` | Appends precomputed instances to `todaysHabits`. Idempotent — skips any `habitId` already present. |
-| `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`, initializes/reopens engagement |
-| `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes engagement segment, accumulates minutes. Status stays `'engaged'`. |
+| `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`. Opens a fresh segment: `startedAt = now`, `endedAt` cleared. Preserves `totalMinutes` if engagement already existed. |
+| `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes engagement segment (adds `now - startedAt` to `totalMinutes`), returns `status` to `'planned'`. Resume via `START_HABIT_INSTANCE` preserves `totalMinutes` and opens a fresh segment. |
 | `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes engagement. Caller completes Todoist task. |
 | `SKIP_HABIT_INSTANCE` | `instanceId` | Sets `status = 'skipped'`. Terminal. |
-| `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | In-place update: sets `targetTime` and stamps `rescheduledAt` on the existing instance. Engagement record, status, and id preserved. No clone, no Todoist write. |
+| `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | Branches on engagement. No engagement → in-place `targetTime` update + `rescheduledAt` stamp. Engagement present → clone: predecessor → terminal `'unfinished'` with engagement preserved; successor → fresh `'planned'` at new time with `rescheduledAt` set. No Todoist write either way. |
 
 ### 3.4 Backlog Actions
 
@@ -201,7 +210,8 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `SET_WIZARD_STEP` | `step` | Sets `plan.wizardStep` |
 | `COMPLETE_SETUP` | *(none)* | Sets `plan.setupComplete = true` |
 | `ADD_CHECKIN` | `checkIn` | Appends to `plan.checkIns` |
-| `RESET_DAY` | *(none)* | Replaces plan with `freshPlan()`, clears `editingStep` |
+| `RESET_DAY` | *(none)* | Replaces plan with `freshPlan()`, clears `editingStep`. Other slices (settings, history, life) untouched. Surfaced from Settings → Data → Reset Today's Plan. |
+| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan()`, `history = []`, `life = emptyLifeContext()`, `settings` back to defaults (Todoist token cleared). Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). Surfaced from Settings → Data → Reset Everything. |
 | `UPDATE_SETTINGS` | `settings` | Shallow-merges into settings |
 | `SET_EDITING_STEP` | `step` | Tracks which wizard step the user is re-editing from the dashboard |
 
