@@ -435,6 +435,7 @@ type Action =
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
     | { type: 'RESET_DAY' }
+    | { type: 'RESET_ALL' }
     | { type: 'UPDATE_SETTINGS'; settings: Partial<AppSettings> }
     | { type: 'SET_EDITING_STEP'; step: number | null }
     | { type: 'SAVE_DAY'; label: string }
@@ -705,6 +706,21 @@ function reducer(state: State, action: Action): State {
         case 'RESET_DAY':
             return { ...state, plan: freshPlan(), editingStep: null };
 
+        case 'RESET_ALL':
+            // Wipe all four persisted slices back to factory defaults. The four useEffects
+            // below auto-persist the reset state to localStorage. Aux keys outside this
+            // provider (Todoist cache, theme, music prefs) are handled by the caller.
+            return {
+                plan: freshPlan(),
+                settings: withV6SettingsDefaults({
+                    notificationPreference: 'both',
+                    sessionSlots: defaultSessionSlots,
+                }),
+                editingStep: null,
+                history: [],
+                life: emptyLifeContext(),
+            };
+
         case 'UPDATE_SETTINGS':
             return { ...state, settings: { ...settings, ...action.settings } };
 
@@ -915,31 +931,75 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'RESCHEDULE_HABIT_INSTANCE': {
-            // v6.3 (revised): in-place update. The instance keeps its id, its engagement record,
-            // and its status. Only `targetTime` changes. `rescheduledAt` is stamped so a later
-            // `REFRESH_TODAYS_HABITS` won't clobber the user's chosen time. No clone trail, no
-            // strikethrough — rescheduling is just moving the instance on the timeline.
+            // v6.3 (revised): branch on engagement.
+            //
+            // No engagement (target untouched) → in-place update. Keep id, status,
+            //   only `targetTime` changes; stamp `rescheduledAt` so REFRESH preserves the
+            //   user's chosen time. No predecessor record — nothing happened to preserve.
+            //
+            // Engagement present → clone. The predecessor flips to terminal `'unfinished'`
+            //   with its engagement record intact (the durable in-day record of "I worked
+            //   N minutes on this earlier"). A fresh successor is appended at the new time
+            //   with status `'planned'`, no engagement, and `rescheduledAt` set so REFRESH
+            //   preserves its time. The recurring Todoist task is untouched in both cases.
             const target = plan.todaysHabits.find((i) => i.id === action.instanceId);
             if (!target) return state;
             if (target.status !== 'planned' && target.status !== 'engaged') return state;
+
+            const hasEngagement = Boolean(target.engagement);
+
+            if (!hasEngagement) {
+                const todaysHabits = plan.todaysHabits.map((i) =>
+                    i.id === action.instanceId
+                        ? {
+                            ...i,
+                            ...(action.newTargetTime
+                                ? { targetTime: action.newTargetTime }
+                                : { targetTime: undefined }),
+                            rescheduledAt: action.now,
+                        }
+                        : i,
+                );
+                return { ...state, plan: { ...plan, todaysHabits } };
+            }
+
+            // Engaged → clone. Close any open segment on the predecessor so `totalMinutes`
+            // captures the final cycle, then mark it terminal.
+            const predecessorEngagement = target.engagement && !target.engagement.endedAt
+                ? closeEngagement(target.engagement, action.now)
+                : target.engagement;
+
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
                 return {
                     ...i,
-                    ...(action.newTargetTime
-                        ? { targetTime: action.newTargetTime }
-                        : { targetTime: undefined }),
-                    rescheduledAt: action.now,
+                    status: 'unfinished' as const,
+                    ...(predecessorEngagement ? { engagement: predecessorEngagement } : {}),
                 };
             });
-            return { ...state, plan: { ...plan, todaysHabits } };
+
+            const successor: TodaysHabitInstance = {
+                id: crypto.randomUUID(),
+                habitId: target.habitId,
+                todoistTaskId: target.todoistTaskId,
+                titleSnapshot: target.titleSnapshot,
+                durationMinutes: target.durationMinutes,
+                ...(action.newTargetTime ? { targetTime: action.newTargetTime } : {}),
+                status: 'planned',
+                rescheduledAt: action.now,
+            };
+
+            return { ...state, plan: { ...plan, todaysHabits: [...todaysHabits, successor] } };
         }
 
         case 'START_TASK_ENGAGEMENT': {
+            // v6.3: starting (or resuming after a stop) opens a fresh segment. `startedAt`
+            // is updated on every Start so `closeEngagement` measures only the current
+            // segment — previous cycles already live in `totalMinutes`.
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId) return lt;
                 const engagement: EngagementRecord = lt.engagement
-                    ? { ...lt.engagement, endedAt: undefined }
+                    ? { ...lt.engagement, startedAt: action.now, endedAt: undefined }
                     : { startedAt: action.now };
                 return { ...lt, status: 'engaged' as const, engagement };
             });
@@ -947,9 +1007,15 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'STOP_TASK_ENGAGEMENT': {
+            // v6.3: stopping closes the current segment AND returns status to `pending` so
+            // the toggle button flips back to ▶ Start. Resuming preserves `totalMinutes`.
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId || !lt.engagement) return lt;
-                return { ...lt, engagement: closeEngagement(lt.engagement, action.now) };
+                return {
+                    ...lt,
+                    status: 'pending' as const,
+                    engagement: closeEngagement(lt.engagement, action.now),
+                };
             });
             return { ...state, plan: { ...plan, linkedTasks } };
         }

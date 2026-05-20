@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { downloadJSON } from '../../lib/download';
 import type { AppSettings, LifeContext, SavedDayPlan } from '../../types';
 
@@ -42,6 +44,24 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
     const [showRestoreHint, setShowRestoreHint] = useState(false);
     const sessionsInputRef = useRef<HTMLInputElement>(null);
     const backupInputRef = useRef<HTMLInputElement>(null);
+    const confirmResetDay = useConfirmModal<true>();
+    const confirmResetAll = useConfirmModal<true>();
+
+    const handleResetDay = () => {
+        dispatch({ type: 'RESET_DAY' });
+        setImportError(null);
+        setImportInfo("Today's plan has been cleared.");
+        setShowRestoreHint(false);
+    };
+
+    const handleResetAll = () => {
+        // Clear the Todoist cache too — it's keyed off the token we're about to wipe.
+        try { localStorage.removeItem('orchestrate-todoist-cache'); } catch { /* ignore */ }
+        dispatch({ type: 'RESET_ALL' });
+        setImportError(null);
+        setImportInfo('All data has been reset to defaults.');
+        setShowRestoreHint(false);
+    };
 
     const exportFullBackup = () => {
         const payload: FullBackup = {
@@ -178,6 +198,37 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                 </div>
             </div>
 
+            <div className="space-y-2 pt-3 border-t border-border">
+                <h4 className="text-xs font-semibold text-text-light uppercase tracking-wider">
+                    Reset
+                </h4>
+                <p className="text-xs text-text-light">
+                    Clear today's plan after a messy import, or wipe everything and start
+                    from scratch. Reset Everything also removes your Todoist connection
+                    and saved sessions; it does not touch tasks in Todoist itself.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => confirmResetDay.open(true)}
+                        className="text-red-500 hover:text-red-600"
+                        title="Clear today's intentions, tasks, sessions, and habit instances"
+                    >
+                        Reset Today's Plan
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => confirmResetAll.open(true)}
+                        className="text-red-500 hover:text-red-600"
+                        title="Wipe all local data: plan, history, seasons, habits, settings"
+                    >
+                        Reset Everything
+                    </Button>
+                </div>
+            </div>
+
             <input
                 ref={sessionsInputRef}
                 type="file"
@@ -216,6 +267,39 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     )}
                 </p>
             )}
+
+            <ConfirmModal
+                open={confirmResetDay.value !== null}
+                onClose={confirmResetDay.close}
+                onConfirm={handleResetDay}
+                title="Reset today's plan?"
+                confirmLabel="Reset Day"
+            >
+                <p className="text-sm text-text-light mb-4">
+                    Today's intentions, linked tasks, session assignments, habit instances,
+                    check-ins, and Light Pool log will be cleared. Saved sessions, seasons,
+                    habits, the backlog, and settings will be untouched. Todoist tasks are
+                    not modified.
+                </p>
+            </ConfirmModal>
+
+            <ConfirmModal
+                open={confirmResetAll.value !== null}
+                onClose={confirmResetAll.close}
+                onConfirm={handleResetAll}
+                title="Reset everything?"
+                confirmLabel="Reset Everything"
+            >
+                <p className="text-sm text-text-light mb-2">
+                    This wipes all local Orchestrate data: today's plan, saved sessions,
+                    seasons, habits, the intentions backlog, rest cues, capacity settings,
+                    and your Todoist connection.
+                </p>
+                <p className="text-sm text-text-light mb-4">
+                    Tasks and projects in Todoist itself are not modified. Export a Full
+                    Backup first if you want to keep a copy. This cannot be undone.
+                </p>
+            </ConfirmModal>
         </div>
     );
 }

@@ -88,9 +88,14 @@ export function HabitInstanceCard() {
                     const isEngaged = i.status === 'engaged';
                     const isCompleted = i.status === 'completed';
                     const isSkipped = i.status === 'skipped';
-                    const isTerminal = isCompleted || isSkipped || i.status === 'unfinished';
+                    const isUnfinished = i.status === 'unfinished';
+                    const isTerminal = isCompleted || isSkipped || isUnfinished;
                     const engagementMinutes = i.engagement?.totalMinutes ?? 0;
                     const isRescheduling = reschedulingId === i.id;
+                    // v6.3: unfinished predecessor of a clone-on-reschedule. Render as a
+                    // historical row at its original time with the engagement chip — this
+                    // is the durable in-day record of "I worked N minutes here earlier."
+                    const showEngagementChip = (isEngaged || isUnfinished) && engagementMinutes > 0;
                     return (
                         <li
                             key={i.id}
@@ -119,9 +124,14 @@ export function HabitInstanceCard() {
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
                                 {i.durationMinutes}m
                             </span>
-                            {isEngaged && engagementMinutes > 0 && (
+                            {showEngagementChip && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 tabular-nums flex-shrink-0">
                                     {engagementMinutes}m engaged
+                                </span>
+                            )}
+                            {isUnfinished && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light/70 flex-shrink-0">
+                                    rescheduled
                                 </span>
                             )}
                             {isSkipped && (
