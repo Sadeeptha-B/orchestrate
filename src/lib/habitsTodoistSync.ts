@@ -145,6 +145,32 @@ function dueTimeOfDay(dueDate: string): string | null {
 }
 
 /**
+ * v6.4: extract a user-local YYYY-MM-DD from a Todoist `due` value.
+ *
+ * Todoist's `due.date` can be:
+ *   - "YYYY-MM-DD" (date-only) → already user-local
+ *   - "YYYY-MM-DDTHH:mm:ss" (floating; `due.timezone === null`) → prefix IS user-local
+ *   - "YYYY-MM-DDTHH:mm:ssZ" or "...±HH:MM" (fixed TZ) → parse and reformat in user TZ
+ *
+ * Orchestrate-synced habits are floating (created via `due_string: 'every day at 7:00'`),
+ * so the slice is correct for the common case. The fixed-TZ branch handles tasks the user
+ * edited externally with explicit timezone — without it, a UTC-stored time near the day
+ * boundary could appear as "tomorrow" to Orchestrate while the user sees it as "today".
+ */
+function dueDateLocal(due: { date: string; timezone: string | null }): string {
+    const d = due.date;
+    if (d.length === 10) return d;
+    const hasExplicitTz = d.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(d) || due.timezone !== null;
+    if (!hasExplicitTz) return d.slice(0, 10);
+    const parsed = new Date(d);
+    if (Number.isNaN(parsed.getTime())) return d.slice(0, 10);
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+/**
  * v6.3: compute today's stabilizer habit instances.
  *
  * Filters active stabilizer habits to those whose:
@@ -185,7 +211,7 @@ export function computeTodaysHabitInstances(args: {
         if (!task || task.checked) continue;
         if (!task.due) continue;
         // Todoist's recurring task carries the *next* due date — check it's today.
-        const taskDueDate = task.due.date.slice(0, 10);
+        const taskDueDate = dueDateLocal(task.due);
         if (taskDueDate !== dateISO) continue;
 
         // Window-behavior gate: 'strict' hides the instance if its window has passed.
@@ -245,7 +271,7 @@ export function findOverdueStabilizers(args: {
         const task = taskMap.get(habit.todoistTaskId);
         if (!task || task.checked) continue;
         if (!task.due) continue;
-        const taskDueDate = task.due.date.slice(0, 10);
+        const taskDueDate = dueDateLocal(task.due);
         // Lexical comparison works for YYYY-MM-DD. Skip if already due today/future.
         if (taskDueDate >= dateISO) continue;
 
@@ -256,16 +282,22 @@ export function findOverdueStabilizers(args: {
 
 /**
  * v6.4: bump overdue stabilizer Todoist tasks to `dateISO`, preserving the recurrence
- * rule (`due_string`) and time-of-day. Returns an optimistic patch map (todoistTaskId →
- * patched task) so the caller can recompute today's instances immediately, without
- * waiting for React to re-render against the updated Todoist cache.
+ * rule. Returns a patch map (todoistTaskId → updated task) populated from Todoist's
+ * actual server responses, so the caller can recompute today's instances immediately
+ * against authoritative state.
  *
  *  - Timed tasks → `due_datetime: '<dateISO>T<HH:mm:ss>'` (floating, user TZ).
  *  - Untimed tasks → `due_date: '<dateISO>'`.
  *
- * `due_string` is intentionally left untouched — Todoist's recurrence engine re-applies
- * it on the next user-driven completion. Per-task failures are logged and skipped
- * (non-blocking); the next mount will reconcile them on the next try.
+ * Always re-passes the existing `due_string` + `due_lang` so Todoist's recurrence engine
+ * has unambiguous semantics: "rule unchanged, next occurrence is this date". Earlier
+ * versions omitted both and observed silent failures on multi-day-overdue recurring
+ * tasks — the v1 API behavior in that combination is underspecified.
+ *
+ * `updateTask` now returns `TodoistTask | null` (v6.4); a null return means the API call
+ * failed and was already logged + surfaced to the UI via `handleApiError`. We additionally
+ * sanity-check the response's due date against what we asked for and log if it diverges,
+ * so post-hoc debugging is possible without instrumentation.
  */
 export async function reconcileOverdueStabilizers(args: {
     overdue: OverdueStabilizerInfo[];
@@ -280,16 +312,29 @@ export async function reconcileOverdueStabilizers(args: {
         const newDueDate = hasTime
             ? `${dateISO}T${task.due!.date.slice(task.due!.date.indexOf('T') + 1)}`
             : dateISO;
-        const updates = hasTime ? { due_datetime: newDueDate } : { due_date: newDueDate };
-        try {
-            await actions.updateTask(task.id, updates);
-            patched.set(task.id, {
-                ...task,
-                due: task.due ? { ...task.due, date: newDueDate } : null,
-            });
-        } catch (e) {
-            console.warn(`[v6.4] failed to bump overdue stabilizer ${habit.id}:`, e);
+        const updates = {
+            // Re-affirm the existing rule so Todoist's recurrence engine knows we're
+            // only shifting the next occurrence, not changing the cadence.
+            ...(task.due?.string ? { due_string: task.due.string } : {}),
+            due_lang: task.due?.lang || 'en',
+            ...(hasTime ? { due_datetime: newDueDate } : { due_date: newDueDate }),
+        };
+        const updated = await actions.updateTask(task.id, updates);
+        if (!updated) {
+            console.error(
+                `[habits] reconcile: updateTask returned null for habit ${habit.id} `
+                + `(taskId=${task.id}). See prior [Todoist] error for the underlying cause.`,
+            );
+            continue;
         }
+        if (updated.due && dueDateLocal(updated.due) !== dateISO) {
+            console.warn(
+                `[habits] reconcile: Todoist returned unexpected due date for habit ${habit.id} `
+                + `(taskId=${task.id}): expected ${dateISO}, got "${updated.due.date}". `
+                + `The instance may not surface until the next reconcile.`,
+            );
+        }
+        patched.set(task.id, updated);
     }
     return patched;
 }

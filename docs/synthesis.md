@@ -203,7 +203,7 @@ Full action catalog: [data-model.md](./data-model.md).
 Split into two contexts for render optimization:
 
 - **`TodoistDataContext`** -- read-only: `tasks`, `projects`, `sections`, `taskMap`, `loading`, `error`, `isConfigured`, `authFailed`.
-- **`TodoistActionsContext`** -- mutations: `createTask`, `updateTask`, `moveTask` (Sync API `item_move`), `completeTask`, `reopenTask`, `deleteTask`, `createProject`, `deleteProject`, `refreshTasks`, `refreshProjects`, `refreshSections`.
+- **`TodoistActionsContext`** -- mutations: `createTask`, `updateTask` (returns `TodoistTask | null`; null = failure, already logged + surfaced), `moveTask` (Sync API `item_move`), `completeTask` (preserves recurring tasks in cache + forces a refresh), `reopenTask`, `deleteTask`, `createTaskComment`, `createProject`, `deleteProject`, `refreshTasks`, `refreshProjects`, `refreshSections`.
 
 **Key behaviors:**
 1. **Stale-while-revalidate**: cached data < 5 min old is used without fetching.
@@ -212,6 +212,7 @@ Split into two contexts for render optimization:
 4. **Loading UX**: `loading` only activates when there's no cached data (no flash-of-loading).
 5. **Reconciliation** (one-time after first fetch): title snapshot sync + stale task cleanup (marks externally-completed tasks as complete, not unlinked -- preserves session tracking).
 6. **401 detection**: `apiFetch` throws on HTTP 401; provider routes to `authFailed` flag + "reconnect in Settings" message. Resets when token changes.
+7. **Error logging discipline** (v6.4): every Todoist API failure is `console.error`-ed via the central `handleApiError` funnel *in addition to* the UI error state, so debugging is visible without inspecting React state. Habit lifecycle callers (`HabitInstanceCard`, `reconcileOverdueStabilizers`) also `console.error` their per-call failures with a `[habits]` prefix.
 
 **Consumer hooks** (`src/hooks/useTodoist.ts`):
 - `useTodoistData()` -- read-only consumers.
@@ -233,7 +234,7 @@ Lightweight context scoped to the dashboard. Manages active playlist ID, custom 
 | **Google Calendar** | Read-only embed iframe. Multi-calendar with per-calendar colors. Week / month / agenda view. | Time context. The user's existing Todoist<->Google Calendar sync makes scheduled tasks appear automatically. |
 | **Spotify** | Embedded player iframe. 6 curated playlists, custom URL override per playlist. | Music protocol. |
 
-**No backend.** All persistence is `localStorage`. Todoist API calls are direct from the browser (via Vite dev proxy in dev to dodge CORS). The Todoist token is encrypted client-side; key + IV + ciphertext all live in localStorage -- protects against casual inspection, not against an attacker with browser-profile access.
+**No backend (current implementation).** All persistence is `localStorage`. Todoist API calls are direct from the browser (via Vite dev proxy in dev to dodge CORS). The Todoist token is encrypted client-side; key + IV + ciphertext all live in localStorage -- protects against casual inspection, not against an attacker with browser-profile access. This is the current implementation, not a permanent design stance: infrastructure is subordinate to the vision, and a backend (notably self-hosted) is on the table if it serves the vision better -- see [vision.md](./vision.md) "Infrastructure is subordinate to the vision" and [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
 
 ---
 
@@ -292,7 +293,7 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible stabilizers and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope and `windowBehavior === 'strict'`. No session auto-assignment -- `targetTime` drives timeline positioning only.
 
-**Overdue reconcile** (v6.4, on Step 1 mount, once per session): `findOverdueStabilizers(...)` surfaces active stabilizers whose Todoist task is unchecked and due *before* today (Todoist only advances recurrence on completion, so a missed habit gets stuck at yesterday's date). `reconcileOverdueStabilizers(...)` bumps each via `updateTask({ due_datetime | due_date })` while preserving the `due_string` recurrence rule, then returns an optimistic patch map so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+**Overdue reconcile** (v6.4, on Step 1 mount, once per session): `findOverdueStabilizers(...)` surfaces active stabilizers whose Todoist task is unchecked and due *before* today (Todoist only advances recurrence on completion, so a missed habit gets stuck at yesterday's date). `reconcileOverdueStabilizers(...)` bumps each via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
 
 **Reschedule semantics**: `RESCHEDULE_HABIT_INSTANCE` branches on whether the target has engagement. Without engagement: in-place `targetTime` update + `rescheduledAt` stamp. With engagement: clone — predecessor becomes terminal `'unfinished'` with its engagement record intact (rendered as a historical row in the dashboard's `HabitInstanceCard` with the engagement-minutes chip + "rescheduled" tag); successor is a fresh planned instance at the new time. The recurring Todoist task's `due_string` stays unchanged in both paths -- Todoist's recurrence engine is unaffected.
 
@@ -330,7 +331,7 @@ Full entity semantics, reducer actions, and migration chain: [data-model.md](./d
 
 ## 11. Persistence
 
-All via `localStorage`. No backend.
+All via `localStorage`. No backend — this is the current implementation, not a fixed constraint; the persistence direction is analysed in [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
 
 | Key | Content | Written By |
 |---|---|---|

@@ -122,7 +122,8 @@ export interface TodoistDataValue {
 
 export interface TodoistActionsValue {
     createTask: (content: string, opts?: CreateTaskOpts) => Promise<TodoistTask | null>;
-    updateTask: (taskId: string, updates: UpdateTaskOpts) => Promise<void>;
+    /** v6.4: returns the server response on success, `null` on failure (with logged + UI error). */
+    updateTask: (taskId: string, updates: UpdateTaskOpts) => Promise<TodoistTask | null>;
     moveTask: (taskId: string, projectId: string) => Promise<boolean>;
     completeTask: (taskId: string) => Promise<void>;
     reopenTask: (taskId: string) => Promise<void>;
@@ -156,6 +157,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     const tokenRef = useRef<string | null>(null);
     const hasDataRef = useRef((cache.current?.tasks.length ?? 0) > 0);
+    // v6.4: `completeTask` needs to inspect the task's `due.is_recurring` to decide whether
+    // to filter the cache or refetch. A ref avoids stale-closure and avoids dragging `tasks`
+    // into `completeTask`'s deps (which would churn the actionsValue useMemo on every task
+    // update and re-render every consumer).
+    const tasksRef = useRef<TodoistTask[]>(tasks);
+    useEffect(() => { tasksRef.current = tasks; }, [tasks]);
 
     const isConfigured = Boolean(
         settings.todoistToken && settings.todoistTokenIV && settings.todoistTokenKey,
@@ -164,13 +171,18 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     /**
      * Single error-handling funnel: 401s flip `authFailed` and route to a re-auth message;
      * everything else falls through to the call-site's specific fallback.
+     *
+     * v6.4: always console.error in addition to the UI error state, so debugging is visible
+     * without inspecting React state. Per project rule on Todoist/habit integration paths.
      */
     const handleApiError = useCallback((e: unknown, fallback: string) => {
         if (e instanceof TodoistAuthError) {
+            console.error('[Todoist] auth failed (401):', e);
             setAuthFailed(true);
             setError('Todoist authentication failed — reconnect in Settings.');
             return;
         }
+        console.error(`[Todoist] ${fallback}:`, e);
         setError(e instanceof Error ? e.message : fallback);
     }, []);
 
@@ -379,6 +391,14 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const completeTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
         if (!token) return;
+        // v6.4: capture recurrence-ness *before* the await so we know whether to drop the
+        // cache entry. Todoist's `item_complete` on a recurring task advances the rule
+        // server-side and keeps the task alive with a new due date — filtering it out of
+        // the local cache (the old behavior) blinded `computeTodaysHabitInstances` and
+        // `findOverdueStabilizers` until the next 5-min staleness window expired, causing
+        // habits to silently disappear post-completion / post-skip until refresh.
+        const existing = tasksRef.current.find((t) => t.id === taskId);
+        const isRecurring = Boolean(existing?.due?.is_recurring);
         try {
             await apiFetch(token, '/sync', {
                 method: 'POST',
@@ -387,11 +407,17 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                     { type: 'item_complete', uuid: crypto.randomUUID(), args: { id: taskId } },
                 ]))}`,
             });
-            setTasks((prev) => prev.filter((t) => t.id !== taskId));
+            if (isRecurring) {
+                // Keep the (now-stale-due-date) entry in cache so it stays visible to the
+                // habit filters, and force-refresh so the new due date lands ASAP.
+                void refreshTasks({ force: true });
+            } else {
+                setTasks((prev) => prev.filter((t) => t.id !== taskId));
+            }
         } catch (e) {
             handleApiError(e, 'Failed to complete task');
         }
-    }, [resolveToken, handleApiError]);
+    }, [resolveToken, handleApiError, refreshTasks]);
 
     const reopenTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
@@ -430,17 +456,19 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [resolveToken, handleApiError]);
 
-    const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts) => {
+    const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts): Promise<TodoistTask | null> => {
         const token = await resolveToken();
-        if (!token) return;
+        if (!token) return null;
         setError(null);
         try {
             const updated = await apiFetch<TodoistTask>(token, `/tasks/${taskId}`, {
                 method: 'POST', body: JSON.stringify(updates),
             });
             setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+            return updated;
         } catch (e) {
             handleApiError(e, 'Failed to update task');
+            return null;
         }
     }, [resolveToken, handleApiError]);
 

@@ -25,14 +25,17 @@ export async function unscheduleIntentionTasks(
     taskMap: Map<string, TodoistTask>,
 ): Promise<void> {
     void _linkedTasks;
-    const calls: Promise<void>[] = [];
+    // v6.4: `updateTask` now returns `TodoistTask | null` (never throws — errors funnel
+    // through `handleApiError`), so this `.catch` is defensive deadcode. Kept for safety
+    // if the contract changes; widened array type to swallow the resolved value.
+    const calls: Promise<unknown>[] = [];
     for (const id of todoistIds) {
         const t = taskMap.get(id);
         if (!t) continue;                    // already gone in Todoist
         if (!t.due) continue;                // not scheduled
         calls.push(
             actions.updateTask(id, { due_string: 'no date' }).catch((err) => {
-                console.warn(`[v6.3] failed to unschedule Todoist task ${id}:`, err);
+                console.error(`[todoist] failed to unschedule task ${id}:`, err);
             }),
         );
     }

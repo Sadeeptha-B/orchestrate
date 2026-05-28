@@ -45,6 +45,25 @@ No new contexts, no new reducer actions, no new state. The fix lives entirely in
   - New `createTaskComment(taskId, content)` action on `TodoistActionsValue`, hitting `POST /comments` with `{ task_id, content }`. Errors handled through the existing `handleApiError` funnel.
   - `handleSkip` now fires (in parallel) `createTaskComment(...)` with `"Skipped via Orchestrate on <plan.date>"` and `completeTask(...)`. Both fire-and-forget; failures fall into the next mount's reconcile path. Mirrors the existing pattern in `handleComplete`.
 
+## Post-ship hardening (v6.4 follow-up)
+
+Field testing surfaced cases where overdue habits — particularly multi-day overdue — still failed to appear after reconcile. A targeted audit found four interlocking bugs in the sync surface. All four were fixed in the same revision.
+
+| Bug | Symptom | Fix |
+|---|---|---|
+| **C1 — `updateTask` swallowed API errors** | `reconcileOverdueStabilizers`'s try/catch was dead code because `updateTask` caught errors internally and never re-threw. The optimistic patch landed unconditionally, masking failed Todoist writes. | `updateTask` now returns `TodoistTask \| null`. The reconciler treats `null` as failure, logs it, and skips the patch. Authoritative server responses replace the prior optimistic-patch construction. |
+| **C2 — bare `due_datetime`/`due_date` on recurring tasks** | Sending a date field without `due_string`/`due_lang` left the Todoist v1 API's behavior on multi-day-overdue recurring tasks underspecified (likely root cause of the observed failures). The existing `syncHabitToTodoist` always paired the date with the rule for this reason. | `reconcileOverdueStabilizers` now re-passes `due_string` + `due_lang` from the existing task on every bump. Semantics become unambiguous: "rule unchanged, next occurrence is this date." |
+| **D1 — `completeTask` removed recurring tasks from cache** | Pre-existing bug exacerbated by v6.4 skip-as-completion. After completing/skipping a habit, the recurring Todoist task was filtered out of local cache. Until the next 5-min staleness window, `computeTodaysHabitInstances` and `findOverdueStabilizers` were blind to it — habits could silently vanish from the dashboard. | `completeTask` now branches on `task.due?.is_recurring`. For recurring tasks: leaves the cache entry in place and force-refreshes (so the new server-advanced due date lands ASAP). For non-recurring: existing filter behavior. A `tasksRef` avoids dragging `tasks` into the callback's deps. |
+| **B1 — date comparison ignored timezone semantics** | `task.due.date.slice(0, 10)` was correct for Orchestrate-synced floating tasks but wrong for tasks the user edited externally with explicit timezone — a UTC-stored time near the day boundary could be misclassified. | New `dueDateLocal(due)` helper handles all three formats (date-only / floating / fixed). Used by both `computeTodaysHabitInstances` and `findOverdueStabilizers`. |
+
+**Error logging discipline.** Per project rule on Todoist/habit integration paths, every API failure now `console.error`s in addition to surfacing in the UI:
+- `handleApiError` in `TodoistContext` always logs (was UI-state-only).
+- `reconcileOverdueStabilizers` logs explicitly when `updateTask` returns null, and warns when Todoist's response disagrees with the requested date (post-hoc debugging signal).
+- `HabitInstanceCard.handleComplete` / `handleSkip` upgraded from `console.warn` to `console.error` with a `[habits]` prefix.
+- `intentionUnschedule` upgraded the same way.
+
+The C1 fix is structural: any future call site that wants to know whether a Todoist update actually landed can now check the return value. The previous "fire and forget" pattern still works (callers can ignore the return), but it's no longer the only option.
+
 ## What's deliberately not in scope
 
 - **Cross-day engagement / streak ledger.** Plan v6.3 already flags this. With the v6.4 reconcile, every eligible day now produces exactly one `TodaysHabitInstance` with a terminal status — the harvest source for a future `life.habitOutcomes` ledger is now gap-free. The ledger itself is still future work (likely v8 with `/review`).
