@@ -46,8 +46,10 @@ export function HabitInstanceCard() {
         const nowISO = new Date().toISOString();
         dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId: instance.id, now: nowISO });
         // Push completion to the recurring Todoist task; failures don't block local state.
+        // v6.4: log to console.error (in addition to the UI error surfaced by handleApiError)
+        // so a habit failing to advance in Todoist leaves a debuggable trail.
         completeTask(instance.todoistTaskId).catch((err) => {
-            console.warn(`[v6.3] failed to complete habit Todoist task ${instance.todoistTaskId}:`, err);
+            console.error(`[habits] complete: Todoist task ${instance.todoistTaskId} failed:`, err);
         });
     };
 
@@ -59,10 +61,10 @@ export function HabitInstanceCard() {
         // history, then complete the occurrence so its recurrence engine advances.
         // The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
         createTaskComment(instance.todoistTaskId, `Skipped via Orchestrate on ${plan.date}`).catch((err) => {
-            console.warn(`[v6.4] failed to post skip comment ${instance.todoistTaskId}:`, err);
+            console.error(`[habits] skip: Todoist comment on ${instance.todoistTaskId} failed:`, err);
         });
         completeTask(instance.todoistTaskId).catch((err) => {
-            console.warn(`[v6.4] failed to complete skipped habit Todoist task ${instance.todoistTaskId}:`, err);
+            console.error(`[habits] skip: Todoist completion on ${instance.todoistTaskId} failed:`, err);
         });
     };
 

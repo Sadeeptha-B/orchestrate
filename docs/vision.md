@@ -23,8 +23,15 @@ These are explicit opinions, not hedges. Proposals that violate them should be c
 
 - **Companion, not replacement.** The user's main todolist (Todoist) and calendar (Google Calendar) live in external software. Orchestrate sits alongside them and helps keep them consistent — it is *not* trying to be a fully-featured task or calendar manager.
 - **Personal tool.** Specific to the author's needs. Default sessions, the playlist set, and the integration choices are opinionated and not aimed at general-purpose use.
-- **Browser-only, no backend.** All persistence is `localStorage`. No cross-device sync, no shared state, no multi-user features.
-- **Single-user.** Auth is a personal Todoist API token. No accounts, no multi-tenancy.
+- **Single-user.** Orchestrate is for one person — no accounts, no multi-tenancy, no sharing. This is durable. Even if the app ever networks, "auth" means at most a single secret protecting the user's own data; it never becomes account management.
+
+## Infrastructure is subordinate to the vision
+
+Infrastructure choices *serve* the purpose — they are not ends in themselves, and "how the data is stored" is not part of the vision.
+
+Today all persistence is `localStorage` and there is no backend. That was the right zero-friction, zero-cost start and remains the current implementation ([synthesis.md](./synthesis.md) §11). But **"browser-only" is not a sacred constraint.** If a backend serves the vision better — durable longitudinal history for reviews and drift detection, cross-device reach, a robust calendar integration — it is welcome. Self-hosting is a first-class, low-cost option.
+
+The principle is **minimal infrastructure in service of the contextualization-companion purpose**, with two corollaries: keep cost low to none, and let achieving the core vision take priority over infrastructure work. The persistence question is analysed — options, costs, and roadmap placement — in [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
 
 ## Core concepts (durable vocabulary)
 
