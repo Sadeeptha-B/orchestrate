@@ -1,10 +1,18 @@
+import { useState } from 'react';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../hooks/useDayPlan';
-import { useTodoistActions } from '../../hooks/useTodoist';
+import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
 import { compareHabitInstancesByTime } from '../../lib/habits';
+import {
+    buildEngagementLog,
+    engagementStatusLabel,
+    formatLocalTimeOfDay,
+} from '../../lib/engagementLog';
 import { HabitTimeEditor } from './HabitTimeEditor';
 import type { TodaysHabitInstance } from '../../types';
+
+type CardView = 'today' | 'log';
 
 /**
  * v6.3: dashboard card surfacing today's stabilizer habit instances. Replaces the old
@@ -18,13 +26,19 @@ import type { TodaysHabitInstance } from '../../types';
 export function HabitInstanceCard() {
     const { plan, life, dispatch } = useDayPlan();
     const { completeTask, createTaskComment } = useTodoistActions();
+    const { taskMap } = useTodoistData();
     const reschedule = useHabitReschedule();
+    const [view, setView] = useState<CardView>('today');
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
 
-    if (plan.todaysHabits.length === 0) return null;
+    // v6.4: engagement-log row count — drives whether the "Log" tab is selectable.
+    const engagementRows = buildEngagementLog(plan, taskMap);
+    const hasEngagementRows = engagementRows.length > 0;
 
-    // Sort: timed first (by targetTime), then untimed. Single list — no separate "today so far" log.
+    if (plan.todaysHabits.length === 0 && !hasEngagementRows) return null;
+
+    // Sort: timed first (by targetTime), then untimed.
     const instances = [...plan.todaysHabits].sort(compareHabitInstancesByTime);
 
     const handleStartStop = (instance: TodaysHabitInstance) => {
@@ -64,14 +78,46 @@ export function HabitInstanceCard() {
 
     return (
         <Card>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 gap-3">
                 <h4 className="text-sm font-semibold flex items-center gap-2">
                     <span aria-hidden>🔁</span>
-                    Today&apos;s habits
-                    <span className="text-xs font-normal text-text-light">({instances.length})</span>
+                    {view === 'today' ? "Today's habits" : 'Engagement log'}
+                    <span className="text-xs font-normal text-text-light">
+                        ({view === 'today' ? instances.length : engagementRows.length})
+                    </span>
                 </h4>
+                {/* v6.4: view toggle — today's actionable list vs. flat engagement log. */}
+                <div className="flex rounded-md border border-border overflow-hidden text-[10px] flex-shrink-0">
+                    <button
+                        onClick={() => setView('today')}
+                        className={`px-2 py-0.5 transition-colors cursor-pointer ${
+                            view === 'today'
+                                ? 'bg-accent text-white'
+                                : 'text-text-light hover:bg-surface-dark'
+                        }`}
+                        aria-pressed={view === 'today'}
+                    >
+                        Today
+                    </button>
+                    <button
+                        onClick={() => setView('log')}
+                        disabled={!hasEngagementRows}
+                        className={`px-2 py-0.5 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
+                            view === 'log'
+                                ? 'bg-accent text-white'
+                                : 'text-text-light hover:bg-surface-dark'
+                        }`}
+                        aria-pressed={view === 'log'}
+                        title={hasEngagementRows ? 'View engagement log' : 'No engagement yet'}
+                    >
+                        Log
+                    </button>
+                </div>
             </div>
 
+            {view === 'log' ? (
+                <EngagementLogView rows={engagementRows} />
+            ) : (
             <ul className="space-y-2">
                 {instances.map((i) => {
                     const habit = habitById.get(i.habitId);
@@ -85,7 +131,12 @@ export function HabitInstanceCard() {
                     // v6.3: unfinished predecessor of a clone-on-reschedule. Render as a
                     // historical row at its original time with the engagement chip — this
                     // is the durable in-day record of "I worked N minutes here earlier."
-                    const showEngagementChip = (isEngaged || isUnfinished) && engagementMinutes > 0;
+                    // v6.4: engaged instances always show the chip (even at 0m) so the
+                    // user sees feedback the moment they press Start, not after a minute.
+                    const showEngagementChip = isEngaged || (isUnfinished && engagementMinutes > 0);
+                    const engagementChipLabel = engagementMinutes > 0
+                        ? `${engagementMinutes}m engaged`
+                        : 'engaged';
                     return (
                         <li
                             key={i.id}
@@ -116,7 +167,7 @@ export function HabitInstanceCard() {
                             </span>
                             {showEngagementChip && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 tabular-nums flex-shrink-0">
-                                    {engagementMinutes}m engaged
+                                    {engagementChipLabel}
                                 </span>
                             )}
                             {isUnfinished && (
@@ -179,6 +230,54 @@ export function HabitInstanceCard() {
                     );
                 })}
             </ul>
+            )}
         </Card>
+    );
+}
+
+/**
+ * v6.4: scrollable engagement log — combines habit instances and intention tasks that
+ * have an engagement record, sorted by `startedAt`. Container max-height keeps the
+ * dashboard from growing unbounded as the day accumulates.
+ */
+function EngagementLogView({ rows }: { rows: ReturnType<typeof buildEngagementLog> }) {
+    if (rows.length === 0) {
+        return <p className="text-xs text-text-light px-2 py-3">No engagement yet today.</p>;
+    }
+    return (
+        <ul className="space-y-1.5 max-h-72 overflow-y-auto scrollbar-subtle pr-1">
+            {rows.map((row) => {
+                const start = formatLocalTimeOfDay(row.startedAt);
+                const end = row.endedAt ? formatLocalTimeOfDay(row.endedAt) : null;
+                const isOngoing = !row.endedAt && row.status === 'engaged';
+                const label = engagementStatusLabel(row);
+                const statusTone =
+                    row.status === 'engaged' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' :
+                    row.status === 'completed' ? 'bg-success/10 text-success-foreground/80 dark:text-success' :
+                    row.status === 'unfinished' ? 'bg-surface-dark text-text-light/70' :
+                    row.status === 'skipped' ? 'bg-surface-dark text-text-light/50' :
+                    'bg-surface-dark text-text-light';
+                return (
+                    <li
+                        key={row.key}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm ${isOngoing ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}
+                    >
+                        <span className="text-[10px] tabular-nums text-text-light flex-shrink-0 min-w-[6.5rem]">
+                            {start}{end ? ` → ${end}` : ' → …'}
+                        </span>
+                        <span className="text-sm" aria-hidden>{row.kind === 'habit' ? '🔁' : '📝'}</span>
+                        <span className="flex-1 text-sm truncate" title={row.title}>
+                            {row.title}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
+                            {row.totalMinutes}m
+                        </span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${statusTone}`}>
+                            {label}
+                        </span>
+                    </li>
+                );
+            })}
+        </ul>
     );
 }
