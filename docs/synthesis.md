@@ -45,13 +45,15 @@ StrictMode                         (main.tsx)
 `-- BrowserRouter (basename: /orchestrate/)   (main.tsx)
     `-- App                        (App.tsx)
         `-- ErrorBoundary
-            `-- DayPlanProvider          <-- core app state (plan, settings, history, life)
-                `-- TodoistProvider      <-- Todoist data + API actions
-                    `-- AppRoutes        <-- router switch
+            `-- DayPlanProvider              <-- core app state (plan, settings, history, life)
+                `-- TodoistProvider          <-- Todoist data + API actions
+                    `-- ReconciliationProvider  <-- v6.5: central stabilizer reconcile
+                        `-- AppRoutes        <-- router switch
 ```
 
 - `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
 - `TodoistProvider` reads `settings` (encrypted token) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
+- `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
 
 ### 3.2 Routing
 
@@ -293,7 +295,13 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible stabilizers and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope and `windowBehavior === 'strict'`. No session auto-assignment -- `targetTime` drives timeline positioning only.
 
-**Overdue reconcile** (v6.4, on Step 1 mount, once per session): `findOverdueStabilizers(...)` surfaces active stabilizers whose Todoist task is unchecked and due *before* today (Todoist only advances recurrence on completion, so a missed habit gets stuck at yesterday's date). `reconcileOverdueStabilizers(...)` bumps each via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+**Central reconciliation** (v6.5, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueStabilizers(...)` and `findNeedsSyncStabilizers(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for habits without a live link) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `taskMap.size > 0`) and on window focus (gated by 5-min staleness); `useStabilizerReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
+
+  - **Step 1** no longer fires reconcile directly — the provider handles it.
+  - **HabitsLibrary** "Migrate / Re-sync" button now delegates to `triggerReconcile()`.
+  - **`HabitSyncChip`** mounted in the shared `HeaderControls` surfaces needs-sync count, error state, and in-flight pulse across the whole app; click navigates to `/habits`.
+
+**Overdue bump details** (v6.4): `reconcileOverdueStabilizers(...)` bumps each overdue stabilizer's Todoist task via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
 
 **Reschedule semantics**: `RESCHEDULE_HABIT_INSTANCE` branches on whether the target has engagement. Without engagement: in-place `targetTime` update + `rescheduledAt` stamp. With engagement: clone — predecessor becomes terminal `'unfinished'` with its engagement record intact (rendered as a historical row in the dashboard's `HabitInstanceCard` with the engagement-minutes chip + "rescheduled" tag); successor is a fresh planned instance at the new time. The recurring Todoist task's `due_string` stays unchanged in both paths -- Todoist's recurrence engine is unaffected.
 
@@ -374,6 +382,7 @@ All via `localStorage`. No backend — this is the current implementation, not a
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
 | `useConfirmModal` | `hooks/useConfirmModal.ts` | Reusable confirm-dialog state |
+| `useStabilizerReconciliation` | `hooks/useStabilizerReconciliation.ts` | v6.5: read central reconcile status (counts, error, in-flight) + manual trigger |
 
 ---
 
@@ -389,8 +398,9 @@ src/
 |   `-- index.ts                # All TypeScript interfaces and type aliases
 |
 +-- context/
-|   +-- DayPlanContext.tsx       # Core reducer, migration, persistence
-|   `-- TodoistContext.tsx       # Todoist API layer, cache, reconciliation
+|   +-- DayPlanContext.tsx          # Core reducer, migration, persistence
+|   +-- TodoistContext.tsx          # Todoist API layer, cache, reconciliation
+|   `-- ReconciliationContext.tsx   # v6.5: central stabilizer reconcile (overdue + needs-sync)
 |
 +-- hooks/
 |   +-- useCurrentSession.ts
@@ -407,7 +417,7 @@ src/
 |   +-- crypto.ts               # AES-256-GCM encryption/decryption
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)
 |   +-- habits.ts               # habitMatchesDate, getLightPoolHabits, getActiveHabits, getAnchorHabits
-|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findOverdueStabilizers, reconcileOverdueStabilizers
+|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findOverdueStabilizers, reconcileOverdueStabilizers, findNeedsSyncStabilizers
 |   +-- backlog.ts              # hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry
 |   +-- intentionUnschedule.ts  # unscheduleIntentionTasks pure helper
 |   +-- seasons.ts              # findActiveSeason, getSeasonProgress

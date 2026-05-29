@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { DayPlanProvider } from './context/DayPlanContext';
 import { useDayPlan } from './hooks/useDayPlan';
 import { TodoistProvider } from './context/TodoistContext';
+import { ReconciliationProvider } from './context/ReconciliationContext';
 import { Wizard } from './components/wizard/Wizard';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { Welcome } from './components/Welcome';
@@ -50,7 +51,9 @@ export default function App() {
         <ErrorBoundary>
             <DayPlanProvider>
                 <TodoistProvider>
-                    <AppRoutes />
+                    <ReconciliationProvider>
+                        <AppRoutes />
+                    </ReconciliationProvider>
                 </TodoistProvider>
             </DayPlanProvider>
         </ErrorBoundary>

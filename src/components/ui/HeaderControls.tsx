@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Modal } from './Modal';
 import { ThemeToggle } from './ThemeToggle';
 import { AboutContent } from './AboutContent';
+import { HabitSyncChip } from './HabitSyncChip';
 
 interface HeaderControlsProps {
     /** Populate this ref with a function that opens the About modal from outside. */
@@ -34,6 +35,7 @@ export function HeaderControls({ aboutTriggerRef }: HeaderControlsProps) {
     return (
         <>
             <div className="flex items-center gap-1.5">
+                <HabitSyncChip />
                 <button
                     onClick={() => setShowAbout(true)}
                     className="p-1.5 rounded-lg text-text-light hover:bg-surface-dark transition-colors cursor-pointer text-sm"

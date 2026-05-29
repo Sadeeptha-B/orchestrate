@@ -242,6 +242,48 @@ export interface OverdueStabilizerInfo {
     task: TodoistTask;
 }
 
+export type NeedsSyncReason = 'never-synced' | 'missing-in-todoist';
+
+export interface NeedsSyncStabilizerInfo {
+    habit: Habit;
+    reason: NeedsSyncReason;
+}
+
+/**
+ * v6.5: detect active stabilizer habits that need a (re-)sync to Todoist. Two failure
+ * modes are surfaced under one umbrella so callers can drive both the "needs attention"
+ * count and the reconcile action from a single source:
+ *
+ *  - `'never-synced'`: habit was saved but `todoistTaskId` was never set (first-sync
+ *    failed offline, or pre-v6.1 holdover).
+ *  - `'missing-in-todoist'`: habit had a `todoistTaskId`, but the linked task is no
+ *    longer present in `taskMap` (deleted out-of-band in Todoist). The check is gated
+ *    by `taskMap.size > 0` so a not-yet-hydrated cache doesn't false-positive every
+ *    habit during cold boot.
+ *
+ * Pure read-only helper — the actual fix (create/update via `syncHabitToTodoist`) is
+ * the caller's responsibility. Used by the central `ReconciliationProvider` for both
+ * the count display and the batched repair pass.
+ */
+export function findNeedsSyncStabilizers(args: {
+    life: LifeContext;
+    taskMap: Map<string, TodoistTask>;
+}): NeedsSyncStabilizerInfo[] {
+    const { life, taskMap } = args;
+    const out: NeedsSyncStabilizerInfo[] = [];
+    for (const habit of life.habits) {
+        if (habit.kind !== 'stabilizer' || !habit.active) continue;
+        if (!habit.todoistTaskId) {
+            out.push({ habit, reason: 'never-synced' });
+            continue;
+        }
+        if (taskMap.size > 0 && !taskMap.has(habit.todoistTaskId)) {
+            out.push({ habit, reason: 'missing-in-todoist' });
+        }
+    }
+    return out;
+}
+
 /**
  * v6.4: find active stabilizer habits whose Todoist task is overdue (due before `dateISO`),
  * unchecked, and whose recurrence rule + season scope match today. Todoist's recurrence
