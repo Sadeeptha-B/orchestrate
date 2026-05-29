@@ -113,6 +113,8 @@ export interface TodoistDataValue {
     projects: TodoistProject[];
     sections: TodoistSection[];
     taskMap: Map<string, TodoistTask>;
+    /** True once the task list has been hydrated from a fresh cache hit or a successful fetch. */
+    tasksHydrated: boolean;
     loading: boolean;
     error: string | null;
     isConfigured: boolean;
@@ -151,6 +153,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const [tasks, setTasks] = useState<TodoistTask[]>(() => cache.current?.tasks ?? []);
     const [projects, setProjects] = useState<TodoistProject[]>(() => cache.current?.projects ?? []);
     const [sections, setSections] = useState<TodoistSection[]>(() => cache.current?.sections ?? []);
+    const [tasksHydrated, setTasksHydrated] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [authFailed, setAuthFailed] = useState(false);
@@ -210,6 +213,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         tokenRef.current = null;
         setAuthFailed(false);
+        setTasksHydrated(false);
     }, [settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey]);
 
     // ── Refresh functions with dedup + staleness ──
@@ -269,7 +273,11 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             return refreshResource<TodoistTask>({
                 kind: 'tasks',
                 path: '/tasks',
-                setData: (data) => { setTasks(data); hasDataRef.current = data.length > 0; },
+                setData: (data) => {
+                    setTasks(data);
+                    hasDataRef.current = data.length > 0;
+                    setTasksHydrated(true);
+                },
                 force: opts?.force,
                 withLoadingSpinner: !hasDataRef.current,
                 errorMessage: 'Failed to fetch tasks',
@@ -306,6 +314,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         const cacheAge = cache.current ? Date.now() - cache.current.fetchedAt : Infinity;
         if (cacheAge < CACHE_STALENESS_MS) {
             // Cache is fresh enough — skip initial fetch
+            setTasksHydrated(true);
             lastFetchedRef.current = {
                 tasks: cache.current!.fetchedAt,
                 projects: cache.current!.fetchedAt,
@@ -537,8 +546,16 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── Context values ──
     const dataValue = useMemo<TodoistDataValue>(() => ({
-        tasks, projects, sections, taskMap, loading, error, isConfigured, authFailed,
-    }), [tasks, projects, sections, taskMap, loading, error, isConfigured, authFailed]);
+        tasks,
+        projects,
+        sections,
+        taskMap,
+        tasksHydrated,
+        loading,
+        error,
+        isConfigured,
+        authFailed,
+    }), [tasks, projects, sections, taskMap, tasksHydrated, loading, error, isConfigured, authFailed]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
         createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask, createTaskComment,

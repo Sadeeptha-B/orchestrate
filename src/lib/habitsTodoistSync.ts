@@ -118,13 +118,13 @@ export async function syncHabitToTodoist(args: {
             const moved = await actions.moveTask(existing.id, projectId);
             if (!moved) return null;
         }
-        await actions.updateTask(existing.id, {
+        const updated = await actions.updateTask(existing.id, {
             content: habit.name,
             due_string: dueString,
             due_lang: 'en',
             ...(duration ? { duration, duration_unit: 'minute' } : {}),
         });
-        return existing.id;
+        return updated?.id ?? null;
     }
 
     const created = await actions.createTask(habit.name, {

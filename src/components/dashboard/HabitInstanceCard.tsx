@@ -1,8 +1,9 @@
-import { useState } from 'react';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions } from '../../hooks/useTodoist';
-import { timeToMinutes } from '../../lib/time';
+import { useHabitReschedule } from '../../hooks/useHabitReschedule';
+import { compareHabitInstancesByTime } from '../../lib/habits';
+import { HabitTimeEditor } from './HabitTimeEditor';
 import type { TodaysHabitInstance } from '../../types';
 
 /**
@@ -17,21 +18,14 @@ import type { TodaysHabitInstance } from '../../types';
 export function HabitInstanceCard() {
     const { plan, life, dispatch } = useDayPlan();
     const { completeTask, createTaskComment } = useTodoistActions();
-    const [reschedulingId, setReschedulingId] = useState<string | null>(null);
-    const [reschedTime, setReschedTime] = useState<string>('');
+    const reschedule = useHabitReschedule();
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
 
     if (plan.todaysHabits.length === 0) return null;
 
     // Sort: timed first (by targetTime), then untimed. Single list — no separate "today so far" log.
-    const sortByTime = (a: TodaysHabitInstance, b: TodaysHabitInstance) => {
-        if (a.targetTime && b.targetTime) return timeToMinutes(a.targetTime) - timeToMinutes(b.targetTime);
-        if (a.targetTime) return -1;
-        if (b.targetTime) return 1;
-        return 0;
-    };
-    const instances = [...plan.todaysHabits].sort(sortByTime);
+    const instances = [...plan.todaysHabits].sort(compareHabitInstancesByTime);
 
     const handleStartStop = (instance: TodaysHabitInstance) => {
         const nowISO = new Date().toISOString();
@@ -68,23 +62,6 @@ export function HabitInstanceCard() {
         });
     };
 
-    const openReschedule = (instance: TodaysHabitInstance) => {
-        setReschedulingId(instance.id);
-        setReschedTime(instance.targetTime ?? '');
-    };
-
-    const saveReschedule = (instance: TodaysHabitInstance) => {
-        const nowISO = new Date().toISOString();
-        dispatch({
-            type: 'RESCHEDULE_HABIT_INSTANCE',
-            instanceId: instance.id,
-            newTargetTime: reschedTime || undefined,
-            now: nowISO,
-        });
-        setReschedulingId(null);
-        setReschedTime('');
-    };
-
     return (
         <Card>
             <div className="flex items-center justify-between mb-3">
@@ -104,7 +81,7 @@ export function HabitInstanceCard() {
                     const isUnfinished = i.status === 'unfinished';
                     const isTerminal = isCompleted || isSkipped || isUnfinished;
                     const engagementMinutes = i.engagement?.totalMinutes ?? 0;
-                    const isRescheduling = reschedulingId === i.id;
+                    const isRescheduling = reschedule.reschedulingId === i.id;
                     // v6.3: unfinished predecessor of a clone-on-reschedule. Render as a
                     // historical row at its original time with the engagement chip — this
                     // is the durable in-day record of "I worked N minutes here earlier."
@@ -155,26 +132,12 @@ export function HabitInstanceCard() {
 
                             {!isTerminal && (
                                 isRescheduling ? (
-                                    <span className="flex items-center gap-1 flex-shrink-0">
-                                        <input
-                                            type="time"
-                                            value={reschedTime}
-                                            onChange={(e) => setReschedTime(e.target.value)}
-                                            className="px-1 py-0.5 text-xs rounded border border-border bg-card"
-                                        />
-                                        <button
-                                            onClick={() => saveReschedule(i)}
-                                            className="px-2 py-0.5 text-[10px] rounded bg-accent text-white hover:bg-accent/80 cursor-pointer"
-                                        >
-                                            Save
-                                        </button>
-                                        <button
-                                            onClick={() => { setReschedulingId(null); setReschedTime(''); }}
-                                            className="px-2 py-0.5 text-[10px] rounded text-text-light hover:bg-surface-dark cursor-pointer"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </span>
+                                    <HabitTimeEditor
+                                        value={reschedule.time}
+                                        onChange={reschedule.setTime}
+                                        onSave={() => reschedule.save(i)}
+                                        onCancel={reschedule.cancel}
+                                    />
                                 ) : (
                                     <span className="flex items-center gap-0.5 flex-shrink-0">
                                         <button
@@ -194,7 +157,7 @@ export function HabitInstanceCard() {
                                             ✓
                                         </button>
                                         <button
-                                            onClick={() => openReschedule(i)}
+                                            onClick={() => reschedule.open(i)}
                                             className="w-6 h-6 flex items-center justify-center rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
                                             title="Reschedule"
                                             aria-label="Reschedule"

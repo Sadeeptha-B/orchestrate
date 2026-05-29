@@ -11,11 +11,14 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { formatDuration, timeToMinutes } from '../../lib/time';
+import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
+import { compareHabitInstancesByTime } from '../../lib/habits';
 import { getTaskTitle } from '../../lib/tasks';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
-import type { Intention, LinkedTask, TodaysHabitInstance } from '../../types';
+import { useHabitReschedule } from '../../hooks/useHabitReschedule';
+import { HabitTimeEditor } from '../dashboard/HabitTimeEditor';
+import type { Intention, LinkedTask } from '../../types';
 
 export function Step3Schedule() {
     const { plan, settings, dispatch } = useDayPlan();
@@ -458,31 +461,14 @@ export function Step3Schedule() {
  * `computeTodaysHabitInstances` and never appear. Rendered in both Phase 1 and Phase 2.
  */
 function Step3HabitsPanel() {
-    const { plan, dispatch } = useDayPlan();
-    const [reschedulingId, setReschedulingId] = useState<string | null>(null);
-    const [reschedTime, setReschedTime] = useState<string>('');
+    const { plan } = useDayPlan();
+    const reschedule = useHabitReschedule();
 
     const active = plan.todaysHabits
         .filter((i) => i.status === 'planned' || i.status === 'engaged')
-        .sort((a, b) => {
-            if (a.targetTime && b.targetTime) return timeToMinutes(a.targetTime) - timeToMinutes(b.targetTime);
-            if (a.targetTime) return -1;
-            if (b.targetTime) return 1;
-            return 0;
-        });
+        .sort(compareHabitInstancesByTime);
 
     if (active.length === 0) return null;
-
-    const handleSaveReschedule = (instance: TodaysHabitInstance) => {
-        dispatch({
-            type: 'RESCHEDULE_HABIT_INSTANCE',
-            instanceId: instance.id,
-            newTargetTime: reschedTime || undefined,
-            now: new Date().toISOString(),
-        });
-        setReschedulingId(null);
-        setReschedTime('');
-    };
 
     return (
         <div className="rounded-lg border border-border bg-card px-4 py-3">
@@ -493,7 +479,7 @@ function Step3HabitsPanel() {
             </h3>
             <ul className="space-y-1.5">
                 {active.map((i) => {
-                    const isRescheduling = reschedulingId === i.id;
+                    const isRescheduling = reschedule.reschedulingId === i.id;
                     return (
                         <li key={i.id} className="flex items-center gap-2 text-sm">
                             <span className="flex-1 truncate">{i.titleSnapshot}</span>
@@ -509,29 +495,15 @@ function Step3HabitsPanel() {
                                 </span>
                             )}
                             {isRescheduling ? (
-                                <span className="flex items-center gap-1">
-                                    <input
-                                        type="time"
-                                        value={reschedTime}
-                                        onChange={(e) => setReschedTime(e.target.value)}
-                                        className="px-1 py-0.5 text-xs rounded border border-border bg-card"
-                                    />
-                                    <button
-                                        onClick={() => handleSaveReschedule(i)}
-                                        className="px-2 py-0.5 text-[10px] rounded bg-accent text-white hover:bg-accent/80 cursor-pointer"
-                                    >
-                                        Save
-                                    </button>
-                                    <button
-                                        onClick={() => { setReschedulingId(null); setReschedTime(''); }}
-                                        className="px-2 py-0.5 text-[10px] rounded text-text-light hover:bg-surface-dark cursor-pointer"
-                                    >
-                                        Cancel
-                                    </button>
-                                </span>
+                                <HabitTimeEditor
+                                    value={reschedule.time}
+                                    onChange={reschedule.setTime}
+                                    onSave={() => reschedule.save(i)}
+                                    onCancel={reschedule.cancel}
+                                />
                             ) : (
                                 <button
-                                    onClick={() => { setReschedulingId(i.id); setReschedTime(i.targetTime ?? ''); }}
+                                    onClick={() => reschedule.open(i)}
                                     className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 cursor-pointer"
                                     title="Set or change time for this habit today"
                                 >

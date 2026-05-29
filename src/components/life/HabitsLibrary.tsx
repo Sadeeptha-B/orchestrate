@@ -9,7 +9,8 @@ import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { HabitForm, type HabitDraft } from './HabitForm';
 import { getActiveHabits } from '../../lib/habits';
-import { ensureHabitsProject, resolveHabitProjectId, syncHabitToTodoist } from '../../lib/habitsTodoistSync';
+import { ensureHabitsProject } from '../../lib/habitsTodoistSync';
+import { useSyncStabilizer } from '../../hooks/useSyncStabilizer';
 import type { Habit } from '../../types';
 
 interface HabitsLocationState {
@@ -35,7 +36,8 @@ function recurrenceSummary(h: Habit): string {
 export function HabitsLibrary() {
     const { life, settings, dispatch } = useDayPlan();
     const todoistActions = useTodoistActions();
-    const { projects, taskMap, isConfigured: isTodoistConfigured } = useTodoistData();
+    const { projects, isConfigured: isTodoistConfigured } = useTodoistData();
+    const syncStabilizer = useSyncStabilizer();
     // v6.5: detection + reconcile action are owned by the central provider. The
     // banner reads counts from here; the Migrate / Re-sync button delegates to it.
     const {
@@ -44,6 +46,7 @@ export function HabitsLibrary() {
         missingTaskCount,
         isReconciling,
         lastError: reconcileError,
+        clearError,
         triggerReconcile,
     } = useStabilizerReconciliation();
     const location = useLocation();
@@ -108,41 +111,6 @@ export function HabitsLibrary() {
     const onUpdateSettings = (updates: Partial<typeof settings>) =>
         dispatch({ type: 'UPDATE_SETTINGS', settings: updates });
 
-    /**
-     * Push a stabilizer to Todoist using a pre-resolved default project id and persist the resulting
-     * taskId on the habit. No-op for non-stabilizers. The caller resolves the default project once
-     * (avoids a stale-closure loop where each iteration would re-create the project).
-     *
-     * Also self-heals two stale-reference cases by patching the habit on success:
-     *   - `todoistTaskId` updated when the create-or-update returned a different id
-     *   - `todoistProjectId` cleared when the per-habit override pointed at a deleted project
-     *     (we silently fell back to default in `resolveHabitProjectId`).
-     */
-    const syncStabilizer = async (habit: Habit, defaultProjectId: string): Promise<boolean> => {
-        if (habit.kind !== 'stabilizer' || !isTodoistConfigured) return false;
-        const projectId = resolveHabitProjectId(habit, defaultProjectId, projects);
-        const taskId = await syncHabitToTodoist({
-            habit,
-            projectId,
-            actions: todoistActions,
-            taskMap,
-        });
-        if (!taskId) return false;
-
-        const patch: Partial<Habit> = {};
-        if (taskId !== habit.todoistTaskId) patch.todoistTaskId = taskId;
-        if (
-            habit.todoistProjectId
-            && !projects.some((p) => p.id === habit.todoistProjectId)
-        ) {
-            patch.todoistProjectId = undefined;
-        }
-        if (Object.keys(patch).length > 0) {
-            dispatch({ type: 'UPDATE_HABIT', habit: { ...habit, ...patch } });
-        }
-        return true;
-    };
-
     /** Resolve (or lazily create) the workspace default Habits project. Returns null on failure. */
     const resolveDefaultProject = async (): Promise<string | null> => {
         return ensureHabitsProject({
@@ -167,8 +135,8 @@ export function HabitsLibrary() {
                 setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
                 return;
             }
-            const ok = await syncStabilizer(newHabit, defaultProjectId);
-            if (!ok) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
+            const taskId = await syncStabilizer(newHabit, defaultProjectId);
+            if (!taskId) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
         }
     };
 
@@ -182,8 +150,8 @@ export function HabitsLibrary() {
                 setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
                 return;
             }
-            const ok = await syncStabilizer(updated, defaultProjectId);
-            if (!ok) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
+            const taskId = await syncStabilizer(updated, defaultProjectId);
+            if (!taskId) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
         }
     };
 
@@ -197,7 +165,7 @@ export function HabitsLibrary() {
     return (
         <LifeShell
             title="Habits"
-            subtitle="Stabilizers sync to Todoist as recurring tasks and surface as session-assigned tasks each day they're due. Light-coherent habits live in the Light Pool."
+            subtitle="Stabilizers sync to Todoist as recurring tasks and surface on your timeline each day they're due. Light-coherent habits live in the Light Pool."
         >
             {needsSyncCount > 0 && (
                 <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
@@ -245,7 +213,14 @@ export function HabitsLibrary() {
             {(syncError || reconcileError) && (
                 <div className="mb-4 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 p-3 text-sm flex items-center justify-between gap-3">
                     <span>{syncError ?? reconcileError}</span>
-                    <Button variant="ghost" size="sm" onClick={() => setSyncError(null)}>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                            setSyncError(null);
+                            clearError();
+                        }}
+                    >
                         Dismiss
                     </Button>
                 </div>
@@ -281,7 +256,7 @@ export function HabitsLibrary() {
                                             : 'bg-surface-dark text-text-light'
                                             }`}
                                         title={h.kind === 'stabilizer'
-                                            ? 'Synced to Todoist as a recurring task; surfaces as a session-assigned task each day it is due'
+                                            ? 'Synced to Todoist as a recurring task; surfaces on your timeline each day it is due'
                                             : 'Surfaces in the Light Pool; never enters the day plan'}
                                     >
                                         {h.kind === 'stabilizer' ? 'STABILIZER' : 'LIGHT'}

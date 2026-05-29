@@ -204,7 +204,7 @@ Full action catalog: [data-model.md](./data-model.md).
 
 Split into two contexts for render optimization:
 
-- **`TodoistDataContext`** -- read-only: `tasks`, `projects`, `sections`, `taskMap`, `loading`, `error`, `isConfigured`, `authFailed`.
+- **`TodoistDataContext`** -- read-only: `tasks`, `projects`, `sections`, `taskMap`, `tasksHydrated` (true once tasks have loaded from a fresh cache hit or a successful fetch), `loading`, `error`, `isConfigured`, `authFailed`.
 - **`TodoistActionsContext`** -- mutations: `createTask`, `updateTask` (returns `TodoistTask | null`; null = failure, already logged + surfaced), `moveTask` (Sync API `item_move`), `completeTask` (preserves recurring tasks in cache + forces a refresh), `reopenTask`, `deleteTask`, `createTaskComment`, `createProject`, `deleteProject`, `refreshTasks`, `refreshProjects`, `refreshSections`.
 
 **Key behaviors:**
@@ -295,7 +295,7 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible stabilizers and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope and `windowBehavior === 'strict'`. No session auto-assignment -- `targetTime` drives timeline positioning only.
 
-**Central reconciliation** (v6.5, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueStabilizers(...)` and `findNeedsSyncStabilizers(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for habits without a live link) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `taskMap.size > 0`) and on window focus (gated by 5-min staleness); `useStabilizerReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
+**Central reconciliation** (v6.5, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueStabilizers(...)` and `findNeedsSyncStabilizers(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for habits without a live link) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `tasksHydrated` — so a legitimately empty task list still triggers needs-sync) and on window focus (gated by 5-min staleness); `useStabilizerReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
 
   - **Step 1** no longer fires reconcile directly — the provider handles it.
   - **HabitsLibrary** "Migrate / Re-sync" button now delegates to `triggerReconcile()`.
@@ -383,6 +383,8 @@ All via `localStorage`. No backend — this is the current implementation, not a
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
 | `useConfirmModal` | `hooks/useConfirmModal.ts` | Reusable confirm-dialog state |
 | `useStabilizerReconciliation` | `hooks/useStabilizerReconciliation.ts` | v6.5: read central reconcile status (counts, error, in-flight) + manual trigger |
+| `useSyncStabilizer` | `hooks/useSyncStabilizer.ts` | Per-habit stabilizer→Todoist sync + habit-patch write-back. Shared by HabitsLibrary save flow and `ReconciliationProvider`. |
+| `useHabitReschedule` | `hooks/useHabitReschedule.ts` | Shared inline-reschedule state for `TodaysHabitInstance` rows (HabitInstanceCard + Step3HabitsPanel); pairs with `HabitTimeEditor`. |
 
 ---
 
