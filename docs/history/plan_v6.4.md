@@ -64,6 +64,16 @@ Field testing surfaced cases where overdue habits — particularly multi-day ove
 
 The C1 fix is structural: any future call site that wants to know whether a Todoist update actually landed can now check the return value. The previous "fire and forget" pattern still works (callers can ignore the return), but it's no longer the only option.
 
+## Engagement-surface refinements (v6.4)
+
+Shipped in the same v6.4 window but orthogonal to the reconcile work — these polish the *display* of the v6.3 engagement model rather than the Todoist sync. Grouped under v6.4 because they share no schema change (schema stays `6.3`) and landed alongside the reconcile hardening. No reducer or type changes; all UI + one read-only helper.
+
+| Change | What | Why |
+|---|---|---|
+| **`HabitInstanceCard` view toggle** | Header tabs switch between *Today* (the actionable per-habit list) and *Log* (a scrollable, time-ordered engagement log). The Log view is built by the new pure helper `lib/engagementLog.ts → buildEngagementLog(plan, taskMap)`, which flattens today's `TodaysHabitInstance` + `LinkedTask` engagement records into a sorted `EngagementLogRow[]`. | The card showed only the actionable list; the user wanted a separate, bounded (scrollable) view of "what was engaged today" combining habits + tasks. The helper signature is deliberately input-agnostic so a future `life.engagementHistory` can feed the same view without touching the consumer — the read interface for the durable store sketched in [plan_v6.3.md](./plan_v6.3.md) and [roadmap/engagement_record_strategy.md](../roadmap/engagement_record_strategy.md). |
+| **Engaged-badge gate fix** | The `Nm engaged` chip now appears the instant Start is pressed (label `engaged` until minutes accrue). Previously gated on `> 0 minutes`. | No card-level feedback existed for the first minute after Start — the user pressed Start and saw nothing change on the card. |
+| **Distinguishable habit-lane pills** | Each `SessionTimelineBar` habit pill gains a state-specific icon (`🔁` planned / `⏵` engaged / `🎉` completed / `⤴` rescheduled-with-engagement / `⤼` skipped), solid-vs-dashed borders, and an inline `Nm` engagement badge for engaged/unfinished states. Full state + minutes surface in the tooltip. | Truncated pills made all states look alike and hid engagement minutes entirely in the lane. Icon + badge stay legible even when the title clips. |
+
 ## What's deliberately not in scope
 
 - **Cross-day engagement / streak ledger.** Plan v6.3 already flags this. With the v6.4 reconcile, every eligible day now produces exactly one `TodaysHabitInstance` with a terminal status — the harvest source for a future `life.habitOutcomes` ledger is now gap-free. The ledger itself is still future work (likely v8 with `/review`).

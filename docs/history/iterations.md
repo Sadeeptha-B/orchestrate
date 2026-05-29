@@ -1,4 +1,4 @@
-> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 6.3. Iterations 1–4 are preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable. Iterations 5+ are shipped-iteration narratives written at the time the work landed.
+> **What is this?** The chronological evolution of Orchestrate's requirements, from Iteration 1 through Iteration 6.5. Iterations 1–4 are preserved verbatim from `docs/requirement.md` (pre-refactor on 2026-05-07) so the *why* behind each pivot — Trevor AI iframes, Todoist + Google Calendar, intention-to-task scheduling — remains discoverable. Iterations 5+ are shipped-iteration narratives written at the time the work landed.
 >
 > For the durable "why" see [../vision.md](../vision.md); for current implementation state see [../synthesis.md](../synthesis.md). Forward-looking proposals (currently v7+) live in [../backlog.md](../backlog.md).
 >
@@ -166,3 +166,29 @@ The unfinished predecessor is also a **forward-looking foundation**: a future `l
 Schema bumped to `6.3`. The migration is one-shot and lossless: any `sourceHabitId`-bearing LinkedTask becomes a synthetic `TodaysHabitInstance` (status inferred from `completed` / `skippedForToday`), is dropped from `linkedTasks`, and its id is pruned from every `taskSessions[sessionId]`. Every remaining LinkedTask gets a `status` mirror of `completed`. The `HabitTaskInjection` type, the `INJECT_HABIT_TASKS` / `SKIP_HABIT_TASK` actions, the `isHabitDerivedTask` helper, and the `HABIT_GROUP_KEY` synthetic grouping are all removed.
 
 See [plan_v6.3.md](./plan_v6.3.md) for the full implementation plan.
+
+## Iteration 6.4 — Stabilizer recurrence reconcile
+
+v6.3 made Todoist the recurrence engine for stabilizers, but Todoist only advances a recurring task on **completion**. Miss a daily stabilizer and its Todoist task stays at yesterday's date, overdue; the next day `computeTodaysHabitInstances` filters it out (not "due today") and the habit silently vanishes from the plan despite being a daily ritual.
+
+v6.4 keeps Todoist as the rule-of-record and bridges the gap with a **reconcile pass**: on Step 1 mount, `findOverdueStabilizers(...)` detects stabilizers whose recurring task is overdue (and whose recurrence still matches today + season scope), and `reconcileOverdueStabilizers(...)` bumps each one's Todoist due date forward — re-passing the existing `due_string` + `due_lang` so the rule is untouched and only the current occurrence shifts. The reconciler returns an optimistically-patched task map so `computeTodaysHabitInstances` can recompute in the same tick (the Step 1 effect keys on `taskMap.size`, which doesn't change on in-place updates). **Skip-as-completion**: `SKIP_HABIT_INSTANCE` posts a `"Skipped via Orchestrate on <date>"` Todoist comment (Todoist has no native skip), then completes the occurrence so the engine advances — the Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+
+**Post-ship hardening** fixed four interlocking sync bugs surfaced in field testing: `updateTask` swallowed API errors (now returns `TodoistTask | null`); bare `due_datetime`/`due_date` on recurring tasks was underspecified (now always paired with the rule); `completeTask` evicted recurring tasks from cache (now branches on `due.is_recurring` and force-refreshes); and date comparison ignored timezone semantics (new `dueDateLocal(...)` handles date-only / floating / fixed). Error-logging discipline was tightened across the habit/Todoist paths — every API failure `console.error`s with a `[habits]` prefix in addition to surfacing in the UI.
+
+No schema change — stays at `6.3`. See [plan_v6.4.md](./plan_v6.4.md) for the full implementation plan.
+
+### Engagement-surface refinements (v6.4)
+
+Three dashboard refinements shipped in the v6.4 window, polishing the v6.3 engagement model — no schema changes:
+
+- **`HabitInstanceCard` gains a view toggle.** Header tabs flip between *Today* (the actionable per-habit list) and *Log* (a scrollable, time-ordered engagement log combining today's habit + task engagement records via [`lib/engagementLog.ts`](../../src/lib/engagementLog.ts)). The Log view is the in-day read interface a future `life.engagementHistory` would feed — the helper signature is designed to swap input sources without changing consumers.
+- **Engaged-badge gate fix.** The `Nm engaged` chip in `HabitInstanceCard` now shows as soon as Start is pressed (label `engaged` until minutes accumulate, then `Nm engaged`). Previously the chip was gated on `> 0 minutes`, leaving the user with no card-level feedback for the first minute after Start.
+- **Distinguishable habit-lane pills in `SessionTimelineBar`.** Each pill now carries a state-specific icon (`🔁/⏵/🎉/⤴/⤼`), differentiated borders (solid for active, dashed for terminal), and — for engaged and unfinished states — an inline `Nm` engagement-minutes badge. The icon + badge survive title truncation on narrow pills; the full tooltip surfaces title, time, duration, status, and engaged minutes. Addresses the legibility complaint that all states looked similar at a glance and that engagement minutes weren't visible in the lane.
+
+## Iteration 6.5 — Central stabilizer reconciliation
+
+After v6.4, the habit↔Todoist sync surface had two reconcile paths with inconsistent shapes: overdue-bump auto-ran once per Step 1 mount (silent), while needs-sync repair was a manual **Migrate** / **Re-sync** button only visible inside `/habits`. A user who never opened `/habits` could carry unsynced stabilizers indefinitely; a user who refreshed the dashboard mid-day couldn't re-trigger the overdue path without going back through Step 1.
+
+v6.5 consolidates both into a single `ReconciliationProvider` mounted between `TodoistProvider` and `AppRoutes`. Detection stays in pure helpers (`findOverdueStabilizers` from v6.4 + the new `findNeedsSyncStabilizers`); the provider exposes `triggerReconcile()` which runs needs-sync first (creating/recreating missing Todoist tasks) then the overdue bump. It auto-fires on **first hydration** (once per session, when Todoist is configured + tasks hydrated) and on **window focus** (5-min staleness gate); the Step 1 overdue `useEffect` is removed. Cross-app visibility comes from a `HabitSyncChip` in the shared `HeaderControls` — surfaced only when there's something to act on (needs-sync count amber, error red, in-flight pulse); overdue isn't surfaced since it auto-fixes. Per-habit immediate sync on create/edit in `HabitsLibrary` is kept (two-tier model: immediate-sync for explicit save, central reconcile for catch-up).
+
+No schema change — stays at `6.3`. See [plan_v6.5.md](./plan_v6.5.md) for the full implementation plan.

@@ -149,7 +149,7 @@ The operational view for the rest of the day (`Dashboard.tsx`):
 3. **Player row** -- `SpotifyPlayer` iframe + `InsightCard` (alternates Transition Tips and True Rest cues every 2 min; manual advance).
 4. **Timeline** -- `SessionTimelineBar` (read-only) with active-session pulse and habit lane rendering `TodaysHabitInstance`s. Side rail: `SeasonContextCard`.
 5. **Between-session True Rest banner** -- when no session is active and the next slot is within 60 min.
-6. **HabitInstanceCard** -- today's stabilizer instances with per-row Start/Stop/Complete/Skip/Reschedule.
+6. **HabitInstanceCard** -- today's stabilizer instances with per-row Start/Stop/Complete/Skip/Reschedule. **Two views** via header toggle: *Today* (the actionable list) and *Log* (a scrollable, time-ordered engagement log combining habit + task engagement records — see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts)).
 7. **Current Session** -- active session's tasks: drag-to-reorder, completion checkboxes (with confetti), engagement Start/Stop buttons, nudge banners for background tasks. `SessionCapacityBadge` + `SessionCapacityBanner` when over-capacity.
 8. **Light Pool** -- collapsible `LightPoolPanel`: today's light-coherent habits with Start/Complete.
 9. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
@@ -269,7 +269,7 @@ Used in four places: Step 1 (linking mode, full tree), Step 2 (linking mode, fil
 
 **File:** `src/components/ui/SessionTimelineBar.tsx`
 
-Visual timeline rendering sessions as proportionally-positioned blocks with assigned task pills. Dual mode: interactive (clickable, Step 3) vs display (dashboard). Includes a habit lane above session blocks for `TodaysHabitInstance` positioning.
+Visual timeline rendering sessions as proportionally-positioned blocks with assigned task pills. Dual mode: interactive (clickable, Step 3) vs display (dashboard). Includes a habit lane above session blocks for `TodaysHabitInstance` positioning. Each habit pill carries a **state-specific icon** (`🔁` planned, `⏵` engaged with pulse, `🎉` completed, `⤴` rescheduled-with-engagement predecessor, `⤼` skipped) plus distinct border styles (solid/dashed) and bg fills; engaged/unfinished pills additionally show an inline `Nm` engagement-minutes badge that survives title truncation.
 
 ### Check-in System
 

@@ -10,26 +10,67 @@ function nowInMinutes(): number {
     return d.getHours() * 60 + d.getMinutes();
 }
 
-/** v6.3: status → pill styling for habit instances rendered in the lane / anytime cluster. */
+/**
+ * v6.3 / v6.4: status → pill styling for habit instances rendered in the lane / anytime cluster.
+ * Combines border style (solid/dashed) + bg fill + text color to make each state
+ * distinguishable at a glance, even when the pill is too narrow for the title.
+ */
 function habitPillClass(status: TodaysHabitInstance['status']): string {
     switch (status) {
         case 'engaged':
-            return 'border-amber-400/60 bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 animate-pulse';
+            return 'border-2 border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse';
         case 'completed':
-            return 'border-success/30 bg-success/10 text-text-light line-through';
+            return 'border border-success/40 bg-success/15 text-success-foreground/80 dark:text-success';
         case 'unfinished':
-            return 'border-dashed border-text-light/40 bg-surface-dark/40 text-text-light/60';
+            return 'border border-dashed border-amber-400/60 bg-amber-50/50 text-amber-700/80 dark:bg-amber-900/15 dark:text-amber-300/70';
         case 'skipped':
-            return 'border-border bg-surface-dark/40 text-text-light/50 line-through';
+            return 'border border-dashed border-text-light/40 bg-surface-dark/30 text-text-light/50 line-through';
         case 'planned':
         default:
-            return 'border-accent/30 bg-accent-subtle text-accent';
+            return 'border border-accent/40 bg-accent-subtle text-accent';
     }
 }
 
-function habitPillPrefix(status: TodaysHabitInstance['status']): string {
-    if (status === 'completed') return '🎉 ';
-    return '🔁 ';
+/**
+ * v6.4: state icon prefix. Distinct icons make the pill readable when the title is
+ * truncated — the user can tell what state a habit is in from the icon alone.
+ */
+function habitPillIcon(status: TodaysHabitInstance['status']): string {
+    switch (status) {
+        case 'engaged':    return '⏵';   // playing
+        case 'completed':  return '🎉';
+        case 'unfinished': return '⤴';   // engaged-then-rescheduled
+        case 'skipped':    return '⤼';
+        case 'planned':
+        default:           return '🔁';
+    }
+}
+
+/** v6.4: human-readable status word for the pill tooltip. */
+function habitStatusLabel(status: TodaysHabitInstance['status']): string {
+    switch (status) {
+        case 'engaged':    return 'engaged';
+        case 'completed':  return 'completed';
+        case 'unfinished': return 'rescheduled — engaged earlier';
+        case 'skipped':    return 'skipped';
+        case 'planned':
+        default:           return 'planned';
+    }
+}
+
+/**
+ * v6.4: full tooltip line for a habit pill. Includes title, target time, planned duration,
+ * status, and (when applicable) engaged minutes — covers the "I can't read the truncated
+ * pill" case without growing the pill itself.
+ */
+function habitPillTooltip(i: TodaysHabitInstance): string {
+    const parts = [i.titleSnapshot];
+    if (i.targetTime) parts.push(i.targetTime);
+    parts.push(`${i.durationMinutes}m`);
+    parts.push(habitStatusLabel(i.status));
+    const engaged = i.engagement?.totalMinutes ?? 0;
+    if (engaged > 0) parts.push(`${engaged}m engaged`);
+    return parts.join(' · ');
 }
 
 /** Format minutes since midnight to a short label like "6am", "2:30pm". */
@@ -133,15 +174,26 @@ export function SessionTimelineBar({
             {anytimeHabits.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 mb-1">
                     <span className="text-[9px] uppercase tracking-wider text-text-light/70 mr-1">Anytime</span>
-                    {anytimeHabits.map((i) => (
-                        <span
-                            key={i.id}
-                            className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight border ${habitPillClass(i.status)}`}
-                            title={`${i.titleSnapshot} · ${i.durationMinutes}m`}
-                        >
-                            {habitPillPrefix(i.status)}{i.titleSnapshot}
-                        </span>
-                    ))}
+                    {anytimeHabits.map((i) => {
+                        const engaged = i.engagement?.totalMinutes ?? 0;
+                        const showEngagedBadge =
+                            (i.status === 'engaged' || i.status === 'unfinished') && engaged > 0;
+                        return (
+                            <span
+                                key={i.id}
+                                className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight inline-flex items-center gap-1 ${habitPillClass(i.status)}`}
+                                title={habitPillTooltip(i)}
+                            >
+                                <span aria-hidden>{habitPillIcon(i.status)}</span>
+                                <span className="truncate">{i.titleSnapshot}</span>
+                                {showEngagedBadge && (
+                                    <span className="px-1 rounded bg-amber-200/70 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 tabular-nums">
+                                        {engaged}m
+                                    </span>
+                                )}
+                            </span>
+                        );
+                    })}
                 </div>
             )}
 
@@ -169,7 +221,11 @@ export function SessionTimelineBar({
                 ))}
             </div>
 
-            {/* v6.3: Habit lane — timed instances positioned by targetTime, width by durationMinutes. */}
+            {/* v6.3: Habit lane — timed instances positioned by targetTime, width by durationMinutes.
+                v6.4: each pill carries a state-specific icon and (for engaged/unfinished) an inline
+                "Nm" engagement badge. The icon + badge stay legible even when the title truncates
+                in narrow pills, and the tooltip surfaces full title + duration + status + engaged
+                minutes for the hover case. */}
             {timedHabits.length > 0 && totalMinutes > 0 && (
                 <div className="relative h-7">
                     {timedHabits.map((i) => {
@@ -177,14 +233,23 @@ export function SessionTimelineBar({
                         const leftPct = ((startM - dayStart) / totalMinutes) * 100;
                         const widthPct = Math.max((i.durationMinutes / totalMinutes) * 100, 1.5);
                         if (leftPct < 0 || leftPct > 100) return null;
+                        const engaged = i.engagement?.totalMinutes ?? 0;
+                        const showEngagedBadge =
+                            (i.status === 'engaged' || i.status === 'unfinished') && engaged > 0;
                         return (
                             <div
                                 key={i.id}
-                                className={`absolute top-0 px-1.5 py-0.5 text-[9px] rounded-full leading-tight truncate border ${habitPillClass(i.status)}`}
+                                className={`absolute top-0 px-1.5 py-0.5 text-[9px] rounded-full leading-tight inline-flex items-center gap-1 overflow-hidden ${habitPillClass(i.status)}`}
                                 style={{ left: `${leftPct}%`, width: `${Math.min(widthPct, 100 - leftPct)}%` }}
-                                title={`${i.titleSnapshot} · ${i.targetTime} · ${i.durationMinutes}m`}
+                                title={habitPillTooltip(i)}
                             >
-                                {habitPillPrefix(i.status)}{i.titleSnapshot}
+                                <span aria-hidden className="flex-shrink-0">{habitPillIcon(i.status)}</span>
+                                <span className="truncate min-w-0">{i.titleSnapshot}</span>
+                                {showEngagedBadge && (
+                                    <span className="px-1 rounded bg-amber-200/70 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 tabular-nums flex-shrink-0">
+                                        {engaged}m
+                                    </span>
+                                )}
                             </div>
                         );
                     })}

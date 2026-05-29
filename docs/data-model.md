@@ -54,7 +54,9 @@ A stabilizer habit's manifestation for today. Lives on `DayPlan.todaysHabits`, i
 
 The recurring Todoist task is **never** touched in either path — Todoist's recurrence engine keeps producing tomorrow's occurrence as if nothing happened today. The `rescheduledAt` stamp acts as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
 
-**Why a clone-on-engagement?** Orchestrate has no separate engagement log today (planned for a future iteration — see [history/plan_v6.3.md](history/plan_v6.3.md)'s suggestion list). The unfinished predecessor IS the engagement record: it captures `{ startedAt, endedAt, totalMinutes }` for the work done before the reschedule. A future engagement-log migration can harvest these unfinished instances into `life.engagementHistory` without losing the data.
+**Why a clone-on-engagement?** Orchestrate has no separate engagement log today (planned for a future iteration — see [history/plan_v6.3.md](history/plan_v6.3.md)'s suggestion list and [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)). The unfinished predecessor IS the engagement record: it captures `{ startedAt, endedAt, totalMinutes }` for the work done before the reschedule. A future engagement-log migration can harvest these unfinished instances into `life.engagementHistory` without losing the data.
+
+**In-day surface — [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).** A read-only helper flattens today's `TodaysHabitInstance` and `LinkedTask` engagement records into a sortable `EngagementLogRow[]` (one row per engaged entity, ordered by `engagement.startedAt`). The dashboard's `HabitInstanceCard` uses this to render its *Log* view — a scrollable, time-ordered list of "what was engaged today" combining habits + tasks. This view is the read interface that a future `life.engagementHistory` would feed; the helper signature stays stable so the upgrade is a swap of the input source, not the consumer.
 
 **Refresh merge (`REFRESH_TODAYS_HABITS`):** Called on Step 1 mount and whenever habits / Todoist cache change. For each habit:
 - If no existing instance → append the computed one.
