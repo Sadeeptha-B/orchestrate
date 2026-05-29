@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
+import { useStabilizerReconciliation } from '../../hooks/useStabilizerReconciliation';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
@@ -35,6 +36,16 @@ export function HabitsLibrary() {
     const { life, settings, dispatch } = useDayPlan();
     const todoistActions = useTodoistActions();
     const { projects, taskMap, isConfigured: isTodoistConfigured } = useTodoistData();
+    // v6.5: detection + reconcile action are owned by the central provider. The
+    // banner reads counts from here; the Migrate / Re-sync button delegates to it.
+    const {
+        needsSyncCount,
+        neverSyncedCount,
+        missingTaskCount,
+        isReconciling,
+        lastError: reconcileError,
+        triggerReconcile,
+    } = useStabilizerReconciliation();
     const location = useLocation();
     const navigate = useNavigate();
     const locationState = location.state as HabitsLocationState | null;
@@ -46,7 +57,6 @@ export function HabitsLibrary() {
     const [editing, setEditing] = useState<Habit | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
     const [syncError, setSyncError] = useState<string | null>(null);
-    const [migrating, setMigrating] = useState(false);
     const [refreshingProjects, setRefreshingProjects] = useState(false);
     const activeHabitCount = getActiveHabits(life).length;
 
@@ -70,24 +80,6 @@ export function HabitsLibrary() {
         if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
         return a.name.localeCompare(b.name);
     });
-
-    // Stabilizers needing a (re-)sync: either they've never been synced (`!todoistTaskId`)
-    // OR their previously-synced Todoist task has gone missing out-of-band. The latter is only
-    // a reliable signal once the task cache has actually loaded (taskMap.size > 0).
-    const needsSyncStabilizers = useMemo(
-        () =>
-            life.habits.filter((h) => {
-                if (h.kind !== 'stabilizer' || !h.active) return false;
-                if (!h.todoistTaskId) return true;
-                return taskMap.size > 0 && !taskMap.has(h.todoistTaskId);
-            }),
-        [life.habits, taskMap],
-    );
-    const neverSyncedCount = useMemo(
-        () => needsSyncStabilizers.filter((h) => !h.todoistTaskId).length,
-        [needsSyncStabilizers],
-    );
-    const missingTaskCount = needsSyncStabilizers.length - neverSyncedCount;
 
     const defaultProjectName = useMemo(() => {
         const id = settings.habitsTodoistProjectId;
@@ -195,29 +187,11 @@ export function HabitsLibrary() {
         }
     };
 
-    const handleMigrate = async () => {
-        if (!isTodoistConfigured || needsSyncStabilizers.length === 0) return;
-        setMigrating(true);
+    // v6.5: delegated to the central provider. The hook handles the loop, default-project
+    // resolution, and error funneling; we just trigger it. Errors land in `reconcileError`.
+    const handleMigrate = () => {
         setSyncError(null);
-        // Resolve the default project ONCE — `syncStabilizer` re-uses this id across iterations
-        // so we never re-create a project mid-loop (the bug fixed in v6.1).
-        const defaultProjectId = await resolveDefaultProject();
-        if (!defaultProjectId) {
-            setMigrating(false);
-            setSyncError("Couldn't reach the Habits project in Todoist. Try again.");
-            return;
-        }
-        let failures = 0;
-        for (const habit of needsSyncStabilizers) {
-            const ok = await syncStabilizer(habit, defaultProjectId);
-            if (!ok) failures += 1;
-        }
-        setMigrating(false);
-        if (failures > 0) {
-            setSyncError(
-                `Synced ${needsSyncStabilizers.length - failures} of ${needsSyncStabilizers.length}. Try again to retry the rest.`,
-            );
-        }
+        void triggerReconcile();
     };
 
     return (
@@ -225,11 +199,11 @@ export function HabitsLibrary() {
             title="Habits"
             subtitle="Stabilizers sync to Todoist as recurring tasks and surface as session-assigned tasks each day they're due. Light-coherent habits live in the Light Pool."
         >
-            {needsSyncStabilizers.length > 0 && (
+            {needsSyncCount > 0 && (
                 <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
                     <div className="text-sm">
                         <strong>
-                            {needsSyncStabilizers.length} stabilizer{needsSyncStabilizers.length === 1 ? '' : 's'}
+                            {needsSyncCount} stabilizer{needsSyncCount === 1 ? '' : 's'}
                         </strong>{' '}
                         {missingTaskCount === 0
                             ? 'need to be synced as recurring Todoist tasks.'
@@ -256,21 +230,21 @@ export function HabitsLibrary() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => navigate('/settings?tab=integrations')}
-                                disabled={migrating}
+                                disabled={isReconciling}
                             >
                                 Choose project
                             </Button>
-                            <Button size="sm" disabled={migrating} onClick={handleMigrate}>
-                                {migrating ? 'Syncing…' : missingTaskCount === 0 ? 'Migrate' : 'Re-sync'}
+                            <Button size="sm" disabled={isReconciling} onClick={handleMigrate}>
+                                {isReconciling ? 'Syncing…' : missingTaskCount === 0 ? 'Migrate' : 'Re-sync'}
                             </Button>
                         </div>
                     )}
                 </div>
             )}
 
-            {syncError && (
+            {(syncError || reconcileError) && (
                 <div className="mb-4 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 p-3 text-sm flex items-center justify-between gap-3">
-                    <span>{syncError}</span>
+                    <span>{syncError ?? reconcileError}</span>
                     <Button variant="ghost" size="sm" onClick={() => setSyncError(null)}>
                         Dismiss
                     </Button>
@@ -287,8 +261,8 @@ export function HabitsLibrary() {
                 <Button
                     size="sm"
                     onClick={() => openCreate()}
-                    disabled={migrating}
-                    title={migrating ? 'Wait for the sync to finish' : undefined}
+                    disabled={isReconciling}
+                    title={isReconciling ? 'Wait for the sync to finish' : undefined}
                 >
                     New Habit
                 </Button>
@@ -343,20 +317,20 @@ export function HabitsLibrary() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    disabled={migrating}
+                                    disabled={isReconciling}
                                     onClick={() =>
                                         dispatch({ type: 'TOGGLE_HABIT_ACTIVE', habitId: h.id })
                                     }
                                 >
                                     {h.active ? 'Pause' : 'Activate'}
                                 </Button>
-                                <Button variant="ghost" size="sm" disabled={migrating} onClick={() => setEditing(h)}>
+                                <Button variant="ghost" size="sm" disabled={isReconciling} onClick={() => setEditing(h)}>
                                     Edit
                                 </Button>
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    disabled={migrating}
+                                    disabled={isReconciling}
                                     onClick={() => tryDelete(h)}
                                     className="text-red-500 hover:text-red-600"
                                 >
