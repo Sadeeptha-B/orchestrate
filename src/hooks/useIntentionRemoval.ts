@@ -31,20 +31,20 @@ export function useIntentionRemoval(): {
 
     const moveToBacklog = useCallback(async (intentionId: string) => {
         const ids = collectIntentionTaskIds(intentionId);
-        await unscheduleIntentionTasks(ids, plan.linkedTasks, actions, taskMap);
+        await unscheduleIntentionTasks(ids, actions, taskMap);
         dispatch({ type: 'MOVE_INTENTION_TO_BACKLOG', intentionId, reason: 'manual' });
-    }, [collectIntentionTaskIds, plan.linkedTasks, actions, taskMap, dispatch]);
+    }, [collectIntentionTaskIds, actions, taskMap, dispatch]);
 
     const removeIntention = useCallback(async (intentionId: string) => {
         const ids = collectIntentionTaskIds(intentionId);
-        await unscheduleIntentionTasks(ids, plan.linkedTasks, actions, taskMap);
+        await unscheduleIntentionTasks(ids, actions, taskMap);
         dispatch({ type: 'REMOVE_INTENTION', intentionId });
-    }, [collectIntentionTaskIds, plan.linkedTasks, actions, taskMap, dispatch]);
+    }, [collectIntentionTaskIds, actions, taskMap, dispatch]);
 
     const discardFromBacklog = useCallback(async (backlogId: string) => {
         const entry = (life.backlog ?? []).find((e) => e.id === backlogId);
         if (!entry) return;
-        await unscheduleIntentionTasks(entry.intention.linkedTaskIds, [], actions, taskMap);
+        await unscheduleIntentionTasks(entry.intention.linkedTaskIds, actions, taskMap);
         dispatch({ type: 'DELETE_BACKLOG_ENTRY', backlogId });
     }, [life.backlog, actions, taskMap, dispatch]);
 

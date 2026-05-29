@@ -1,4 +1,5 @@
-import type { Habit, LifeContext } from '../types';
+import type { Habit, LifeContext, TodaysHabitInstance } from '../types';
+import { timeToMinutes } from './time';
 
 export function getActiveHabits(life: LifeContext): Habit[] {
     return life.habits.filter((habit) => habit.active);
@@ -21,6 +22,18 @@ export function getLightPoolHabits(life: LifeContext, dateISO: string): Habit[] 
         if (h.seasonIds.length === 0) return true;
         return activeSeasonId !== null && h.seasonIds.includes(activeSeasonId);
     });
+}
+
+/**
+ * Sort comparator for today's habit instances: timed instances first (ascending by
+ * `targetTime`), untimed ("Anytime today") instances last. Shared by the dashboard
+ * `HabitInstanceCard` and the wizard's `Step3HabitsPanel`.
+ */
+export function compareHabitInstancesByTime(a: TodaysHabitInstance, b: TodaysHabitInstance): number {
+    if (a.targetTime && b.targetTime) return timeToMinutes(a.targetTime) - timeToMinutes(b.targetTime);
+    if (a.targetTime) return -1;
+    if (b.targetTime) return 1;
+    return 0;
 }
 
 /**

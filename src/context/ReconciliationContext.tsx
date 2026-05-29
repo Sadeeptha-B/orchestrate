@@ -9,19 +9,17 @@ import {
 } from 'react';
 import { useDayPlan } from '../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../hooks/useTodoist';
+import { useSyncStabilizer } from '../hooks/useSyncStabilizer';
 import {
     computeTodaysHabitInstances,
     ensureHabitsProject,
     findNeedsSyncStabilizers,
     findOverdueStabilizers,
     reconcileOverdueStabilizers,
-    resolveHabitProjectId,
-    syncHabitToTodoist,
     type NeedsSyncStabilizerInfo,
     type OverdueStabilizerInfo,
 } from '../lib/habitsTodoistSync';
 import { DEFAULT_TASK_CAPS } from '../lib/capacity';
-import type { Habit } from '../types';
 
 /**
  * Time after a successful reconciliation before a focus event can trigger another.
@@ -46,6 +44,8 @@ interface ReconciliationStatus {
     lastError: string | null;
     /** True when Todoist is configured (token present). */
     isConfigured: boolean;
+    /** Clear the current reconcile error banner without mutating counts or timestamps. */
+    clearError: () => void;
     /**
      * Trigger a full reconcile (needs-sync first, then overdue bump). Idempotent — running
      * while a pass is in flight is a no-op. Safe to call repeatedly; failures land in
@@ -80,8 +80,9 @@ export { ReconciliationContext };
  */
 export function ReconciliationProvider({ children }: { children: ReactNode }) {
     const { plan, settings, life, dispatch } = useDayPlan();
-    const { taskMap, projects, isConfigured } = useTodoistData();
+    const { taskMap, projects, isConfigured, tasksHydrated } = useTodoistData();
     const actions = useTodoistActions();
+    const syncStabilizer = useSyncStabilizer();
 
     const [isReconciling, setIsReconciling] = useState(false);
     const [lastReconciledAt, setLastReconciledAt] = useState<number | null>(null);
@@ -107,34 +108,12 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
     const lastReconciledAtRef = useRef<number | null>(null);
     const firstRunDoneRef = useRef(false);
 
-    /**
-     * Sync one stabilizer to Todoist, mirroring `HabitsLibrary.syncStabilizer`. Returns
-     * the resulting task id on success, null on failure. On success, patches the habit
-     * to write back the (possibly new) `todoistTaskId` and clear a stale `todoistProjectId`.
-     */
-    const syncStabilizer = useCallback(async (habit: Habit, defaultProjectId: string): Promise<string | null> => {
-        if (habit.kind !== 'stabilizer') return null;
-        const projectId = resolveHabitProjectId(habit, defaultProjectId, projects);
-        const taskId = await syncHabitToTodoist({
-            habit,
-            projectId,
-            actions,
-            taskMap,
-        });
-        if (!taskId) return null;
-        const patch: Partial<Habit> = {};
-        if (taskId !== habit.todoistTaskId) patch.todoistTaskId = taskId;
-        if (
-            habit.todoistProjectId
-            && !projects.some((p) => p.id === habit.todoistProjectId)
-        ) {
-            patch.todoistProjectId = undefined;
-        }
-        if (Object.keys(patch).length > 0) {
-            dispatch({ type: 'UPDATE_HABIT', habit: { ...habit, ...patch } });
-        }
-        return taskId;
-    }, [actions, dispatch, projects, taskMap]);
+    const stampReconcileAttempt = useCallback(() => {
+        const now = Date.now();
+        setLastReconciledAt(now);
+        lastReconciledAtRef.current = now;
+    }, []);
+    const clearError = useCallback(() => setLastError(null), []);
 
     const triggerReconcile = useCallback(async () => {
         if (!isConfigured) return;
@@ -197,31 +176,36 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
             }
 
             setLastError(null);
-            const now = Date.now();
-            setLastReconciledAt(now);
-            lastReconciledAtRef.current = now;
+            stampReconcileAttempt();
         } catch (e) {
             const msg = e instanceof Error ? e.message : 'Habit reconciliation failed';
             console.error('[habits] reconcile pass failed:', e);
             setLastError(msg);
+            stampReconcileAttempt();
         } finally {
             setIsReconciling(false);
             inflightRef.current = false;
         }
     }, [
         isConfigured, needsSync, overdue, actions, settings, projects, taskMap, life, plan,
-        dispatch, syncStabilizer,
+        dispatch, syncStabilizer, stampReconcileAttempt,
     ]);
 
     // Trigger 1: first hydration — fire once per session as soon as Todoist + tasks are ready.
     useEffect(() => {
         if (firstRunDoneRef.current) return;
         if (!isConfigured) return;
-        if (taskMap.size === 0) return;
+        if (!tasksHydrated) return;
         firstRunDoneRef.current = true;
         void triggerReconcile();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isConfigured, taskMap.size]);
+    }, [isConfigured, tasksHydrated]);
+
+    useEffect(() => {
+        if (!tasksHydrated) {
+            firstRunDoneRef.current = false;
+        }
+    }, [tasksHydrated]);
 
     // Trigger 2: window focus, gated by staleness. Stays in sync with how Todoist's own
     // focus-refresh handles dedup.
@@ -245,10 +229,11 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
         lastReconciledAt,
         lastError,
         isConfigured,
+        clearError,
         triggerReconcile,
     }), [
         overdue.length, needsSync.length, neverSyncedCount,
-        isReconciling, lastReconciledAt, lastError, isConfigured, triggerReconcile,
+        isReconciling, lastReconciledAt, lastError, isConfigured, clearError, triggerReconcile,
     ]);
 
     return (
