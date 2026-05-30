@@ -120,7 +120,7 @@ export function Step1Intentions() {
 
     // v6.3: count today's habit instances for an informational chip in Phase 1.
     const habitTaskCount = useMemo(
-        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && i.status !== 'unfinished').length,
+        () => plan.todaysHabits.filter((i) => i.status !== 'skipped').length,
         [plan.todaysHabits],
     );
 

@@ -1,9 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { timeToMinutes } from '../../lib/time';
 import { getTaskTitle } from '../../lib/tasks';
-import type { LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
+import { openSegment, segmentSeconds, totalEngagedSeconds } from '../../lib/engagement';
+import type { EngagementSegment, LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
 import type { SessionCapacity } from '../../lib/capacity';
 import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
+
+/** v6.4: rounded engaged minutes across a habit instance's segments (glance badge — not live). */
+function engagedMinutes(i: TodaysHabitInstance): number {
+    return Math.round(totalEngagedSeconds(i.segments, Date.now()) / 60);
+}
+
+/** Local time-of-day (minutes since midnight) of an ISO timestamp. */
+function isoLocalMinutes(iso: string): number {
+    const d = new Date(iso);
+    return d.getHours() * 60 + d.getMinutes();
+}
+
+/** Local "HH:MM" of an ISO timestamp. */
+function isoLocalHHMM(iso: string): string {
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 function nowInMinutes(): number {
     const d = new Date();
@@ -21,8 +39,6 @@ function habitPillClass(status: TodaysHabitInstance['status']): string {
             return 'border-2 border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse';
         case 'completed':
             return 'border border-success/40 bg-success/15 text-success-foreground/80 dark:text-success';
-        case 'unfinished':
-            return 'border border-dashed border-amber-400/60 bg-amber-50/50 text-amber-700/80 dark:bg-amber-900/15 dark:text-amber-300/70';
         case 'skipped':
             return 'border border-dashed border-text-light/40 bg-surface-dark/30 text-text-light/50 line-through';
         case 'planned':
@@ -39,7 +55,6 @@ function habitPillIcon(status: TodaysHabitInstance['status']): string {
     switch (status) {
         case 'engaged':    return '⏵';   // playing
         case 'completed':  return '🎉';
-        case 'unfinished': return '⤴';   // engaged-then-rescheduled
         case 'skipped':    return '⤼';
         case 'planned':
         default:           return '🔁';
@@ -51,7 +66,6 @@ function habitStatusLabel(status: TodaysHabitInstance['status']): string {
     switch (status) {
         case 'engaged':    return 'engaged';
         case 'completed':  return 'completed';
-        case 'unfinished': return 'rescheduled — engaged earlier';
         case 'skipped':    return 'skipped';
         case 'planned':
         default:           return 'planned';
@@ -68,9 +82,146 @@ function habitPillTooltip(i: TodaysHabitInstance): string {
     if (i.targetTime) parts.push(i.targetTime);
     parts.push(`${i.durationMinutes}m`);
     parts.push(habitStatusLabel(i.status));
-    const engaged = i.engagement?.totalMinutes ?? 0;
+    const engaged = engagedMinutes(i);
     if (engaged > 0) parts.push(`${engaged}m engaged`);
     return parts.join(' · ');
+}
+
+// ── v6.4: habit-lane markers ───────────────────────────────────────────────
+// A single instance can plot several marks on the lane:
+//   • scheduled — at the current targetTime, status-styled (the plan).
+//   • ghost     — at each prior scheduled time (rescheduleHistory.fromTime), greyed.
+//   • engagement — at the actual start time of an *off-schedule* segment (live while open,
+//                  a logged dot once closed). On-schedule engagement is shown by the
+//                  scheduled marker's "engaged" styling instead of a duplicate mark.
+
+type LaneMarkerKind = 'scheduled' | 'ghost' | 'engagement';
+
+interface LaneMarker {
+    key: string;
+    instance: TodaysHabitInstance;
+    atMinutes: number;
+    kind: LaneMarkerKind;
+    segment?: EngagementSegment;
+    live?: boolean;
+    fromTime?: string;
+}
+
+/**
+ * Status the *scheduled* marker should display. When the habit is engaged off-schedule, the
+ * scheduled slot reads as `planned` (the live state is carried by a separate engagement marker);
+ * an on-schedule open segment makes the scheduled slot itself read `engaged`.
+ */
+function scheduledDisplayStatus(i: TodaysHabitInstance): TodaysHabitInstance['status'] {
+    if (i.status === 'completed' || i.status === 'skipped') return i.status;
+    if (i.status === 'engaged' && i.targetTime) {
+        const open = openSegment(i.segments);
+        if (open) {
+            const segM = isoLocalMinutes(open.startedAt);
+            const tM = timeToMinutes(i.targetTime);
+            if (segM >= tM && segM <= tM + i.durationMinutes) return 'engaged';
+        }
+        return 'planned';
+    }
+    return i.status === 'engaged' ? 'engaged' : 'planned';
+}
+
+/** Derive every lane marker (scheduled + ghosts + off-schedule engagements) for the day's habits. */
+function buildLaneMarkers(habits: TodaysHabitInstance[]): LaneMarker[] {
+    const out: LaneMarker[] = [];
+    for (const i of habits) {
+        if (i.targetTime) {
+            out.push({ key: `sch-${i.id}`, instance: i, atMinutes: timeToMinutes(i.targetTime), kind: 'scheduled' });
+        }
+        for (const [idx, ev] of (i.rescheduleHistory ?? []).entries()) {
+            if (!ev.fromTime) continue;
+            out.push({ key: `gh-${i.id}-${idx}`, instance: i, atMinutes: timeToMinutes(ev.fromTime), kind: 'ghost', fromTime: ev.fromTime });
+        }
+        const tM = i.targetTime ? timeToMinutes(i.targetTime) : null;
+        for (const [idx, seg] of (i.segments ?? []).entries()) {
+            const segM = isoLocalMinutes(seg.startedAt);
+            const onSchedule = tM != null && segM >= tM && segM <= tM + i.durationMinutes;
+            if (onSchedule) continue;
+            out.push({ key: `eng-${i.id}-${idx}`, instance: i, atMinutes: segM, kind: 'engagement', segment: seg, live: !seg.endedAt });
+        }
+    }
+    return out;
+}
+
+function markerIcon(m: LaneMarker): string {
+    if (m.kind === 'ghost') return '🔁';
+    if (m.kind === 'engagement') return m.live ? '⏵' : '⏺';
+    return habitPillIcon(scheduledDisplayStatus(m.instance));
+}
+
+function markerClass(m: LaneMarker): string {
+    if (m.kind === 'ghost') {
+        return 'border border-dashed border-text-light/30 bg-card text-text-light/40';
+    }
+    if (m.kind === 'engagement') {
+        return m.live
+            ? 'border-2 border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse'
+            : 'border border-amber-400/50 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300';
+    }
+    return habitPillClass(scheduledDisplayStatus(m.instance));
+}
+
+function markerTooltip(m: LaneMarker): string {
+    const i = m.instance;
+    if (m.kind === 'ghost') return `${i.titleSnapshot} · was scheduled ${m.fromTime} (moved)`;
+    if (m.kind === 'engagement' && m.segment) {
+        const start = isoLocalHHMM(m.segment.startedAt);
+        const end = m.segment.endedAt ? isoLocalHHMM(m.segment.endedAt) : 'now';
+        const mins = Math.round(segmentSeconds(m.segment, Date.now()) / 60);
+        return `${i.titleSnapshot} · engaged ${start}–${end} · ${mins}m${m.live ? ' (running)' : ''}`;
+    }
+    return habitPillTooltip(i);
+}
+
+/** Min horizontal spacing (% of the lane) before two markers stack onto separate rows. */
+const LANE_MIN_GAP_PCT = 3;
+/** Pixel height of one packed lane row. */
+const LANE_ROW_H = 22;
+
+interface PlacedMarker {
+    marker: LaneMarker;
+    left: number;          // % from lane start
+    row: number;           // stacking row index
+    maxWidthPct: number;   // room to the next marker in this row (bounds the inline label)
+}
+
+/**
+ * Greedy interval row-packing: markers within `LANE_MIN_GAP_PCT` of each other go on separate
+ * rows so each stays individually visible. Each marker's `maxWidthPct` is the gap to the next
+ * marker in its row, which bounds its inline name label (icon stays fixed-width and never clips).
+ */
+function packLaneMarkers(markers: LaneMarker[], dayStart: number, totalMinutes: number): { placed: PlacedMarker[]; rowCount: number } {
+    const sorted = markers
+        .map((marker) => ({ marker, left: ((marker.atMinutes - dayStart) / totalMinutes) * 100 }))
+        .filter((p) => p.left >= 0 && p.left <= 100)
+        .sort((a, b) => a.left - b.left);
+
+    const rowsLastLeft: number[] = [];
+    const rowItems: { marker: LaneMarker; left: number }[][] = [];
+    const assigned: { marker: LaneMarker; left: number; row: number }[] = [];
+
+    for (const p of sorted) {
+        let row = 0;
+        while (row < rowsLastLeft.length && rowsLastLeft[row] + LANE_MIN_GAP_PCT > p.left) row++;
+        rowsLastLeft[row] = p.left;
+        (rowItems[row] ??= []).push(p);
+        assigned.push({ ...p, row });
+    }
+
+    const placed: PlacedMarker[] = assigned.map((a) => {
+        const row = rowItems[a.row];
+        const idx = row.findIndex((r) => r.marker.key === a.marker.key);
+        const next = row[idx + 1];
+        const maxWidthPct = next ? next.left - a.left : 100 - a.left;
+        return { marker: a.marker, left: a.left, row: a.row, maxWidthPct };
+    });
+
+    return { placed, rowCount: rowsLastLeft.length };
 }
 
 /** Format minutes since midnight to a short label like "6am", "2:30pm". */
@@ -163,10 +314,13 @@ export function SessionTimelineBar({
             ? ((now - dayStart) / totalMinutes) * 100
             : null;
 
-    // v6.3: split habit instances into timed (placed on the lane) vs untimed (anytime cluster).
-    // Terminal-state instances (completed/unfinished/skipped) still render but in a muted style.
-    const timedHabits = (todaysHabits ?? []).filter((i) => Boolean(i.targetTime));
+    // v6.4: untimed habits stay in the "Anytime" cluster above the axis (their status home).
+    // The lane plots positioned markers: timed habits' scheduled slots, ghost markers at prior
+    // scheduled times, and engagement markers at the actual time of off-schedule segments — so an
+    // untimed habit that gets engaged appears in both the cluster (status) and the lane (when).
     const anytimeHabits = (todaysHabits ?? []).filter((i) => !i.targetTime);
+    const { placed: laneMarkers, rowCount: laneRowCount } =
+        packLaneMarkers(buildLaneMarkers(todaysHabits ?? []), dayStart, totalMinutes);
 
     return (
         <div className="relative space-y-1 pt-5">
@@ -175,9 +329,8 @@ export function SessionTimelineBar({
                 <div className="flex flex-wrap items-center gap-1 mb-1">
                     <span className="text-[9px] uppercase tracking-wider text-text-light/70 mr-1">Anytime</span>
                     {anytimeHabits.map((i) => {
-                        const engaged = i.engagement?.totalMinutes ?? 0;
-                        const showEngagedBadge =
-                            (i.status === 'engaged' || i.status === 'unfinished') && engaged > 0;
+                        const engaged = engagedMinutes(i);
+                        const showEngagedBadge = i.status === 'engaged' && engaged > 0;
                         return (
                             <span
                                 key={i.id}
@@ -221,38 +374,26 @@ export function SessionTimelineBar({
                 ))}
             </div>
 
-            {/* v6.3: Habit lane — timed instances positioned by targetTime, width by durationMinutes.
-                v6.4: each pill carries a state-specific icon and (for engaged/unfinished) an inline
-                "Nm" engagement badge. The icon + badge stay legible even when the title truncates
-                in narrow pills, and the tooltip surfaces full title + duration + status + engaged
-                minutes for the hover case. */}
-            {timedHabits.length > 0 && totalMinutes > 0 && (
-                <div className="relative h-7">
-                    {timedHabits.map((i) => {
-                        const startM = timeToMinutes(i.targetTime!);
-                        const leftPct = ((startM - dayStart) / totalMinutes) * 100;
-                        const widthPct = Math.max((i.durationMinutes / totalMinutes) * 100, 1.5);
-                        if (leftPct < 0 || leftPct > 100) return null;
-                        const engaged = i.engagement?.totalMinutes ?? 0;
-                        const showEngagedBadge =
-                            (i.status === 'engaged' || i.status === 'unfinished') && engaged > 0;
-                        return (
-                            <div
-                                key={i.id}
-                                className={`absolute top-0 px-1.5 py-0.5 text-[9px] rounded-full leading-tight inline-flex items-center gap-1 overflow-hidden ${habitPillClass(i.status)}`}
-                                style={{ left: `${leftPct}%`, width: `${Math.min(widthPct, 100 - leftPct)}%` }}
-                                title={habitPillTooltip(i)}
-                            >
-                                <span aria-hidden className="flex-shrink-0">{habitPillIcon(i.status)}</span>
-                                <span className="truncate min-w-0">{i.titleSnapshot}</span>
-                                {showEngagedBadge && (
-                                    <span className="px-1 rounded bg-amber-200/70 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 tabular-nums flex-shrink-0">
-                                        {engaged}m
-                                    </span>
-                                )}
-                            </div>
-                        );
-                    })}
+            {/* v6.4: Habit lane — icon-only chips positioned by time. A habit can plot several
+                markers: its scheduled slot, greyed "ghost" markers at prior scheduled times
+                (reschedules), and engagement markers at the actual time of off-schedule segments
+                (live while running, a logged dot once stopped). Overlapping markers stack onto
+                separate rows so each stays individually visible/hoverable. The icon is fixed-width
+                and never truncates; the name shows inline only when there's room (bounded by the
+                gap to the next marker in its row) and is always available on hover. */}
+            {laneMarkers.length > 0 && totalMinutes > 0 && (
+                <div className="relative" style={{ minHeight: laneRowCount * LANE_ROW_H }}>
+                    {laneMarkers.map(({ marker, left, row, maxWidthPct }) => (
+                        <div
+                            key={marker.key}
+                            className={`absolute h-5 px-1 rounded-full text-[9px] leading-none inline-flex items-center gap-1 overflow-hidden ${markerClass(marker)}`}
+                            style={{ left: `${left}%`, top: row * LANE_ROW_H, maxWidth: `${maxWidthPct}%` }}
+                            title={markerTooltip(marker)}
+                        >
+                            <span aria-hidden className="flex-shrink-0 w-3 text-center">{markerIcon(marker)}</span>
+                            <span className="truncate">{marker.instance.titleSnapshot}</span>
+                        </div>
+                    ))}
                 </div>
             )}
 

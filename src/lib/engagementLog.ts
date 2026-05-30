@@ -1,36 +1,42 @@
-import type { DayPlan, LinkedTask, TodaysHabitInstance } from '../types';
+import type { DayPlan, EngagementSegment } from '../types';
 import type { TodoistTask } from '../hooks/useTodoist';
 
 /**
- * v6.4: a flattened row for the engagement log view on the dashboard.
- * Combines per-instance engagement records from `todaysHabits` and per-task records from
- * `linkedTasks` into a single sortable list. The user-facing "what actually happened
- * today" view, ordered by `startedAt`.
+ * v6.4: flattened rows for the dashboard engagement log — a time-ordered record of
+ * "what actually happened today". Two row kinds:
+ *  - **engagement** — one per Start→Stop segment on a habit instance or task (individual,
+ *    not cumulative: a Start/Stop/Start sequence produces two rows).
+ *  - **reschedule** — a habit instance was moved to a different target time.
  *
- * Each engagement record on `LinkedTask` / `TodaysHabitInstance` represents the most
- * recent segment's `startedAt` + accumulated `totalMinutes` (segments are not retained
- * individually today — see the durable-record roadmap for the cross-day store).
+ * Both are sorted together by `sortAt` (the segment's `startedAt` or the reschedule's `at`).
  */
-export interface EngagementLogRow {
-    key: string;                                   // stable react key
+
+interface EngagementLogRowBase {
+    key: string;
     kind: 'habit' | 'task';
     title: string;
-    startedAt: string;                             // ISO — current/last segment start
-    endedAt?: string;                              // ISO when paused/closed; absent = ongoing
-    totalMinutes: number;                          // accumulated across cycles
-    /**
-     * Lifecycle status of the underlying entity (mirrors the source's `status`).
-     * For habits this is `HabitInstanceStatus`; for tasks it is `LinkedTaskStatus`.
-     */
-    status: TodaysHabitInstance['status'] | NonNullable<LinkedTask['status']>;
-    /** Optional reference to the source (for click-through or detail panels). */
+    sortAt: string;          // ISO — primary timestamp for ordering
     sourceId: string;
 }
 
+export interface EngagementSegmentRow extends EngagementLogRowBase {
+    entryType: 'engagement';
+    segment: EngagementSegment;
+}
+
+export interface RescheduleRow extends EngagementLogRowBase {
+    entryType: 'reschedule';
+    at: string;              // ISO — when the reschedule happened
+    fromTime?: string;       // "HH:mm" prior target
+    toTime?: string;         // "HH:mm" new target
+}
+
+export type EngagementLogRow = EngagementSegmentRow | RescheduleRow;
+
 /**
- * Build the engagement log for today. Includes every instance/task that has an engagement
- * record — regardless of current status. The status field lets the UI render the row's
- * outcome (engaged / completed / unfinished / skipped / paused-when-planned-or-pending).
+ * Build the engagement log for today. Includes:
+ *  - one engagement row per `EngagementSegment` on every habit instance / task, and
+ *  - one reschedule row per `rescheduleHistory` entry on every habit instance.
  */
 export function buildEngagementLog(
     plan: DayPlan,
@@ -39,39 +45,51 @@ export function buildEngagementLog(
     const rows: EngagementLogRow[] = [];
 
     for (const instance of plan.todaysHabits) {
-        const eng = instance.engagement;
-        if (!eng) continue;
-        rows.push({
-            key: `habit-${instance.id}`,
-            kind: 'habit',
-            title: instance.titleSnapshot,
-            startedAt: eng.startedAt,
-            endedAt: eng.endedAt,
-            totalMinutes: eng.totalMinutes ?? 0,
-            status: instance.status,
-            sourceId: instance.id,
-        });
+        for (const [idx, seg] of (instance.segments ?? []).entries()) {
+            rows.push({
+                entryType: 'engagement',
+                key: `habit-seg-${instance.id}-${idx}`,
+                kind: 'habit',
+                title: instance.titleSnapshot,
+                sortAt: seg.startedAt,
+                sourceId: instance.id,
+                segment: seg,
+            });
+        }
+        for (const [idx, ev] of (instance.rescheduleHistory ?? []).entries()) {
+            rows.push({
+                entryType: 'reschedule',
+                key: `habit-resched-${instance.id}-${idx}`,
+                kind: 'habit',
+                title: instance.titleSnapshot,
+                sortAt: ev.at,
+                sourceId: instance.id,
+                at: ev.at,
+                fromTime: ev.fromTime,
+                toTime: ev.toTime,
+            });
+        }
     }
 
     for (const lt of plan.linkedTasks) {
-        const eng = lt.engagement;
-        if (!eng) continue;
+        if (!lt.segments) continue;
         const title = taskMap.get(lt.todoistId)?.content
             ?? lt.titleSnapshot
             ?? lt.todoistId;
-        rows.push({
-            key: `task-${lt.todoistId}`,
-            kind: 'task',
-            title,
-            startedAt: eng.startedAt,
-            endedAt: eng.endedAt,
-            totalMinutes: eng.totalMinutes ?? 0,
-            status: lt.status ?? 'pending',
-            sourceId: lt.todoistId,
-        });
+        for (const [idx, seg] of lt.segments.entries()) {
+            rows.push({
+                entryType: 'engagement',
+                key: `task-seg-${lt.todoistId}-${idx}`,
+                kind: 'task',
+                title,
+                sortAt: seg.startedAt,
+                sourceId: lt.todoistId,
+                segment: seg,
+            });
+        }
     }
 
-    rows.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    rows.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
     return rows;
 }
 
@@ -81,22 +99,4 @@ export function formatLocalTimeOfDay(iso: string): string {
     const h = d.getHours();
     const m = d.getMinutes();
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-/**
- * Map a log row's status to a user-facing label for the engagement log. Distinct from
- * the status enum because for tasks/habits with engagement, "planned"/"pending" actually
- * means "paused" in this context (the engagement was opened, then stopped, but the
- * underlying entity isn't terminal).
- */
-export function engagementStatusLabel(row: EngagementLogRow): string {
-    switch (row.status) {
-        case 'engaged':       return 'Engaged';
-        case 'completed':     return 'Completed';
-        case 'unfinished':    return 'Rescheduled';
-        case 'skipped':       return 'Skipped';
-        case 'planned':
-        case 'pending':       return 'Paused';
-        default:              return row.status;
-    }
 }

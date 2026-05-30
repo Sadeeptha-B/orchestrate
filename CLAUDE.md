@@ -11,6 +11,8 @@ Deeper references:
 
 Frozen historical artifacts live in [docs/history/](./docs/history/) — implementation plans (`plan*.md`) and the iteration narrative (`iterations.md`). They are useful for understanding *how* the app got here, but **do not treat them as current state**.
 
+**`iterations.md` is frozen — do not add or edit entries.** It accumulated unnecessary ceremony; the per-iteration `plan_v{N}.md` docs plus the living docs are the record going forward. Leave `iterations.md` as-is unless the user explicitly asks.
+
 Requirement sketches live in [docs/roadmap/](./docs/roadmap/) — aspirational requirements and framing that haven't been consolidated into the backlog yet. **Agents: ignore these unless the user explicitly directs you to them.**
 
 ## Key conventions

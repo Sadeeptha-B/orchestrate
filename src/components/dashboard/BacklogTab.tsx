@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
+import { totalEngagedSeconds } from '../../lib/engagement';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -56,16 +57,11 @@ export function BacklogTab() {
                 const completedTitles = entry.completedTaskTitles ?? [];
                 const unfinishedRecords = entry.unfinishedTaskRecords ?? {};
                 const unfinishedIds = Object.keys(unfinishedRecords);
-                const unfinishedTotalMinutes = unfinishedIds.reduce(
-                    (sum, id) => sum + (unfinishedRecords[id].totalMinutes ?? 0),
-                    0,
-                );
+                const minutesFor = (id: string) =>
+                    Math.round(totalEngagedSeconds(unfinishedRecords[id], Date.parse(entry.archivedAt)) / 60);
+                const unfinishedTotalMinutes = unfinishedIds.reduce((sum, id) => sum + minutesFor(id), 0);
                 const unfinishedTooltip = unfinishedIds
-                    .map((id) => {
-                        const title = entry.taskSnapshots?.[id] ?? id;
-                        const mins = unfinishedRecords[id].totalMinutes ?? 0;
-                        return `${title}: ${mins}m`;
-                    })
+                    .map((id) => `${entry.taskSnapshots?.[id] ?? id}: ${minutesFor(id)}m`)
                     .join('\n');
                 return (
                     <Card key={entry.id} className="!p-3">

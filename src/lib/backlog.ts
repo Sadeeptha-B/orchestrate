@@ -1,4 +1,4 @@
-import type { BacklogEntry, DayPlan, EngagementRecord, Intention, LinkedTask } from '../types';
+import type { BacklogEntry, DayPlan, EngagementSegment, Intention, LinkedTask } from '../types';
 import { buildLinkedTaskMap } from './tasks';
 
 /**
@@ -35,7 +35,7 @@ export function buildBacklogEntry(
     const pendingIds: string[] = [];
     const taskSnapshots: Record<string, string> = {};
     const completedTaskTitles: string[] = [];
-    const unfinishedTaskRecords: Record<string, EngagementRecord> = {};
+    const unfinishedTaskRecords: Record<string, EngagementSegment[]> = {};
 
     for (const id of intention.linkedTaskIds) {
         const lt = linkedTaskMap.get(id);
@@ -45,8 +45,8 @@ export function buildBacklogEntry(
         }
         pendingIds.push(id);
         if (lt?.titleSnapshot) taskSnapshots[id] = lt.titleSnapshot;
-        // v6.3: preserve engagement memo for pending tasks the user engaged with.
-        if (lt?.engagement) unfinishedTaskRecords[id] = lt.engagement;
+        // v6.4: preserve engagement segments for pending tasks the user engaged with.
+        if (lt?.segments && lt.segments.length > 0) unfinishedTaskRecords[id] = lt.segments;
     }
 
     return {
