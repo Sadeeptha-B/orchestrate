@@ -63,8 +63,8 @@ export function UserGuide() {
                     DayPlan (today only, auto-resets)
                    ┌────────────────────────────────┐
                    │  Intentions  ·  LinkedTasks    │
-                   │  taskSessions  ·  habitLog     │
-                   │  checkIns                      │
+                   │  taskSessions  ·  todaysHabits │
+                   │  habitLog  ·  checkIns         │
                    └────────────────────────────────┘
 
       Deep Track       → Your main work: big tasks in dedicated session blocks
@@ -171,12 +171,14 @@ export function UserGuide() {
        • or in the "Anytime today" cluster (if no target time)
        • plus a row in the HabitInstanceCard with Start / Stop / Complete /
          Skip / Reschedule controls
-  → press ▶ when you begin → status flips to "engaged" and minutes accumulate
+  → press ▶ when you begin → status flips to "engaged" and a live timer runs from 0:00
+  → press ■ to pause → that Start→Stop becomes one entry in the engagement log;
+     press ▶ again for a fresh segment (another log entry)
   → press ✓ when done → instance flips to "completed" and the recurring Todoist
      task's current occurrence is checked off (tomorrow's auto-created by Todoist)
-  → missed it? hit ⤴ Reschedule to pick a later time today — a successor instance
-     is added; the original goes to "unfinished" (if engaged) or "skipped".
-     The recurring Todoist task is untouched, so your recurrence stays clean.`}</Flow>
+  → missed it? hit ⤴ Reschedule to pick a later time today — the instance just moves
+     to the new time (engagement and timer intact); the move is recorded in the
+     engagement log. The recurring Todoist task is untouched, so your recurrence stays clean.`}</Flow>
                         <p>A few knobs in the form:</p>
                         <ul className="list-disc pl-5 space-y-1.5">
                             <li><strong>Target time</strong> (optional but recommended) — positions the instance on the timeline. Untimed habits float in the "Anytime today" cluster.</li>
@@ -588,12 +590,12 @@ Is X today-only?
                         <ul className="list-disc pl-5 space-y-1">
                             <li>The dashboard habit lane shows 🔁 <em>Morning meditation</em> (07:00), 🔁 <em>Gym</em>, 🔁 <em>Daily planning ritual</em> (14:00), 🔁 <em>Evening shutdown</em> (22:00). The HabitInstanceCard lists them with Start/Stop/Complete/Skip/Reschedule controls.</li>
                             <li>7:02 AM — you press ▶ on Morning meditation, sit 12 minutes, press ✓. The pill turns 🎉, the recurring Todoist task is checked off.</li>
-                            <li>For a main task you've started but need to pause, hit ■ on its TaskRow. Engagement minutes accumulate if you come back later — or are preserved as a memo on the backlog if you defer the intention.</li>
+                            <li>For a main task you've started but need to pause, hit ■ on its TaskRow. Each Start→Stop is logged as its own entry in the <em>Engagement Log</em> card; pressing ▶ again starts a fresh segment. If you defer the intention to the backlog, those segments ride along as a memo.</li>
                             <li>The Light Pool panel lists <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. Between morning and afternoon sessions, you pull <em>Algorithms warm-up</em> — Start, work for 12 minutes, Done. Logged, doesn't touch the task graph.</li>
                             <li>Between-session True Rest banner: <em>"Walk 5 minutes — outside if possible."</em> No tracking.</li>
                             <li>2:00 PM check-in: feeling <em>struggling</em>, work type <em>low-energy</em>. The modal shows a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>) and a couple Light Pool rows. You try the breathing, then resume your main work.</li>
                             <li>3:00 PM check-in: feeling <em>stuck</em>. The avoidance prompt appears. You write: <em>"The paper's math section — I don't have the prerequisites yet."</em> Saved for later reflection.</li>
-                            <li>6:30 PM — you realize you skipped Gym this morning. You press ⤴ Reschedule on the Gym row, pick 19:30. A new instance appears at 19:30 with the predecessor recorded as <em>skipped</em>. The recurring Todoist task is untouched.</li>
+                            <li>6:30 PM — you realize you haven't done Gym yet. You press ⤴ Reschedule on the Gym row, pick 19:30. The instance just moves to 19:30 (keeping any engagement it had); the move shows up as a "⤴ Gym · 08:00 → 19:30 · Rescheduled" entry in the Engagement Log. The recurring Todoist task is untouched.</li>
                         </ul>
 
                         <SubHeading>End of day</SubHeading>
@@ -634,7 +636,7 @@ Is X today-only?
                             ← Back to Dashboard
                         </button>
                         <span className="text-text-light">
-                            Reflects v6.2. See <Link to="/life" className="text-accent hover:underline">/life</Link> to manage your seasons and habits.
+                            See <Link to="/life" className="text-accent hover:underline">/life</Link> to manage your seasons and habits.
                         </span>
                     </div>
                 </div>

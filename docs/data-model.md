@@ -23,14 +23,16 @@ A Todoist task surfaced inside the plan, always bound to an intention via `inten
 - **background** — Small nudge task. Can be assigned to multiple sessions. Cap: `taskCapDefaults.manualBackground` (default 30 min).
 - **unclassified** — Default after linking. Must be categorized before advancing past Step 2.
 
-**Engagement lifecycle:**
-1. New / restored task: `status = 'pending'`, no engagement.
-2. User presses Start: `START_TASK_ENGAGEMENT` sets `status = 'engaged'`, opens a fresh segment (`startedAt = now`, `endedAt` cleared). On resume after a prior Stop, `totalMinutes` is preserved.
-3. User presses Stop: `STOP_TASK_ENGAGEMENT` closes the current segment (adds `now - startedAt` to `totalMinutes`, stamps `endedAt`) AND returns `status` to `pending` so the ▶/■ button flips back.
-4. User checks complete: `TOGGLE_TASK_COMPLETE` flips to `status = 'completed'`, closes any open segment.
-5. Moved to backlog while engaged: engagement record copied into `BacklogEntry.unfinishedTaskRecords`.
+**Engagement model (v6.4 — segment list):** engagement is a list of `EngagementSegment` (`{ startedAt, endedAt? }`) on `LinkedTask.segments` / `TodaysHabitInstance.segments`. Each Start→Stop is **one individual segment** — not a cumulative accumulator. Named "segment" (not "session") to avoid clashing with the first-class work `Session`/`SessionSlot`. Duration is always *derived* (`endedAt − startedAt`, or `now − startedAt` while open); no stored minute/second totals.
 
-**Engagement segment semantics:** `startedAt` represents the **current segment's** start, not the original first-Start. It is overwritten on every Start so `closeEngagement` measures only the current cycle. `totalMinutes` accumulates across cycles. This avoids the prior-design bug where resume measured elapsed since the very first Start.
+Lifecycle:
+1. New / restored task: `status = 'pending'`, no segments.
+2. Start (`START_TASK_ENGAGEMENT`): `status = 'engaged'`, push a new open segment `{ startedAt: now }` (no-op if one is already open).
+3. Stop (`STOP_TASK_ENGAGEMENT`): close the open segment (`endedAt = now`), return `status` to `pending` so the ▶/■ button flips back. A subsequent Start pushes a **fresh** segment — the timer counts from 0:00 again, and each Start/Stop is a distinct log entry.
+4. Complete (`TOGGLE_TASK_COMPLETE`): close any open segment, `status = 'completed'`.
+5. Moved to backlog while engaged: the `segments` array is copied into `BacklogEntry.unfinishedTaskRecords`.
+
+**Display — [`<EngagementTimer>`](../src/components/dashboard/EngagementTimer.tsx) + [`lib/engagement.ts`](../src/lib/engagement.ts):** the timer renders one segment as `M:SS` (or `H:MM:SS` past an hour), ticking once per second while the segment is open (no `endedAt`). Card rows (`HabitInstanceCard` / `SessionTimeline`) show only the **open** segment while engaged — counting from 0:00, gone when stopped. The engagement-log view renders **one row per segment** (`segmentSeconds`). Glance surfaces that want a rounded total (timeline-lane badge, backlog memo) derive it via `totalEngagedSeconds(segments)`.
 
 **`completed` vs `status`:** `completed` mirrors `status === 'completed'`. Both are written together by the reducer. `completed` is retained for backward compat — many callers (capacity calc, completion counter, session visuals) still read it.
 
@@ -45,18 +47,16 @@ A stabilizer habit's manifestation for today. Lives on `DayPlan.todaysHabits`, i
 - **engaged** — user pressed Start on the `HabitInstanceCard`.
 - **completed** — done. Caller also fires `actions.completeTask(todoistTaskId)` to close Todoist's current occurrence.
 - **skipped** — terminal: user explicitly skipped today (✕ button).
-- **unfinished** — terminal: this is the **predecessor of an engagement-aware reschedule clone**. The engagement record (segments + `totalMinutes`) is preserved as the durable in-day record of "the user worked N minutes here earlier". Rendered as a historical row at the original `targetTime` with the engagement chip visible.
 
-**Reschedule — branched on engagement:** `RESCHEDULE_HABIT_INSTANCE` picks one of two paths:
+(v6.4 removed the old `'unfinished'` status — the v6.3 clone-on-reschedule predecessor. Reschedules are in-place now and segments survive them, so no clone is produced. `migratePlan` coerces any persisted `'unfinished'` instance to `'skipped'`.)
 
-- **No engagement on target → in-place update.** Keep `id`, `status`, only `targetTime` changes; stamp `rescheduledAt`. No predecessor — nothing happened to record.
-- **Engagement present → clone.** Predecessor flips to terminal `'unfinished'` with its `engagement` record intact (any open segment is closed via `closeEngagement` first). Successor is a fresh `'planned'` instance at the new time with `rescheduledAt` set (so REFRESH preserves its chosen time). Both predecessor and successor share `habitId` and `todoistTaskId`; they coexist in `plan.todaysHabits` for the rest of the day.
+**Reschedule — always in-place (v6.4):** `RESCHEDULE_HABIT_INSTANCE` updates `targetTime` on the existing instance, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` — if it was engaged, the open segment keeps running at the new target time. **Every reschedule is recorded**, whether or not the instance was engaged. The recurring Todoist task is **never** touched. The `rescheduledAt` stamp doubles as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
 
-The recurring Todoist task is **never** touched in either path — Todoist's recurrence engine keeps producing tomorrow's occurrence as if nothing happened today. The `rescheduledAt` stamp acts as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
+**In-day surface — [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).** A read-only helper flattens today's activity into a sortable `EngagementLogRow[]` union, ordered by time:
+- **engagement rows** — **one per `EngagementSegment`** across all habit instances + tasks (individual, not cumulative — a Start/Stop/Start produces two rows). Each carries the `segment`; the row renders the ticking `<EngagementTimer>` (live while the segment is open).
+- **reschedule rows** — one per `rescheduleHistory` entry, rendered as "⤴ {title} · {from} → {to} · Rescheduled" at the clock time it happened.
 
-**Why a clone-on-engagement?** Orchestrate has no separate engagement log today (planned for a future iteration — see [history/plan_v6.3.md](history/plan_v6.3.md)'s suggestion list and [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)). The unfinished predecessor IS the engagement record: it captures `{ startedAt, endedAt, totalMinutes }` for the work done before the reschedule. A future engagement-log migration can harvest these unfinished instances into `life.engagementHistory` without losing the data.
-
-**In-day surface — [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).** A read-only helper flattens today's `TodaysHabitInstance` and `LinkedTask` engagement records into a sortable `EngagementLogRow[]` (one row per engaged entity, ordered by `engagement.startedAt`). The dashboard's `HabitInstanceCard` uses this to render its *Log* view — a scrollable, time-ordered list of "what was engaged today" combining habits + tasks. This view is the read interface that a future `life.engagementHistory` would feed; the helper signature stays stable so the upgrade is a swap of the input source, not the consumer.
+The dashboard renders this in a dedicated **`EngagementLogCard`** (a self-headed sibling of `HabitInstanceCard` on the right rail — the two are independent surfaces, each hidden when empty; both exported from `HabitInstanceCard.tsx`). It is the in-day record of "what actually happened today", and the read interface a future durable `life.engagementHistory` would feed (see [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)) — a flat list of segments harvested across days; the helper signature stays stable so the upgrade swaps the input source, not the consumer. The `HabitInstanceCard` ("Today's Habits") shows no "rescheduled" tag — reschedules live in the log.
 
 **Refresh merge (`REFRESH_TODAYS_HABITS`):** Called on Step 1 mount and whenever habits / Todoist cache change. For each habit:
 - If no existing instance → append the computed one.
@@ -126,7 +126,7 @@ A parked intention stored on `LifeContext.backlog`.
 
 **Completed-task partitioning:** `buildBacklogEntry` splits `linkedTaskIds` by completion. Completed IDs are stripped; their `titleSnapshot` goes to `completedTaskTitles` (read-only context). This avoids rebuilding stale completed tasks that Step 2 can't render (absent from the Todoist API).
 
-**Engagement carryover:** When an intention with engaged-but-incomplete tasks moves to backlog, the engagement records are copied into `unfinishedTaskRecords`. On restore, rebuilt LinkedTasks get `rescheduledFromTodoistId` + `rescheduledAt` stamps; the engagement record stays on the BacklogEntry as annotation.
+**Engagement carryover:** When an intention with engaged tasks moves to backlog, each task's `segments` are copied into `unfinishedTaskRecords` (`Record<todoistId, EngagementSegment[]>`). On restore, rebuilt LinkedTasks get `rescheduledFromTodoistId` + `rescheduledAt` stamps; the segments stay on the BacklogEntry as annotation.
 
 ### RestCue
 
@@ -185,25 +185,25 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `TOGGLE_TASK_COMPLETE` | `todoistId, titleSnapshot?` | Toggles `completed` + `status`. Optionally stores title snapshot. Closes any open engagement. |
 | `SYNC_TASK_SNAPSHOTS` | `snapshots` | Batch-updates `titleSnapshot` when Todoist titles change |
 | `REORDER_SESSION_TASKS` | `sessionId, taskIds` | Replaces task order within a session |
-| `START_TASK_ENGAGEMENT` | `todoistId, now` | Sets `status = 'engaged'`. Opens a fresh segment: `startedAt = now`, `endedAt` cleared. Preserves `totalMinutes` if engagement already existed. |
-| `STOP_TASK_ENGAGEMENT` | `todoistId, now` | Closes current engagement segment (adds `now - startedAt` to `totalMinutes`), returns `status` to `'pending'`. Resume via `START_TASK_ENGAGEMENT` preserves `totalMinutes` and opens a fresh segment. |
+| `START_TASK_ENGAGEMENT` | `todoistId, now` | Sets `status = 'engaged'`. Pushes a new open segment `{ startedAt: now }` to `segments` (no-op if one is open). |
+| `STOP_TASK_ENGAGEMENT` | `todoistId, now` | Closes the open segment (`endedAt = now`), returns `status` to `'pending'`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
 
 ### 3.3 Habit Instance Actions
 
 | Action | Payload | Effect |
 |---|---|---|
 | `REFRESH_TODAYS_HABITS` | `instances` | Appends precomputed instances to `todaysHabits`. Idempotent — skips any `habitId` already present. |
-| `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`. Opens a fresh segment: `startedAt = now`, `endedAt` cleared. Preserves `totalMinutes` if engagement already existed. |
-| `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes engagement segment (adds `now - startedAt` to `totalMinutes`), returns `status` to `'planned'`. Resume via `START_HABIT_INSTANCE` preserves `totalMinutes` and opens a fresh segment. |
-| `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes engagement. Caller completes Todoist task. |
-| `SKIP_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'skipped'`. Terminal. Closes any open engagement segment (v6.4) so in-flight minutes land in `totalMinutes`. Caller (v6.4) posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task, then fires `completeTask` so the recurrence engine advances and the habit resurfaces on its next occurrence. |
-| `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | Branches on engagement. No engagement → in-place `targetTime` update + `rescheduledAt` stamp. Engagement present → clone: predecessor → terminal `'unfinished'` with engagement preserved; successor → fresh `'planned'` at new time with `rescheduledAt` set. No Todoist write either way. |
+| `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`. Pushes a new open segment `{ startedAt: now }` (no-op if one is open). |
+| `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes the open segment, returns `status` to `'planned'`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
+| `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes any open segment. Caller completes Todoist task. |
+| `SKIP_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'skipped'`. Terminal. Closes any open segment so an in-flight engagement (Start then ✕ Skip) is recorded. Caller (v6.4) posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task, then fires `completeTask` so the recurrence engine advances. |
+| `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | **v6.4: always in-place.** Updates `targetTime`, stamps `rescheduledAt`, appends a `RescheduleEventEntry` to `rescheduleHistory`. Keeps `id`/`status`/`segments` (engaged instances keep their open segment running). Logged regardless of engagement. No clone, no Todoist write. |
 
 ### 3.4 Backlog Actions
 
 | Action | Payload | Effect |
 |---|---|---|
-| `MOVE_INTENTION_TO_BACKLOG` | `intentionId, reason?` | Scrubs intention + LinkedTasks from plan. Builds BacklogEntry (captures engagement records). Appends to `life.backlog`. Caller handles Todoist unschedule. |
+| `MOVE_INTENTION_TO_BACKLOG` | `intentionId, reason?` | Scrubs intention + LinkedTasks from plan. Builds BacklogEntry (captures each engaged task's `segments`). Appends to `life.backlog`. Caller handles Todoist unschedule. |
 | `RESTORE_FROM_BACKLOG` | `backlogId, taskCache, now?` | Pulls entry off backlog. Appends intention to plan. Rebuilds fresh LinkedTasks for pending IDs (unclassified, no estimate). Stamps reschedule fields on previously-engaged tasks. |
 | `DELETE_BACKLOG_ENTRY` | `backlogId` | Removes entry. Caller handles Todoist unschedule. |
 
@@ -301,6 +301,12 @@ Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On lo
 - For every LinkedTask with `sourceHabitId`: emits a synthetic `TodaysHabitInstance`, drops the LinkedTask, prunes from `taskSessions`.
 - For remaining LinkedTasks: stamps `status` based on `completed` flag. Drops `sourceHabitId`/`skippedForToday`.
 - Initializes `plan.todaysHabits: []` when missing.
+
+### v6.4: Engagement segments (no schema-marker bump — additive optionals)
+- Engagement moved from a single cumulative `EngagementRecord` to an `EngagementSegment[]` (`segments`) on both `LinkedTask` and `TodaysHabitInstance`. `migratePlan` converts any legacy `engagement` record into a single segment (`legacyEngagementToSegments`); the old `totalSeconds`/`totalMinutes` accumulators are dropped (duration is derived).
+- Drops `HabitInstanceStatus` `'unfinished'` — `migratePlan` coerces persisted `'unfinished'` instances to `'skipped'`, and `'unfinished'` LinkedTask status to `'pending'`.
+- `BacklogEntry.unfinishedTaskRecords` becomes `Record<todoistId, EngagementSegment[]>`.
+- These are optional fields defaulted on read, so the `_schemaVersion` marker **stays at `6.3`** (no breaking shape change; plans reset daily).
 
 ### Wizard step migration
 - 6-step -> 5-step: steps 2+ shift down by 1.

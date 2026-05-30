@@ -18,7 +18,9 @@ import type {
     RestCue,
     BacklogEntry,
     TodaysHabitInstance,
-    EngagementRecord,
+    HabitInstanceStatus,
+    EngagementSegment,
+    RescheduleEventEntry,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
 import { todayISO } from '../lib/time';
@@ -52,6 +54,21 @@ function freshPlan(): DayPlan {
         checkIns: [],
         habitLog: [],
     };
+}
+
+/**
+ * v6.4: convert a legacy single `engagement` record (`{ startedAt, endedAt?, totalSeconds?, totalMinutes? }`)
+ * into the new `segments` array. One record → one segment. Returns undefined when there's nothing to convert.
+ * (Multiple legacy Start/Stop cycles were already collapsed into one record, so only the last is recoverable —
+ * acceptable for the same-day reload edge; plans reset daily.)
+ */
+function legacyEngagementToSegments(raw: Record<string, unknown> | undefined): EngagementSegment[] | undefined {
+    if (!raw) return undefined;
+    const startedAt = raw.startedAt as string | undefined;
+    if (!startedAt) return undefined;
+    const seg: EngagementSegment = { startedAt };
+    if (raw.endedAt) seg.endedAt = raw.endedAt as string;
+    return [seg];
 }
 
 /** Migrate a plan through the version chain: v1 (tasks) → v2 (intentions) → v4 (linkedTasks) → v6.1 (habit-as-task decoupling). */
@@ -146,8 +163,16 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         }
 
         // v6.3: stamp `status` on remaining LinkedTasks (mirror of `completed`).
+        // v6.4: prefer the new `segments`; fall back to converting a legacy single
+        // `engagement` record into one segment. Coerce the dropped `'unfinished'` status.
         const migratedLinkedTasks: LinkedTask[] = v62LinkedTasks.map((lt) => {
             const completed = (lt.completed as boolean) ?? false;
+            const rawStatus = lt.status as string | undefined;
+            const status = rawStatus === 'unfinished' || rawStatus === undefined
+                ? (completed ? 'completed' : 'pending')
+                : (rawStatus as LinkedTask['status']);
+            const segments = (lt.segments as EngagementSegment[] | undefined)
+                ?? legacyEngagementToSegments(lt.engagement as Record<string, unknown> | undefined);
             const out: LinkedTask = {
                 todoistId: lt.todoistId as string,
                 intentionId: lt.intentionId as string | undefined,
@@ -155,9 +180,9 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
                 assignedSessions: (lt.assignedSessions as string[]) ?? [],
                 completed,
                 estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
-                status: (lt.status as LinkedTask['status']) ?? (completed ? 'completed' : 'pending'),
+                status,
                 ...(lt.titleSnapshot ? { titleSnapshot: lt.titleSnapshot as string } : {}),
-                ...(lt.engagement ? { engagement: lt.engagement as EngagementRecord } : {}),
+                ...(segments ? { segments } : {}),
                 ...(lt.rescheduledFromTodoistId ? { rescheduledFromTodoistId: lt.rescheduledFromTodoistId as string } : {}),
                 ...(lt.rescheduledAt ? { rescheduledAt: lt.rescheduledAt as string } : {}),
             };
@@ -174,7 +199,22 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             )
             : rawTaskSessions;
 
-        const existingTodaysHabits = (raw.todaysHabits as TodaysHabitInstance[] | undefined) ?? [];
+        // v6.4: convert any legacy `engagement` on persisted instances into `segments`, and
+        // coerce the dropped `'unfinished'` status (old clone-on-reschedule predecessor) to
+        // `'skipped'` (it was terminal).
+        const rawTodaysHabits = (raw.todaysHabits as Array<Record<string, unknown>> | undefined) ?? [];
+        const existingTodaysHabits: TodaysHabitInstance[] = rawTodaysHabits.map((i) => {
+            const status = (i.status as string) === 'unfinished' ? 'skipped' : (i.status as HabitInstanceStatus);
+            const segments = (i.segments as EngagementSegment[] | undefined)
+                ?? legacyEngagementToSegments(i.engagement as Record<string, unknown> | undefined);
+            const { engagement: _legacy, ...rest } = i;
+            void _legacy;
+            return {
+                ...(rest as unknown as TodaysHabitInstance),
+                status,
+                ...(segments ? { segments } : {}),
+            };
+        });
         const knownHabitIds = new Set(existingTodaysHabits.map((i) => i.habitId));
         const todaysHabits = [
             ...existingTodaysHabits,
@@ -394,20 +434,25 @@ function setIntentionOwner(task: LinkedTask, intentionId: string): LinkedTask {
 }
 
 /**
- * v6.3: close an open engagement record. If the record already has an `endedAt`, returns it unchanged.
- * Otherwise stamps `endedAt = nowISO` and adds the elapsed minutes to `totalMinutes`.
+ * v6.4: open a new engagement segment (Start). Pushes `{ startedAt: nowISO }`. If there's
+ * already an open segment (no `endedAt`), returns the list unchanged — Start is a no-op while
+ * already engaged.
  */
-function closeEngagement(record: EngagementRecord, nowISO: string): EngagementRecord {
-    if (record.endedAt) return record;
-    const elapsed = Math.max(
-        0,
-        Math.round((Date.parse(nowISO) - Date.parse(record.startedAt)) / 60000),
-    );
-    return {
-        ...record,
-        endedAt: nowISO,
-        totalMinutes: (record.totalMinutes ?? 0) + elapsed,
-    };
+function openEngagementSegment(segments: EngagementSegment[] | undefined, nowISO: string): EngagementSegment[] {
+    const list = segments ?? [];
+    if (list.length > 0 && !list[list.length - 1].endedAt) return list;
+    return [...list, { startedAt: nowISO }];
+}
+
+/**
+ * v6.4: close the open engagement segment (Stop / Complete / Skip). Stamps `endedAt = nowISO`
+ * on the last segment if it's open; otherwise returns the list unchanged.
+ */
+function closeEngagementSegment(segments: EngagementSegment[] | undefined, nowISO: string): EngagementSegment[] | undefined {
+    if (!segments || segments.length === 0) return segments;
+    const last = segments[segments.length - 1];
+    if (last.endedAt) return segments;
+    return [...segments.slice(0, -1), { ...last, endedAt: nowISO }];
 }
 
 // v6: `backfillHabitsFromLegacy` was removed — the deprecated `isHabit` flag is no longer
@@ -657,14 +702,13 @@ function reducer(state: State, action: Action): State {
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId) return lt;
                 const completed = !lt.completed;
-                const engagement = lt.engagement && !lt.engagement.endedAt
-                    ? closeEngagement(lt.engagement, nowISO)
-                    : lt.engagement;
+                // v6.4: completing closes any open engagement segment.
+                const segments = completed ? closeEngagementSegment(lt.segments, nowISO) : lt.segments;
                 return {
                     ...lt,
                     completed,
                     status: completed ? ('completed' as const) : ('pending' as const),
-                    ...(engagement ? { engagement } : {}),
+                    ...(segments ? { segments } : {}),
                     ...(action.titleSnapshot ? { titleSnapshot: action.titleSnapshot } : {}),
                 };
             });
@@ -882,27 +926,25 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'START_HABIT_INSTANCE': {
-            // v6.3: starting (or resuming after a stop) opens a fresh segment. We update
-            // `startedAt` to `now` on every Start so the next `closeEngagement` measures
-            // only the current segment — previous cycles are already in `totalMinutes`.
+            // v6.4: Start opens a new engagement segment (counting from 0:00). A no-op if
+            // one is already open. Each Start/Stop is an individual segment in the log.
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
-                const engagement: EngagementRecord = i.engagement
-                    ? { ...i.engagement, startedAt: action.now, endedAt: undefined }
-                    : { startedAt: action.now };
-                return { ...i, status: 'engaged' as const, engagement };
+                return {
+                    ...i,
+                    status: 'engaged' as const,
+                    segments: openEngagementSegment(i.segments, action.now),
+                };
             });
             return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         case 'STOP_HABIT_INSTANCE': {
-            // v6.3: stopping closes the current segment AND returns the instance to `planned`
-            // so the toggle button flips back to ▶ Start. Resuming (Start again) preserves the
-            // existing `totalMinutes` and opens a new segment.
+            // v6.4: closes the open segment AND returns the instance to `planned` so the
+            // toggle button flips back to ▶ Start. A subsequent Start opens a fresh segment.
             const todaysHabits = plan.todaysHabits.map((i) => {
-                if (i.id !== action.instanceId || !i.engagement) return i;
-                const engagement = closeEngagement(i.engagement, action.now);
-                return { ...i, status: 'planned' as const, engagement };
+                if (i.id !== action.instanceId) return i;
+                return { ...i, status: 'planned' as const, segments: closeEngagementSegment(i.segments, action.now) };
             });
             return { ...state, plan: { ...plan, todaysHabits } };
         }
@@ -910,124 +952,78 @@ function reducer(state: State, action: Action): State {
         case 'COMPLETE_HABIT_INSTANCE': {
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
-                const engagement = i.engagement && !i.engagement.endedAt
-                    ? closeEngagement(i.engagement, action.now)
-                    : i.engagement;
                 return {
                     ...i,
                     status: 'completed' as const,
                     completedAt: action.now,
-                    ...(engagement ? { engagement } : {}),
+                    segments: closeEngagementSegment(i.segments, action.now),
                 };
             });
             return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         case 'SKIP_HABIT_INSTANCE': {
-            // v6.4: close any open engagement segment so the in-flight minutes land in
-            // `totalMinutes` before the instance goes terminal. Mirrors the lifecycle in
-            // COMPLETE_HABIT_INSTANCE. Without this, a user who hit ▶ Start and then ✕ Skip
-            // (without ■ Stop) would leave an `endedAt`-less record forever.
+            // v6.4: close any open segment before the instance goes terminal, so an
+            // in-flight engagement (Start then ✕ Skip without ■ Stop) is recorded.
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
-                const engagement = i.engagement && !i.engagement.endedAt
-                    ? closeEngagement(i.engagement, action.now)
-                    : i.engagement;
-                return {
-                    ...i,
-                    status: 'skipped' as const,
-                    ...(engagement ? { engagement } : {}),
-                };
+                return { ...i, status: 'skipped' as const, segments: closeEngagementSegment(i.segments, action.now) };
             });
             return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         case 'RESCHEDULE_HABIT_INSTANCE': {
-            // v6.3 (revised): branch on engagement.
+            // v6.4 (revised): always in-place. The instance keeps its id, status, and
+            // engagement record (if engaged, the timer keeps running at the new target
+            // time). Only `targetTime` changes; `rescheduledAt` is stamped so REFRESH
+            // preserves the user's chosen time. Every reschedule appends a
+            // `RescheduleEventEntry` to `rescheduleHistory` — the durable in-day record
+            // surfaced in the engagement log, whether or not the instance was engaged.
             //
-            // No engagement (target untouched) → in-place update. Keep id, status,
-            //   only `targetTime` changes; stamp `rescheduledAt` so REFRESH preserves the
-            //   user's chosen time. No predecessor record — nothing happened to preserve.
-            //
-            // Engagement present → clone. The predecessor flips to terminal `'unfinished'`
-            //   with its engagement record intact (the durable in-day record of "I worked
-            //   N minutes on this earlier"). A fresh successor is appended at the new time
-            //   with status `'planned'`, no engagement, and `rescheduledAt` set so REFRESH
-            //   preserves its time. The recurring Todoist task is untouched in both cases.
+            // This supersedes the v6.3 clone-on-engagement mechanic: there is no longer
+            // an `'unfinished'` predecessor; the engagement stays on the moved instance
+            // and the reschedule itself is logged as its own event. The recurring Todoist
+            // task is untouched.
             const target = plan.todaysHabits.find((i) => i.id === action.instanceId);
             if (!target) return state;
             if (target.status !== 'planned' && target.status !== 'engaged') return state;
 
-            const hasEngagement = Boolean(target.engagement);
-
-            if (!hasEngagement) {
-                const todaysHabits = plan.todaysHabits.map((i) =>
-                    i.id === action.instanceId
-                        ? {
-                            ...i,
-                            ...(action.newTargetTime
-                                ? { targetTime: action.newTargetTime }
-                                : { targetTime: undefined }),
-                            rescheduledAt: action.now,
-                        }
-                        : i,
-                );
-                return { ...state, plan: { ...plan, todaysHabits } };
-            }
-
-            // Engaged → clone. Close any open segment on the predecessor so `totalMinutes`
-            // captures the final cycle, then mark it terminal.
-            const predecessorEngagement = target.engagement && !target.engagement.endedAt
-                ? closeEngagement(target.engagement, action.now)
-                : target.engagement;
+            const event: RescheduleEventEntry = {
+                at: action.now,
+                ...(target.targetTime ? { fromTime: target.targetTime } : {}),
+                ...(action.newTargetTime ? { toTime: action.newTargetTime } : {}),
+            };
 
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
                 return {
                     ...i,
-                    status: 'unfinished' as const,
-                    ...(predecessorEngagement ? { engagement: predecessorEngagement } : {}),
+                    ...(action.newTargetTime
+                        ? { targetTime: action.newTargetTime }
+                        : { targetTime: undefined }),
+                    rescheduledAt: action.now,
+                    rescheduleHistory: [...(i.rescheduleHistory ?? []), event],
                 };
             });
 
-            const successor: TodaysHabitInstance = {
-                id: crypto.randomUUID(),
-                habitId: target.habitId,
-                todoistTaskId: target.todoistTaskId,
-                titleSnapshot: target.titleSnapshot,
-                durationMinutes: target.durationMinutes,
-                ...(action.newTargetTime ? { targetTime: action.newTargetTime } : {}),
-                status: 'planned',
-                rescheduledAt: action.now,
-            };
-
-            return { ...state, plan: { ...plan, todaysHabits: [...todaysHabits, successor] } };
+            return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         case 'START_TASK_ENGAGEMENT': {
-            // v6.3: starting (or resuming after a stop) opens a fresh segment. `startedAt`
-            // is updated on every Start so `closeEngagement` measures only the current
-            // segment — previous cycles already live in `totalMinutes`.
+            // v6.4: Start opens a new engagement segment (from 0:00); no-op if one is open.
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId) return lt;
-                const engagement: EngagementRecord = lt.engagement
-                    ? { ...lt.engagement, startedAt: action.now, endedAt: undefined }
-                    : { startedAt: action.now };
-                return { ...lt, status: 'engaged' as const, engagement };
+                return { ...lt, status: 'engaged' as const, segments: openEngagementSegment(lt.segments, action.now) };
             });
             return { ...state, plan: { ...plan, linkedTasks } };
         }
 
         case 'STOP_TASK_ENGAGEMENT': {
-            // v6.3: stopping closes the current segment AND returns status to `pending` so
-            // the toggle button flips back to ▶ Start. Resuming preserves `totalMinutes`.
+            // v6.4: closes the open segment AND returns status to `pending` so the toggle
+            // button flips back to ▶ Start. A subsequent Start opens a fresh segment.
             const linkedTasks = plan.linkedTasks.map((lt) => {
-                if (lt.todoistId !== action.todoistId || !lt.engagement) return lt;
-                return {
-                    ...lt,
-                    status: 'pending' as const,
-                    engagement: closeEngagement(lt.engagement, action.now),
-                };
+                if (lt.todoistId !== action.todoistId) return lt;
+                return { ...lt, status: 'pending' as const, segments: closeEngagementSegment(lt.segments, action.now) };
             });
             return { ...state, plan: { ...plan, linkedTasks } };
         }

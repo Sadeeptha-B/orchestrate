@@ -19,7 +19,7 @@ import { HeaderControls } from '../ui/HeaderControls';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
 import { LightPoolPanel } from './LightPoolPanel';
-import { HabitInstanceCard } from './HabitInstanceCard';
+import { HabitInstanceCard, EngagementLogCard } from './HabitInstanceCard';
 import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 
@@ -178,77 +178,91 @@ export function Dashboard() {
                             </aside>
                         </div>
 
-                        {/* v6.3: Today's habits — independent of session assignment */}
-                        <HabitInstanceCard />
-
                         {/* Between-session True Rest cue (v6) — only when no active session and next within 60 min */}
                         {nextSessionStartsWithin(60) && <TrueRestCard variant="banner" />}
 
-                        {/* Current session */}
-                        <div className="space-y-2">
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                Current Session
-                            </h3>
-                            <CurrentSession
-                                pinnedSessionId={pinnedSessionId}
-                                onPinnedChange={setPinnedSessionId}
-                            />
-                        </div>
-
-                        {/* Light Pool — micro-gap fillers (v6) */}
-                        <LightPoolPanel />
-
-                        {/* Task Manager (Todoist) — collapsible */}
-                        <div>
-                            <button
-                                onClick={() => setTaskManagerOpen(!taskManagerOpen)}
-                                className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
-                            >
-                                <svg
-                                    className={`w-3 h-3 transition-transform ${taskManagerOpen ? 'rotate-90' : ''}`}
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                    strokeWidth={2}
-                                >
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                </svg>
-                                Task Manager
-                            </button>
-                            {taskManagerOpen && (
-                                <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
-                                    <TodoistPanel
-                                        mode="full"
-                                        onSetup={() => navigate('/settings?tab=integrations')}
-                                        showFilterToggle
-                                        defaultFiltered
+                        {/* v6.4: two-column lower region. The habit card is a right rail spanning the
+                            whole left column (session + light pool + task manager + calendar), so its
+                            height — especially the engagement log — is absorbed beside that column
+                            instead of pushing the task manager/calendar down. Task Manager + Calendar
+                            therefore take the Current Session width. Stacks on small screens. */}
+                        <div className="flex flex-col lg:flex-row gap-6 lg:items-start bg-subtle/30 rounded-xl border border-border p-5">
+                            <div className="flex-1 min-w-0 space-y-6">
+                                {/* Current session */}
+                                <div className="space-y-2">
+                                    <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                        Current Session
+                                    </h3>
+                                    <CurrentSession
+                                        pinnedSessionId={pinnedSessionId}
+                                        onPinnedChange={setPinnedSessionId}
                                     />
                                 </div>
-                            )}
-                        </div>
 
-                        {/* Calendar (Google) — collapsible */}
-                        <div>
-                            <button
-                                onClick={() => setCalendarOpen(!calendarOpen)}
-                                className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
-                            >
-                                <svg
-                                    className={`w-3 h-3 transition-transform ${calendarOpen ? 'rotate-90' : ''}`}
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                    strokeWidth={2}
-                                >
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                </svg>
-                                Calendar
-                            </button>
-                            {calendarOpen && (
-                                <div className="mt-3">
-                                    <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
+                                {/* Light Pool — micro-gap fillers (v6) */}
+                                <LightPoolPanel />
+
+                                {/* Task Manager (Todoist) — collapsible */}
+                                <div>
+                                    <button
+                                        onClick={() => setTaskManagerOpen(!taskManagerOpen)}
+                                        className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
+                                    >
+                                        <svg
+                                            className={`w-3 h-3 transition-transform ${taskManagerOpen ? 'rotate-90' : ''}`}
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                            strokeWidth={2}
+                                        >
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                        </svg>
+                                        Task Manager
+                                    </button>
+                                    {taskManagerOpen && (
+                                        <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
+                                            <TodoistPanel
+                                                mode="full"
+                                                onSetup={() => navigate('/settings?tab=integrations')}
+                                                showFilterToggle
+                                                defaultFiltered
+                                            />
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+
+                                {/* Calendar (Google) — collapsible */}
+                                <div>
+                                    <button
+                                        onClick={() => setCalendarOpen(!calendarOpen)}
+                                        className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
+                                    >
+                                        <svg
+                                            className={`w-3 h-3 transition-transform ${calendarOpen ? 'rotate-90' : ''}`}
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                            strokeWidth={2}
+                                        >
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                        </svg>
+                                        Calendar
+                                    </button>
+                                    {calendarOpen && (
+                                        <div className="mt-3">
+                                            <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* v6.3/v6.4: right rail beside the whole left column — today's habits
+                                and the engagement log as two independent, self-headed cards. Each
+                                hides itself when empty. */}
+                            <aside className="lg:w-96 lg:flex-shrink-0 space-y-6">
+                                <HabitInstanceCard />
+                                <EngagementLogCard />
+                            </aside>
                         </div>
                     </div>
                 </main>

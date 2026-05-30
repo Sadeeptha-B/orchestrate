@@ -9,6 +9,8 @@ import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
+import { EngagementTimer } from './EngagementTimer';
+import { openSegment } from '../../lib/engagement';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
 
 /** Today's "HH:MM–HH:MM" (or "HH:MM") if the task is scheduled for today, else null. */
@@ -93,7 +95,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
     const isEngaged = linkedTask.status === 'engaged';
-    const engagementMinutes = linkedTask.engagement?.totalMinutes ?? 0;
+    const liveSegment = isEngaged ? openSegment(linkedTask.segments) : undefined;
 
     const handleToggle = () => {
         dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title });
@@ -176,9 +178,10 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
                 {title}
             </span>
 
-            {isEngaged && engagementMinutes > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0 tabular-nums">
-                    {engagementMinutes}m
+            {liveSegment && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0 inline-flex items-center gap-1">
+                    <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" aria-hidden />
+                    <EngagementTimer segment={liveSegment} />
                 </span>
             )}
 

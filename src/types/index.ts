@@ -7,16 +7,29 @@ export interface Intention {
 }
 
 /** v6.3: lifecycle status for a LinkedTask. Treat absent (legacy rows) as 'pending'. */
-export type LinkedTaskStatus = 'pending' | 'engaged' | 'completed' | 'unfinished';
+export type LinkedTaskStatus = 'pending' | 'engaged' | 'completed';
 
 /**
- * v6.3: engagement record carried on LinkedTask and TodaysHabitInstance. Captures explicit
- * Start/Stop activity. `totalMinutes` accumulates across multiple cycles.
+ * v6.4: one engagement segment — a single Start→Stop period of working on a habit instance
+ * or task. Named `EngagementSegment` (not "session") to avoid confusion with the first-class
+ * work-`Session`/`SessionSlot`. The segment list is the durable per-instance record: each
+ * Start pushes a new open segment; Stop/Complete/Skip closes the open one. Duration is
+ * derived (`endedAt − startedAt`, or `now − startedAt` while open) — no stored accumulator.
  */
-export interface EngagementRecord {
-    startedAt: string;            // ISO — first Start press
-    endedAt?: string;             // ISO — last Stop press
-    totalMinutes?: number;        // accumulated across Start/Stop cycles
+export interface EngagementSegment {
+    startedAt: string;            // ISO — when this segment started
+    endedAt?: string;             // ISO — when it closed (absent = open / live)
+}
+
+/**
+ * v6.4: one entry in a habit instance's reschedule history. Surfaced in the dashboard
+ * engagement log as a "Rescheduled … → HH:mm" row. Captured on every reschedule,
+ * whether or not the instance was engaged.
+ */
+export interface RescheduleEventEntry {
+    at: string;                   // ISO — when the reschedule happened (clock time)
+    fromTime?: string;            // "HH:mm" prior targetTime (absent = was "anytime")
+    toTime?: string;              // "HH:mm" new targetTime (absent = moved to "anytime")
 }
 
 /** A Todoist task linked to an intention. v6.3: stabilizers no longer live here (see TodaysHabitInstance). */
@@ -29,7 +42,7 @@ export interface LinkedTask {
     estimatedMinutes: number | null;                      // null = not yet estimated
     titleSnapshot?: string;                               // cached title for completed tasks no longer in Todoist
     status?: LinkedTaskStatus;                            // v6.3: absent = 'pending'
-    engagement?: EngagementRecord;                        // v6.3: explicit Start/Stop record
+    segments?: EngagementSegment[];                       // v6.4: explicit Start/Stop engagement segments
     rescheduledFromTodoistId?: string;                    // v6.3: predecessor LinkedTask's todoistId when restored from a backlog entry with engagement
     rescheduledAt?: string;                               // v6.3: ISO timestamp of the restore
 }
@@ -73,14 +86,15 @@ export interface Playlist {
  *  - planned    : surfaced for today, not yet acted on
  *  - engaged    : user pressed Start
  *  - completed  : done (Todoist recurring task occurrence completed)
- *  - unfinished : engaged then rescheduled or abandoned (terminal)
  *  - skipped    : user explicitly skipped today (terminal)
+ *
+ * v6.4: the old `'unfinished'` value (v6.3 clone-on-reschedule predecessor) is gone —
+ * reschedules are in-place and engagement segments survive them, so no clone is produced.
  */
 export type HabitInstanceStatus =
     | 'planned'
     | 'engaged'
     | 'completed'
-    | 'unfinished'
     | 'skipped';
 
 /**
@@ -97,11 +111,12 @@ export interface TodaysHabitInstance {
     targetTime?: string;                   // "HH:mm" — drives timeline position; absent = "anytime today"
     status: HabitInstanceStatus;
     completedAt?: string;                  // ISO
-    engagement?: EngagementRecord;
+    segments?: EngagementSegment[];        // v6.4: Start/Stop engagement segments (individual)
     rescheduledAt?: string;                // v6.3: ISO timestamp of the last user reschedule.
                                            //       When set, `REFRESH_TODAYS_HABITS` preserves
                                            //       the user-chosen `targetTime` instead of
                                            //       re-deriving it from the habit definition.
+    rescheduleHistory?: RescheduleEventEntry[]; // v6.4: every reschedule, surfaced in the engagement log.
 }
 
 /** v6: a logged "pull" from the Light Pool. Never becomes an intention or LinkedTask. */
@@ -267,5 +282,5 @@ export interface BacklogEntry {
     reason: 'manual' | 'rollover';
     taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot for pending tasks
     completedTaskTitles?: string[];          // titles of tasks already completed at archive time (context-only)
-    unfinishedTaskRecords?: Record<string, EngagementRecord>;  // v6.3: todoistId → engagement record at archive time
+    unfinishedTaskRecords?: Record<string, EngagementSegment[]>;  // v6.3/v6.4: todoistId → engagement segments at archive time
 }

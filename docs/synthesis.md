@@ -83,13 +83,13 @@ Life routes are always reachable (no `setupComplete` gate) — `setupComplete` i
 | **Intention** | A high-level goal for *today* (e.g. "Finish assignment 3"). Today-scoped, user-created. Can be parked in the **Backlog** instead of deleted. |
 | **LinkedTask** | A Todoist task surfaced inside Orchestrate's plan, bound to an intention via `intentionId`. Carries `status` + optional `engagement` record. |
 | **Backlog** | Persistent pool of parked intentions at `life.backlog`. Populated via manual archive or day-rollover harvest. Surfaces in the `HistorySidebar`'s Backlog tab. Entries also preserve engagement records from previously-engaged tasks. |
-| **Engagement** | Explicit Start/Stop tracking on a LinkedTask or `TodaysHabitInstance`. Captured via play/stop buttons on the dashboard; accumulates minutes across cycles. |
+| **Engagement** | Explicit Start/Stop tracking on a LinkedTask or `TodaysHabitInstance`, stored as an `EngagementSegment[]` (each Start→Stop is one segment). Captured via play/stop buttons on the dashboard; durations are derived, not accumulated. |
 | **Main task** | A primary work thread. Exclusive to one session. |
 | **Background task** | A small/recurring task. Can be assigned to multiple sessions. Cap: `taskCapDefaults.manualBackground` (default 30 min). |
 | **Season** | A medium-horizon focus period (4-12 weeks) with theme, goals, non-goals, success criteria, optional capacity budget. Exactly one active at a time. |
 | **Habit** | A first-class recurring entity. Discriminated by `kind` into **stabilizer** and **light-coherent**. Owns recurrence rule, minimum-viable form, trigger cue, anchor flag, season scope. |
 | **Stabilizer** | `kind: 'stabilizer'` habit. Synced to Todoist as a recurring task. Surfaces as a `TodaysHabitInstance` positioned on the timeline by `targetTime`, independent of session assignment. Has its own Start/Stop/Complete/Skip/Reschedule lifecycle. |
-| **TodaysHabitInstance** | A stabilizer's manifestation for today. Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/skipped/unfinished), `engagement`, and `rescheduledAt`. Reschedules update in place when the target has no engagement; when engagement is present, a clone is created and the predecessor goes to `'unfinished'` with its engagement preserved as a durable in-day record. Never enters session capacity. |
+| **TodaysHabitInstance** | A stabilizer's manifestation for today. Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/skipped), `segments` (engagement), `rescheduledAt`, and `rescheduleHistory`. Reschedules are always in-place (targetTime moves, segments + status preserved); the move is logged in `rescheduleHistory`. Never enters session capacity. |
 | **Light-coherent** | `kind: 'light-coherent'` habit. Micro-gap filler. Surfaces in the **Light Pool**, logged via `plan.habitLog`. Never enters the task plan. |
 | **Light Pool** | Dashboard panel + `/life` section listing today's active light-coherent habits. Start/Complete writes a `HabitLogEntry`. |
 | **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via `/rest-cues`. Surfaced on Dashboard `InsightCard`, in the check-in modal for low-energy states, and as a between-session banner. |
@@ -144,16 +144,22 @@ The user can return from the Dashboard: "Edit Plan" -> Step 1, "Recontextualize"
 
 The operational view for the rest of the day (`Dashboard.tsx`):
 
+**Top region (full width):**
 1. **Header** -- completion counter, Save/Edit/Saved Sessions buttons, `HeaderControls`.
 2. **Music row** -- `PlaylistSelector` (6 work-type buttons) + live `DigitalClock`.
 3. **Player row** -- `SpotifyPlayer` iframe + `InsightCard` (alternates Transition Tips and True Rest cues every 2 min; manual advance).
 4. **Timeline** -- `SessionTimelineBar` (read-only) with active-session pulse and habit lane rendering `TodaysHabitInstance`s. Side rail: `SeasonContextCard`.
 5. **Between-session True Rest banner** -- when no session is active and the next slot is within 60 min.
-6. **HabitInstanceCard** -- today's stabilizer instances with per-row Start/Stop/Complete/Skip/Reschedule. **Two views** via header toggle: *Today* (the actionable list) and *Log* (a scrollable, time-ordered engagement log combining habit + task engagement records — see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts)).
-7. **Current Session** -- active session's tasks: drag-to-reorder, completion checkboxes (with confetti), engagement Start/Stop buttons, nudge banners for background tasks. `SessionCapacityBadge` + `SessionCapacityBanner` when over-capacity.
-8. **Light Pool** -- collapsible `LightPoolPanel`: today's light-coherent habits with Start/Complete.
-9. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
-10. **Calendar** -- collapsible Google Calendar embed.
+
+**Two-column lower region** (stacks on small screens):
+- **Left column:**
+  6. **Current Session** -- active session's tasks: drag-to-reorder, completion checkboxes (with confetti), engagement Start/Stop buttons + live m:s timer on engaged rows, nudge banners for background tasks. `SessionCapacityBadge` + `SessionCapacityBanner` when over-capacity.
+  7. **Light Pool** -- collapsible `LightPoolPanel`: today's light-coherent habits with Start/Complete.
+  8. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
+  9. **Calendar** -- collapsible Google Calendar embed.
+- **Right rail** (`HabitInstanceCard.tsx` exports both): two independent, self-headed cards, each hidden when empty:
+  - **Today's Habits** (`HabitInstanceCard`) -- today's stabilizer instances with per-row Start/Stop/Complete/Skip/Reschedule. Engaged rows show a live **m:s timer** (`<EngagementTimer>`, ticks once/sec, counts the current open segment from 0:00).
+  - **Engagement Log** (`EngagementLogCard`) -- a scrollable, time-ordered record: one row per engagement segment (individual Start→Stop, across habits + tasks) plus reschedule events; see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).
 
 **Season context card**: active season name (links to `/season/:id`), theme, date range with "Week N of M" pill, first 3 goals with expand, "Manage" button. Empty-state prompts "Create a season".
 
@@ -190,8 +196,8 @@ Manages:
 - Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; UI offers to deactivate first).
 - Deleting a habit also drops any `TodaysHabitInstance` rows for it from `plan.todaysHabits`.
 - `REFRESH_TODAYS_HABITS` is idempotent -- skips habits already represented. Payload precomputed by `lib/habitsTodoistSync.ts -> computeTodaysHabitInstances(...)`. Only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify.
-- Habit instance lifecycle: `START/STOP_HABIT_INSTANCE` accumulate engagement minutes; `COMPLETE_HABIT_INSTANCE` sets status + caller closes the Todoist occurrence; `SKIP_HABIT_INSTANCE` keeps the instance (prevents re-add); `RESCHEDULE_HABIT_INSTANCE` branches on engagement -- no engagement → in-place `targetTime` update + `rescheduledAt`; engagement present → clone (predecessor → `'unfinished'` with engagement preserved, successor → fresh `'planned'` at new time). **No Todoist write** either way. `REFRESH_TODAYS_HABITS` merges habit-form edits into existing planned instances (refreshes `targetTime`/`durationMinutes`/`titleSnapshot`), but preserves the user-chosen time when `rescheduledAt` is set.
-- `TOGGLE_TASK_COMPLETE` also sets `status` and closes any open engagement. `START/STOP_TASK_ENGAGEMENT` are explicit user actions; minutes accumulate across cycles.
+- Habit instance lifecycle: `START_HABIT_INSTANCE` pushes a new open `EngagementSegment`; `STOP_HABIT_INSTANCE` closes it (→ `planned`); `COMPLETE_HABIT_INSTANCE` closes + sets status, caller closes the Todoist occurrence; `SKIP_HABIT_INSTANCE` keeps the instance (prevents re-add); `RESCHEDULE_HABIT_INSTANCE` is always in-place (moves `targetTime`, stamps `rescheduledAt`, appends to `rescheduleHistory`; segments/status preserved). **No Todoist write** for start/stop/reschedule. `REFRESH_TODAYS_HABITS` merges habit-form edits into existing planned instances (refreshes `targetTime`/`durationMinutes`/`titleSnapshot`), but preserves the user-chosen time when `rescheduledAt` is set.
+- `TOGGLE_TASK_COMPLETE` also sets `status` and closes any open engagement segment. `START_TASK_ENGAGEMENT` pushes a new open `EngagementSegment`; `STOP_TASK_ENGAGEMENT` closes it (→ `pending`). Each Start→Stop is an individual segment (durations derived, not accumulated).
 - Light-coherent habits surface only via the Light Pool (`plan.habitLog`), never touching intentions/linkedTasks/taskSessions/todaysHabits.
 - `MOVE_INTENTION_TO_BACKLOG` scrubs plan-side state and appends a `BacklogEntry` (splits pending vs completed tasks; captures engagement records). `RESTORE_FROM_BACKLOG` is idempotent; stamps reschedule fields on previously-engaged tasks.
 - All intention-removal paths route through `useIntentionRemoval()` which unschedules Todoist tasks before dispatching. Auto-rollover is the deliberate exception (tasks stay overdue in Todoist).
@@ -269,7 +275,7 @@ Used in four places: Step 1 (linking mode, full tree), Step 2 (linking mode, fil
 
 **File:** `src/components/ui/SessionTimelineBar.tsx`
 
-Visual timeline rendering sessions as proportionally-positioned blocks with assigned task pills. Dual mode: interactive (clickable, Step 3) vs display (dashboard). Includes a habit lane above session blocks for `TodaysHabitInstance` positioning. Each habit pill carries a **state-specific icon** (`🔁` planned, `⏵` engaged with pulse, `🎉` completed, `⤴` rescheduled-with-engagement predecessor, `⤼` skipped) plus distinct border styles (solid/dashed) and bg fills; engaged/unfinished pills additionally show an inline `Nm` engagement-minutes badge that survives title truncation.
+Visual timeline rendering sessions as proportionally-positioned blocks with assigned task pills. Dual mode: interactive (clickable, Step 3) vs display (dashboard). Includes a habit lane above session blocks for `TodaysHabitInstance` positioning. Each habit pill carries a **state-specific icon** (`🔁` planned, `⏵` engaged with pulse, `🎉` completed, `⤼` skipped) plus distinct border styles (solid/dashed) and bg fills; engaged pills additionally show an inline `Nm` engagement-minutes badge (derived from segments) that survives title truncation.
 
 ### Check-in System
 
@@ -303,7 +309,7 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **Overdue bump details** (v6.4): `reconcileOverdueStabilizers(...)` bumps each overdue stabilizer's Todoist task via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
 
-**Reschedule semantics**: `RESCHEDULE_HABIT_INSTANCE` branches on whether the target has engagement. Without engagement: in-place `targetTime` update + `rescheduledAt` stamp. With engagement: clone — predecessor becomes terminal `'unfinished'` with its engagement record intact (rendered as a historical row in the dashboard's `HabitInstanceCard` with the engagement-minutes chip + "rescheduled" tag); successor is a fresh planned instance at the new time. The recurring Todoist task's `due_string` stays unchanged in both paths -- Todoist's recurrence engine is unaffected.
+**Reschedule semantics** (v6.4): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the `'unfinished'` status it produced is gone, and `migratePlan` coerces any persisted `'unfinished'` to `'skipped'`.)
 
 **Habits Library** (`/habits`): shows a "needs sync" banner for stabilizers that are either unsynced or whose Todoist task is missing. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races.
 
