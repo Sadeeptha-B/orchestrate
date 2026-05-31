@@ -104,7 +104,7 @@ A first-class recurring entity. Discriminated by `kind`:
 - **stabilizer** — synced to Todoist as a recurring task. On Step 1 mount, `REFRESH_TODAYS_HABITS` adds today's eligible stabilizers to `plan.todaysHabits`. Rendered in the timeline's habit lane and the dashboard's `HabitInstanceCard`.
 - **light-coherent** — micro-gap filler. Surfaces in the Light Pool. Start/Complete writes a `HabitLogEntry`. Never enters the task plan.
 
-**`isAnchor`** is orthogonal to `kind` — it controls deletion protection, not behavior. Anchor habits cannot be deleted while active (reducer no-ops; UI shows "deactivate first").
+**`isAnchor`** is orthogonal to `kind` — a pure importance tag marking a habit as load-bearing (sleep, meditation, gym, shutdown, weekly review). It does **not** alter behavior or block deletion at the reducer level; the only current effect is UI affordances — anchors sort to the front of habit lists and deleting an *active* anchor prompts a confirm dialog (cancellable, but deletion is permitted once confirmed). The protection axis is forward-looking scaffolding for recovery-mode / Minimum Viable Day, where anchors are the non-negotiables preserved when the plan is narrowed.
 
 **Recurrence matching** (`src/lib/habits.ts -> habitMatchesDate`): `daily` = every day, `weekdays` = Mon-Fri, `weekly`/`custom` = only listed `daysOfWeek` (weekly without `daysOfWeek` does not match).
 
@@ -242,7 +242,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `ACTIVATE_SEASON` | `seasonId | null` | Sets exactly one active (or none) |
 | `ADD_HABIT` | `habit` | Appends (caller generates id + createdAt so it can sync to Todoist with the same id) |
 | `UPDATE_HABIT` | `habit` | Replaces in-place |
-| `DELETE_HABIT` | `habitId` | No-ops if anchor + active. Otherwise removes; also drops matching `TodaysHabitInstance` rows. |
+| `DELETE_HABIT` | `habitId` | Removes the habit; also drops matching `TodaysHabitInstance` rows. (No anchor guard — `isAnchor` is a UI-only confirm prompt now.) |
 | `TOGGLE_HABIT_ACTIVE` | `habitId` | Flips `active` flag |
 
 ### 3.8 Light Pool Actions

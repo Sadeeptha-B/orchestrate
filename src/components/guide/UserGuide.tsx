@@ -123,8 +123,8 @@ export function UserGuide() {
 
                         <SubHeading>How protected is it?</SubHeading>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Anchor</strong> — a habit so foundational that you don't want to accidentally delete it. Sleep, meditation, gym — the stuff your day collapses without. Anchor habits can't be deleted while active; you'd have to deactivate them first.</li>
-                            <li><strong>Non-anchor</strong> — a regular habit you can remove freely.</li>
+                            <li><strong>Anchor</strong> — a habit so foundational that you don't want to accidentally delete it. Sleep, meditation, gym — the stuff your day collapses without. Anchors sort to the front of your habit list, and deleting an active one asks you to confirm first.</li>
+                            <li><strong>Non-anchor</strong> — a regular habit you can remove freely, no confirm.</li>
                         </ul>
 
                         <Callout tone="info">
@@ -295,7 +295,7 @@ export function UserGuide() {
                                 </Tr>
                                 <Tr>
                                     <Td><Code>isAnchor: true</Code></Td>
-                                    <Td><strong>Protection</strong> — can't be deleted while active</Td>
+                                    <Td><strong>Importance</strong> — sorts first; confirm before deleting</Td>
                                     <Td><em>"Would my day collapse without this?"</em></Td>
                                 </Tr>
                             </tbody>
