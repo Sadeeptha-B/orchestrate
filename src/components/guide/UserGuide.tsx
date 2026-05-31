@@ -5,7 +5,7 @@ import { HeaderControls } from '../ui/HeaderControls';
 
 /**
  * User Guide — mental model and how-to for the three execution pathways
- * (Deep Track / Stabilizer / Light Pool) plus manual background, True Rest,
+ * (Deep Track / Stabilizer / Light-coherent) plus manual background, True Rest,
  * and capacity arithmetic. This component is the single source for user-facing
  * guide content.
  */
@@ -64,12 +64,12 @@ export function UserGuide() {
                    ┌────────────────────────────────┐
                    │  Intentions  ·  LinkedTasks    │
                    │  taskSessions  ·  todaysHabits │
-                   │  habitLog  ·  checkIns         │
+                   │  checkIns                      │
                    └────────────────────────────────┘
 
       Deep Track       → Your main work: big tasks in dedicated session blocks
-      Stabilizer       → Your recurring rituals: synced to Todoist, on the timeline at their target time (independent of sessions)
-      Light Pool       → Your micro-gap fillers: logged when you pull them, never scheduled
+      Stabilizer       → Scheduled rituals: synced to Todoist, on the timeline at their target time (independent of sessions)
+      Light-coherent   → Anytime habits: synced + tracked like stabilizers, but pulled opportunistically (no fixed time)
 
       + Manual background  → Small today-only nudges inside an intention
       + True Rest          → Recovery cues with zero tracking overhead
@@ -93,7 +93,7 @@ export function UserGuide() {
                                 </Tr>
                                 <Tr>
                                     <Td><strong>DayPlan</strong></Td>
-                                    <Td>Today's Intentions, linked tasks, session assignments, check-ins, Light Pool log</Td>
+                                    <Td>Today's Intentions, linked tasks, session assignments, today's habit instances, check-ins</Td>
                                     <Td>Resets every morning automatically.</Td>
                                 </Tr>
                                 <Tr>
@@ -117,9 +117,15 @@ export function UserGuide() {
 
                         <SubHeading>What kind of habit is it?</SubHeading>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Stabilizer</strong> — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. Orchestrate syncs these to Todoist as recurring tasks and surfaces them on the dashboard timeline at their target time (in a habit lane above the session blocks), with Start / Stop / Complete / Skip / Reschedule controls. Habits are independent of sessions and don't burn session capacity.</li>
-                            <li><strong>Light-coherent</strong> — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. These show up in the Light Pool on your dashboard — you pull from them when you're ready, and they're logged but never scheduled.</li>
+                            <li><strong>Stabilizer</strong> — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. You give it a <strong>target time</strong> (required), and Orchestrate surfaces it on the dashboard timeline at that time (in a habit lane above the session blocks), with Start / Stop / Complete / Skip / Reschedule controls.</li>
+                            <li><strong>Light-coherent</strong> — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. Same tracking as a stabilizer — synced to Todoist, Start / Stop / Complete / Skip — but it's <strong>anytime</strong>: no fixed time, so it surfaces as an "Anytime today" row you pull from when you're ready (no scheduling, no reschedule).</li>
                         </ul>
+                        <p className="text-text-light">
+                            As of v6.6 both kinds sync to Todoist as recurring tasks, appear in the same{' '}
+                            <strong>Today's Habits</strong> card, and feed the <strong>Engagement Log</strong>. The
+                            only difference is scheduling: stabilizers are timed, light-coherent are anytime. Habits
+                            are independent of sessions and never burn session capacity.
+                        </p>
 
                         <SubHeading>How protected is it?</SubHeading>
                         <ul className="list-disc pl-5 space-y-1.5">
@@ -167,8 +173,7 @@ export function UserGuide() {
      (with due_string like "every day at 7:00" and duration 10 min)
   → each matching day, if the task is due and unchecked, it appears as a
      TodaysHabitInstance on your dashboard:
-       • on the timeline's habit lane at 07:00 (if a target time is set)
-       • or in the "Anytime today" cluster (if no target time)
+       • on the timeline's habit lane at 07:00 (its target time)
        • plus a row in the HabitInstanceCard with Start / Stop / Complete /
          Skip / Reschedule controls
   → press ▶ when you begin → status flips to "engaged" and a live timer runs from 0:00
@@ -181,7 +186,7 @@ export function UserGuide() {
      engagement log. The recurring Todoist task is untouched, so your recurrence stays clean.`}</Flow>
                         <p>A few knobs in the form:</p>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Target time</strong> (optional but recommended) — positions the instance on the timeline. Untimed habits float in the "Anytime today" cluster.</li>
+                            <li><strong>Target time</strong> (required for stabilizers) — positions the instance on the timeline. If you want an untimed habit, make it light-coherent instead.</li>
                             <li><strong>Duration</strong> — pushed to Todoist as the task duration and used as the displayed estimate / lane width.</li>
                             <li><strong>Todoist project</strong> — pick which project this habit's recurring task lives in. Leave on "Use default" to use the workspace default in <strong>Settings → Integrations → Default Habits Project</strong> (which itself defaults to a lazily-created project named "Habits"). Changing the project on an already-synced habit moves the recurring task.</li>
                             <li><strong>Window behavior</strong>:
@@ -207,19 +212,23 @@ export function UserGuide() {
                         </ExampleList>
                         <p className="text-text-light"><strong>When to use it:</strong> the activity recurs on a schedule, you want to be reminded about it, and it deserves a slot in the day.</p>
 
-                        <SubHeading id="pathway-c">4.3 Light Pool — your micro-gap fillers</SubHeading>
+                        <SubHeading id="pathway-c">4.3 Light-coherent — your anytime habits</SubHeading>
                         <p>
                             These are small, resumable activities that you pull from when you have a window — between
-                            sessions, when your attention drifts, or when you're waiting for something. They never become
-                            intentions or scheduled tasks. You just hit <strong>Start</strong> when you begin,{' '}
-                            <strong>Done</strong> when you finish, and it gets logged.
+                            sessions, when your attention drifts, or when you're waiting for something. They're tracked
+                            and synced to Todoist exactly like stabilizers, but they have <strong>no fixed time</strong>:
+                            they surface as "Anytime today" rows in your Today's Habits card, and you start them whenever
+                            a gap appears. They never become intentions or get assigned to a session.
                         </p>
                         <Flow>{`You set up a light-coherent Habit (e.g., "Anki flashcards", daily)
-  → it shows up in the Light Pool panel on the Dashboard
-  → you click Start when you have a gap → a log entry is created
-  → you click Done when you finish → duration is recorded
-  → it never enters your task plan. Never gets assigned to a session.`}</Flow>
-                        <p><strong>Good for:</strong> the "Light Coherent Track" — small coherent activities that replace the impulse to open YouTube or scroll Hacker News.</p>
+  → Orchestrate creates an untimed recurring Todoist task ("every day")
+  → each matching day it appears as an "Anytime today" TodaysHabitInstance
+     in the Today's Habits card (Start / Stop / Complete / Skip — no Reschedule)
+  → press ▶ when you have a gap → a live timer runs; ■ pauses it
+     (each Start→Stop is one Engagement Log entry)
+  → press ✓ when done → the recurring Todoist task's occurrence is checked off
+  → it never enters your task plan and never burns session capacity.`}</Flow>
+                        <p><strong>Good for:</strong> the "Light Coherent Track" — small coherent activities that replace the impulse to open YouTube or scroll Hacker News, but that you still want to track and keep recurring.</p>
                         <ExampleList heading="Tied to your current season">
                             <li><em>Anki / flashcard review</em> — during a "Spanish sprint" season.</li>
                             <li><em>Read one section of [current book]</em> — during a "Systems study" season.</li>
@@ -289,9 +298,9 @@ export function UserGuide() {
                             </thead>
                             <tbody>
                                 <Tr>
-                                    <Td><Code>kind: 'stabilizer'</Code></Td>
-                                    <Td><strong>Behavior</strong> — synced to Todoist as a recurring task and surfaced on the dashboard timeline at its target time each day it's due, independent of session assignment</Td>
-                                    <Td><em>"How does this habit show up each day?"</em></Td>
+                                    <Td><Code>kind</Code></Td>
+                                    <Td><strong>Scheduling</strong> — both kinds sync to Todoist and track the same way; <Code>stabilizer</Code> is timed (sits on the timeline at its target time), <Code>light-coherent</Code> is anytime (an "Anytime today" pull)</Td>
+                                    <Td><em>"Does this need a slot in the day, or do I pull it anytime?"</em></Td>
                                 </Tr>
                                 <Tr>
                                     <Td><Code>isAnchor: true</Code></Td>
@@ -333,7 +342,7 @@ export function UserGuide() {
                                 <Tr>
                                     <Td>Light-coherent</Td>
                                     <Td>No</Td>
-                                    <Td>The typical Light Pool activity.</Td>
+                                    <Td>The typical anytime habit.</Td>
                                     <Td>Flashcards, idea capture, language drills.</Td>
                                 </Tr>
                             </tbody>
@@ -342,7 +351,7 @@ export function UserGuide() {
                         <Callout tone="success">
                             <strong>The mental shortcut.</strong>{' '}
                             <Code>isAnchor</Code> answers <em>"which habits, if I dropped them, would let the day fall apart?"</em>{' '}
-                            <Code>kind</Code> answers <em>"does this need a slot in the day, or do I pull from a pool?"</em>
+                            <Code>kind</Code> answers <em>"does this need a slot in the day, or do I pull it anytime?"</em>
                         </Callout>
                     </Section>
 
@@ -394,7 +403,7 @@ export function UserGuide() {
                                     <Td>Light-coherent</Td>
                                     <Td>No</Td>
                                     <Td>Yes</Td>
-                                    <Td><strong>A season's micro-practice.</strong> In the Light Pool only while that season is active. E.g., flashcards during an "Interview prep" season.</Td>
+                                    <Td><strong>A season's micro-practice.</strong> An anytime habit only while that season is active. E.g., flashcards during an "Interview prep" season.</Td>
                                 </Tr>
                                 <Tr>
                                     <Td>Light-coherent</Td>
@@ -407,7 +416,7 @@ export function UserGuide() {
 
                         <SubHeading id="season-lifecycle">What happens when you switch seasons</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Habits scoped to the new season start appearing (in the plan or Light Pool).</li>
+                            <li>Habits scoped to the new season start appearing in Today's Habits (timed or anytime).</li>
                             <li>Habits scoped to the old season quietly disappear from today's view — but they're not deleted. Reactivating that season brings them back.</li>
                             <li>Always-on habits ride through unchanged.</li>
                             <li>Anchors stay protected regardless — even between seasons.</li>
@@ -427,7 +436,7 @@ export function UserGuide() {
                             <li><strong>Mid-session:</strong> the available time shrinks to whatever's left on the clock.</li>
                             <li><strong>Where it shows up:</strong> Step 3 timeline (per-session badge + over-capacity banner) and Dashboard current session (remaining-time indicator + banner if over).</li>
                             <li><strong>It never blocks the wizard.</strong> Even at 200% you can proceed. The goal is visibility, not prevention.</li>
-                            <li><strong>Light Pool entries are excluded</strong> — they're outside the task graph entirely.</li>
+                            <li><strong>Habits are excluded</strong> (both kinds) — they're outside the task graph entirely.</li>
                         </ul>
                         <p className="mt-3"><strong>What the status badges mean:</strong></p>
                         <ul className="list-none pl-1 space-y-1">
@@ -441,7 +450,7 @@ export function UserGuide() {
                         <p>Every hour during an active session, Orchestrate asks how you're doing. This is where the system reads your state and routes you to the right response:</p>
                         <ul className="list-disc pl-5 space-y-1.5">
                             <li><strong>Feeling great, on track?</strong> No extra surfacing. Keep going.</li>
-                            <li><strong>Struggling, low-energy, or restless?</strong> The modal surfaces 1–2 <strong>Light Pool</strong> activities and a <strong>True Rest</strong> cue. You pick: a smaller productive move, or a genuine reset.</li>
+                            <li><strong>Struggling, low-energy, or restless?</strong> The modal surfaces 1–2 <strong>anytime habits</strong> (with Start/Complete) and a <strong>True Rest</strong> cue. You pick: a smaller productive move, or a genuine reset.</li>
                             <li><strong>Feeling stuck?</strong> An extra prompt appears: <em>"What exactly are you avoiding?"</em> Your answer is saved — it feeds pattern-spotting over time.</li>
                         </ul>
                         <p>
@@ -564,9 +573,9 @@ Is X today-only?
 
                         <SubHeading>Step 1 — Intentions</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Stabilizer habits are <em>not</em> in the intention list. Instead, an inline chip says: <em>"4 habits will fire today — already on your timeline."</em></li>
+                            <li>Habits are <em>not</em> in the intention list. Instead, an inline chip says: <em>"6 habits will fire today — already in Today's Habits."</em></li>
                             <li>You add manually: <em>"Finish v6 capacity arithmetic"</em>, <em>"Read paper on session scheduling"</em>.</li>
-                            <li>Light-coherent habits don't appear here either — they live in the Light Pool.</li>
+                            <li>Light-coherent habits don't appear here either — they surface as anytime rows in the Today's Habits card.</li>
                         </ul>
 
                         <SubHeading>Step 2 — Refine</SubHeading>
@@ -591,9 +600,9 @@ Is X today-only?
                             <li>The dashboard habit lane shows 🔁 <em>Morning meditation</em> (07:00), 🔁 <em>Gym</em>, 🔁 <em>Daily planning ritual</em> (14:00), 🔁 <em>Evening shutdown</em> (22:00). The HabitInstanceCard lists them with Start/Stop/Complete/Skip/Reschedule controls.</li>
                             <li>7:02 AM — you press ▶ on Morning meditation, sit 12 minutes, press ✓. The pill turns 🎉, the recurring Todoist task is checked off.</li>
                             <li>For a main task you've started but need to pause, hit ■ on its TaskRow. Each Start→Stop is logged as its own entry in the <em>Engagement Log</em> card; pressing ▶ again starts a fresh segment. If you defer the intention to the backlog, those segments ride along as a memo.</li>
-                            <li>The Light Pool panel lists <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. Between morning and afternoon sessions, you pull <em>Algorithms warm-up</em> — Start, work for 12 minutes, Done. Logged, doesn't touch the task graph.</li>
+                            <li>The Today's Habits card also lists the anytime (light-coherent) rows: <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. Between morning and afternoon sessions, you pull <em>Algorithms warm-up</em> — Start, work for 12 minutes, ✓ Done. Tracked in the Engagement Log; doesn't touch the task graph.</li>
                             <li>Between-session True Rest banner: <em>"Walk 5 minutes — outside if possible."</em> No tracking.</li>
-                            <li>2:00 PM check-in: feeling <em>struggling</em>, work type <em>low-energy</em>. The modal shows a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>) and a couple Light Pool rows. You try the breathing, then resume your main work.</li>
+                            <li>2:00 PM check-in: feeling <em>struggling</em>, work type <em>low-energy</em>. The modal shows a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>) and a couple anytime habit rows. You try the breathing, then resume your main work.</li>
                             <li>3:00 PM check-in: feeling <em>stuck</em>. The avoidance prompt appears. You write: <em>"The paper's math section — I don't have the prerequisites yet."</em> Saved for later reflection.</li>
                             <li>6:30 PM — you realize you haven't done Gym yet. You press ⤴ Reschedule on the Gym row, pick 19:30. The instance just moves to 19:30 (keeping any engagement it had); the move shows up as a "⤴ Gym · 08:00 → 19:30 · Rescheduled" entry in the Engagement Log. The recurring Todoist task is untouched.</li>
                         </ul>
@@ -602,7 +611,7 @@ Is X today-only?
                         <ul className="list-disc pl-5 space-y-1">
                             <li>Stabilizer habit instances: 4/4 completed (their recurring Todoist tasks were checked off as you completed each).</li>
                             <li>Main tasks: 1.5/2 completed.</li>
-                            <li>Light Pool log: 2 entries (algorithms warm-up and Duolingo; flashcards and reading skipped today).</li>
+                            <li>Anytime (light-coherent) habits: 2/4 completed (algorithms warm-up and Duolingo; flashcards and reading skipped today). Each completion advanced its recurring Todoist task.</li>
                             <li>True Rest: surfaced but untracked, as intended.</li>
                         </ul>
                     </Section>
@@ -618,7 +627,7 @@ Is X today-only?
                             <tbody>
                                 <Tr><Td>A today-only big work thread</Td><Td>Main task (Deep Track)</Td></Tr>
                                 <Tr><Td>A recurring ritual that needs a slot</Td><Td>Stabilizer Habit (set <Code>targetTime</Code> + duration so it auto-lands in the right session). Add <Code>isAnchor</Code> if foundational.</Td></Tr>
-                                <Tr><Td>A small recurring practice you pull opportunistically</Td><Td>Light-coherent Habit (Light Pool)</Td></Tr>
+                                <Tr><Td>A small recurring practice you pull opportunistically</Td><Td>Light-coherent Habit (anytime — tracked + synced, no fixed time)</Td></Tr>
                                 <Tr><Td>A today-only small chore tied to an intention</Td><Td>Manual background task</Td></Tr>
                                 <Tr><Td>A non-task recovery prompt</Td><Td>Don't model. True Rest handles it.</Td></Tr>
                                 <Tr><Td>A practice tied to a specific focus period</Td><Td>Light-coherent Habit with <Code>seasonIds</Code> set</Td></Tr>
@@ -653,7 +662,7 @@ function Intro() {
             <p className="text-sm text-text leading-relaxed">
                 A guide to how Orchestrate thinks about your day — and how you can use that to
                 get more done with less friction. Covers <strong>Habits</strong>,{' '}
-                <strong>Intentions</strong>, <strong>Tasks</strong>, the <strong>Light Pool</strong>,{' '}
+                <strong>Intentions</strong>, <strong>Tasks</strong>, <strong>anytime habits</strong>,{' '}
                 <strong>True Rest</strong>, and <strong>Capacity</strong>.
             </p>
         </div>

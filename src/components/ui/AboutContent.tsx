@@ -30,10 +30,10 @@ export function AboutContent({ onOpenGuide }: AboutContentProps = {}) {
                 the <em>why</em> across days, weeks, and months.{' '}
                 <strong className="text-text">Seasons</strong> are medium-horizon focus periods — a theme, supporting
                 goals, and an optional capacity budget that shape what you take on each day.{' '}
-                <strong className="text-text">Habits</strong> come in two kinds — <em>stabilizers</em> (sleep, gym,
-                deep-work rituals) that sync to Todoist as recurring tasks and land directly in the session containing
-                their target time, and <em>light-coherent</em> habits that surface in the{' '}
-                <strong className="text-text">Light Pool</strong> as resumable micro-gap fillers.
+                <strong className="text-text">Habits</strong> all sync to Todoist as recurring tasks and are tracked the
+                same way; they come in two kinds by <em>scheduling</em> — <em>stabilizers</em> (sleep, gym, deep-work
+                rituals) that sit on the timeline at a fixed target time, and <em>light-coherent</em> habits that surface
+                as resumable <strong className="text-text">anytime</strong> rows you pull when a gap appears.
             </p>
             <p>
                 Together, they counter <strong className="text-text">task blindness and time blindness</strong>:{' '}
@@ -49,7 +49,7 @@ export function AboutContent({ onOpenGuide }: AboutContentProps = {}) {
                         Open user guide →
                     </button>
                     <p className="text-xs mt-1">
-                        Mental model + how-to for habits, intentions, Light Pool, True Rest, and capacity.
+                        Mental model + how-to for habits, intentions, anytime habits, True Rest, and capacity.
                     </p>
                 </div>
             )}

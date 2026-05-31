@@ -47,7 +47,7 @@ StrictMode                         (main.tsx)
         `-- ErrorBoundary
             `-- DayPlanProvider              <-- core app state (plan, settings, history, life)
                 `-- TodoistProvider          <-- Todoist data + API actions
-                    `-- ReconciliationProvider  <-- v6.5: central stabilizer reconcile
+                    `-- ReconciliationProvider  <-- v6.5: central habit reconcile
                         `-- AppRoutes        <-- router switch
 ```
 
@@ -63,7 +63,7 @@ Nine routes, all defined in `AppRoutes` inside `App.tsx`:
 |---|---|---|
 | `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` (hub) |
 | `/setup` | `Wizard` | Accessible when `setupComplete` is true (editing) or navigated from Welcome |
-| `/life` | `LifeView` | Always reachable. Hub: active season + all active habits (anchors sorted first) |
+| `/life` | `LifeView` | Always reachable. Hub: active season + all active habits grouped by scope (always-on, then per-season with collapsible headers) and split by kind (stabilizer / light-coherent), plus an inline compact True Rest editor |
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits; deleting an active anchor prompts a confirm |
@@ -87,16 +87,15 @@ Life routes are always reachable (no `setupComplete` gate) — `setupComplete` i
 | **Main task** | A primary work thread. Exclusive to one session. |
 | **Background task** | A small/recurring task. Can be assigned to multiple sessions. Cap: `taskCapDefaults.manualBackground` (default 30 min). |
 | **Season** | A medium-horizon focus period (4-12 weeks) with theme, goals, non-goals, success criteria, optional capacity budget. Exactly one active at a time. |
-| **Habit** | A first-class recurring entity. Discriminated by `kind` into **stabilizer** and **light-coherent**. Owns recurrence rule, minimum-viable form, trigger cue, anchor flag, season scope. |
-| **Stabilizer** | `kind: 'stabilizer'` habit. Synced to Todoist as a recurring task. Surfaces as a `TodaysHabitInstance` positioned on the timeline by `targetTime`, independent of session assignment. Has its own Start/Stop/Complete/Skip/Reschedule lifecycle. |
-| **TodaysHabitInstance** | A stabilizer's manifestation for today. Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/skipped), `segments` (engagement), `rescheduledAt`, and `rescheduleHistory`. Reschedules are always in-place (targetTime moves, segments + status preserved); the move is logged in `rescheduleHistory`. Never enters session capacity. |
-| **Light-coherent** | `kind: 'light-coherent'` habit. Micro-gap filler. Surfaces in the **Light Pool**, logged via `plan.habitLog`. Never enters the task plan. |
-| **Light Pool** | Dashboard panel + `/life` section listing today's active light-coherent habits. Start/Complete writes a `HabitLogEntry`. |
+| **Habit** | A first-class recurring entity. v6.6: both kinds sync to Todoist, produce `TodaysHabitInstance`s, and share the engagement lifecycle; `kind` discriminates **scheduling only**. Owns recurrence rule, minimum-viable form, trigger cue, anchor flag, season scope. |
+| **Stabilizer** | `kind: 'stabilizer'` habit. Scheduled ritual — **requires** a `targetTime`. Synced to Todoist as a recurring task; surfaces as a `TodaysHabitInstance` positioned on the timeline by `targetTime`, independent of session assignment. Start/Stop/Complete/Skip/**Reschedule** lifecycle. |
+| **Light-coherent** | `kind: 'light-coherent'` habit. "Anytime" filler — never has a `targetTime`. Synced to Todoist and tracked exactly like a stabilizer, but surfaces as an untimed ("Anytime today") `TodaysHabitInstance` pulled opportunistically. Start/Stop/Complete/Skip — **no reschedule**. |
+| **TodaysHabitInstance** | A habit's manifestation for today (either kind). Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/skipped), `segments` (engagement), and (stabilizers only) `rescheduledAt` + `rescheduleHistory`. Stabilizer reschedules are always in-place. Never enters session capacity. |
 | **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via `/rest-cues`. Surfaced on Dashboard `InsightCard`, in the check-in modal for low-energy states, and as a between-session banner. |
 | **Anchor habit** | `isAnchor: true` -- a load-bearing habit (sleep, meditation, gym, shutdown, review). Pure importance tag, orthogonal to `kind`: sorts first in habit lists and prompts a confirm before deleting an active one. Reserved for recovery-mode / Minimum Viable Day. |
 | **Session** | A configurable time block (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
 | **Session capacity** | Advisory arithmetic: `(session length - buffer) - total estimatedMinutes`. Status `over` at >150% -- non-blocking banner, wizard always advances. |
-| **Check-in** | Hourly prompt during active sessions: feeling + work type -> playlist suggestion. Low-resource states surface Light Pool rows + True Rest cue. `stuck` adds avoidance-note capture. |
+| **Check-in** | Hourly prompt during active sessions: feeling + work type -> playlist suggestion. Low-resource states surface a couple of anytime (light-coherent) habit rows + True Rest cue. `stuck` adds avoidance-note capture. |
 
 ---
 
@@ -128,7 +127,7 @@ The top-right fixed controls -- About, Settings, ThemeToggle -- are rendered by 
 
 A sequential flow captured in `plan.wizardStep` (1-indexed, persists across refreshes). `WizardLayout` wraps every step with a collapsible saved-sessions sidebar, header with step progress pills, and Back/Next footer. An "editing" mode supports returning from the dashboard.
 
-1. **Step 1 -- Intentions** (`Step1Intentions`). Two phases: (a) write down intentions, (b) sequentially map each to Todoist tasks via the embedded `TodoistPanel` (Link/Unlink buttons). Mapped intentions become collapsible panels showing their linked tasks. The step also fires `REFRESH_TODAYS_HABITS` to populate today's stabilizer habits as `TodaysHabitInstance` rows, showing a chip count. The `TodoistPanel` renders a non-actionable "Habit" label on rows backing a `TodaysHabitInstance`. Each intention row has archive-to-backlog and delete buttons (both unschedule linked Todoist tasks via `useIntentionRemoval`). A **season focus banner** at the top surfaces the active season's supporting goals as clickable chips that add intentions.
+1. **Step 1 -- Intentions** (`Step1Intentions`). Two phases: (a) write down intentions, (b) sequentially map each to Todoist tasks via the embedded `TodoistPanel` (Link/Unlink buttons). Mapped intentions become collapsible panels showing their linked tasks. The step also fires `REFRESH_TODAYS_HABITS` to populate today's habits (both kinds) as `TodaysHabitInstance` rows, showing a chip count. The `TodoistPanel` renders a non-actionable "Habit" label on rows backing a `TodaysHabitInstance`. Each intention row has archive-to-backlog and delete buttons (both unschedule linked Todoist tasks via `useIntentionRemoval`). A **season focus banner** at the top surfaces the active season's supporting goals as clickable chips that add intentions.
 
 2. **Step 2 -- Refine** (`Step2Refine`). Per-intention sequential flow: categorize each linked task as **main** or **background**, set an **estimate** (preset pills or custom). Background tasks clamp to `taskCapDefaults.manualBackground`. Tasks > 60 min trigger a nudge to break down via the TodoistPanel.
 
@@ -154,17 +153,16 @@ The operational view for the rest of the day (`Dashboard.tsx`):
 **Two-column lower region** (stacks on small screens):
 - **Left column:**
   6. **Current Session** -- active session's tasks: drag-to-reorder, completion checkboxes (with confetti), engagement Start/Stop buttons + live m:s timer on engaged rows, nudge banners for background tasks. `SessionCapacityBadge` + `SessionCapacityBanner` when over-capacity.
-  7. **Light Pool** -- collapsible `LightPoolPanel`: today's light-coherent habits with Start/Complete.
-  8. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
-  9. **Calendar** -- collapsible Google Calendar embed.
+  7. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
+  8. **Calendar** -- collapsible Google Calendar embed.
 - **Right rail** (`HabitInstanceCard.tsx` exports both): two independent, self-headed cards, each hidden when empty:
-  - **Today's Habits** (`HabitInstanceCard`) -- today's stabilizer instances with per-row Start/Stop/Complete/Skip/Reschedule. Engaged rows show a live **m:s timer** (`<EngagementTimer>`, ticks once/sec, counts the current open segment from 0:00).
+  - **Today's Habits** (`HabitInstanceCard`) -- today's habit instances (both kinds): timed stabilizers + untimed "Anytime" light-coherent, with per-row Start/Stop/Complete/Skip (Reschedule is stabilizer-only). Engaged rows show a live **m:s timer** (`<EngagementTimer>`, ticks once/sec, counts the current open segment from 0:00).
   - **Engagement Log** (`EngagementLogCard`) -- a scrollable, time-ordered record: one row per engagement segment (individual Start→Stop, across habits + tasks) plus reschedule events; see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).
 
 **Season context card**: active season name (links to `/season/:id`), theme, date range with "Week N of M" pill, first 3 goals with expand, "Manage" button. Empty-state prompts "Create a season".
 
 Throughout the day:
-- **Hourly check-in** modal fires on each whole hour during an active session. Captures feeling + work type -> playlist suggestion. `stuck` adds avoidance-note capture. Low-resource states reveal Light Pool rows + True Rest cue.
+- **Hourly check-in** modal fires on each whole hour during an active session. Captures feeling + work type -> playlist suggestion. `stuck` adds avoidance-note capture. Low-resource states reveal a couple of anytime (light-coherent) habit rows + True Rest cue.
 - **`useCurrentSession`** polls every 60s to determine the active session.
 
 ---
@@ -195,11 +193,11 @@ Manages:
 - Deleting a season clears its id from any habit's `seasonIds`.
 - Anchor habits have no reducer-level deletion guard (`isAnchor` is a UI-only confirm prompt; `DELETE_HABIT` always removes once dispatched).
 - Deleting a habit also drops any `TodaysHabitInstance` rows for it from `plan.todaysHabits`.
-- `REFRESH_TODAYS_HABITS` is idempotent -- skips habits already represented. Payload precomputed by `lib/habitsTodoistSync.ts -> computeTodaysHabitInstances(...)`. Only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify.
+- `REFRESH_TODAYS_HABITS` is idempotent -- skips habits already represented. Payload precomputed by `lib/habitsTodoistSync.ts -> computeTodaysHabitInstances(...)`. Active habits of **either kind** with a `todoistTaskId` whose Todoist task is due today + unchecked qualify (stabilizers timed, light-coherent untimed).
 - Habit instance lifecycle: `START_HABIT_INSTANCE` pushes a new open `EngagementSegment`; `STOP_HABIT_INSTANCE` closes it (→ `planned`); `COMPLETE_HABIT_INSTANCE` closes + sets status, caller closes the Todoist occurrence; `SKIP_HABIT_INSTANCE` keeps the instance (prevents re-add); `RESCHEDULE_HABIT_INSTANCE` is always in-place (moves `targetTime`, stamps `rescheduledAt`, appends to `rescheduleHistory`; segments/status preserved). **No Todoist write** for start/stop/reschedule. `REFRESH_TODAYS_HABITS` merges habit-form edits into existing planned instances (refreshes `targetTime`/`durationMinutes`/`titleSnapshot`), but preserves the user-chosen time when `rescheduledAt` is set.
 - `TOGGLE_TASK_COMPLETE` also sets `status` and closes any open engagement segment. `START_TASK_ENGAGEMENT` pushes a new open `EngagementSegment`; `STOP_TASK_ENGAGEMENT` closes it (→ `pending`). Each Start→Stop is an individual segment (durations derived, not accumulated).
 - Closed Engagement Log rows are individually deletable: `DELETE_TASK_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_ENGAGEMENT_SEGMENT` drop one segment (reverting status to `pending`/`planned` if it was the last open one), and `DELETE_HABIT_RESCHEDULE_ENTRY` drops one `rescheduleHistory` entry.
-- Light-coherent habits surface only via the Light Pool (`plan.habitLog`), never touching intentions/linkedTasks/taskSessions/todaysHabits.
+- Habits (either kind) live on `plan.todaysHabits`, never touching intentions/linkedTasks/taskSessions. Light-coherent instances are simply the untimed ones.
 - `MOVE_INTENTION_TO_BACKLOG` scrubs plan-side state and appends a `BacklogEntry` (splits pending vs completed tasks; captures engagement records). `RESTORE_FROM_BACKLOG` is idempotent; stamps reschedule fields on previously-engaged tasks.
 - All intention-removal paths route through `useIntentionRemoval()` which unschedules Todoist tasks before dispatching. Auto-rollover is the deliberate exception (tasks stay overdue in Todoist).
 
@@ -221,7 +219,7 @@ Split into two contexts for render optimization:
 4. **Loading UX**: `loading` only activates when there's no cached data (no flash-of-loading).
 5. **Reconciliation** (one-time after first fetch): title snapshot sync + stale task cleanup (marks externally-completed tasks as complete, not unlinked -- preserves session tracking).
 6. **401 detection**: `apiFetch` throws on HTTP 401; provider routes to `authFailed` flag + "reconnect in Settings" message. Resets when token changes.
-7. **Error logging discipline** (v6.4): every Todoist API failure is `console.error`-ed via the central `handleApiError` funnel *in addition to* the UI error state, so debugging is visible without inspecting React state. Habit lifecycle callers (`HabitInstanceCard`, `reconcileOverdueStabilizers`) also `console.error` their per-call failures with a `[habits]` prefix.
+7. **Error logging discipline** (v6.4): every Todoist API failure is `console.error`-ed via the central `handleApiError` funnel *in addition to* the UI error state, so debugging is visible without inspecting React state. Habit lifecycle callers (`HabitInstanceCard`, `reconcileOverdueHabits`) also `console.error` their per-call failures with a `[habits]` prefix.
 
 **Consumer hooks** (`src/hooks/useTodoist.ts`):
 - `useTodoistData()` -- read-only consumers.
@@ -280,15 +278,15 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 ### Check-in System
 
-`useHourlyCheckin` fires on each whole hour during an active session. `CheckInModal` captures feeling (great/okay/struggling/stuck) + work type -> playlist suggestion. `stuck` triggers an avoidance-note capture. Low-resource states reveal Light Pool rows + True Rest cue.
+`useHourlyCheckin` fires on each whole hour during an active session. `CheckInModal` captures feeling (great/okay/struggling/stuck) + work type -> playlist suggestion. `stuck` triggers an avoidance-note capture. Low-resource states reveal a couple of anytime (light-coherent) habit rows + True Rest cue.
 
-### Light Pool
+### Light-coherent ("anytime") habits
 
-`getLightPoolHabits(life, dateISO)` filters to active light-coherent habits matching today's recurrence and season scope. `LightPoolPanel` (Dashboard) renders Start/Done/Delete. `LightPoolSection` (`/life`) adds weekly cadence count. Entries live on `plan.habitLog`, wiped daily.
+v6.6 retired the standalone Light Pool. Light-coherent habits are now ordinary habit instances that happen to be untimed — synced to Todoist, surfaced in **Today's Habits** as "Anytime today" rows with the full Start/Stop/Complete/Skip lifecycle (no reschedule), and recorded in the **Engagement Log** like everything else. `computeTodaysHabitInstances` emits them with `targetTime: undefined`.
 
 ### True Rest
 
-8 built-in cues across physical/breath/sensory categories. User-customizable via `/rest-cues` (auto-seeds from defaults on first edit). `InsightCard` cycles between Transition Tips and a cue every 2 min. `TrueRestCard` variants: `inline` (check-in modal) and `banner` (between-session). Not a Habit -- no logging, no streak, no completion.
+8 built-in cues across physical/breath/sensory categories. Editing lives in the shared `RestCuesEditor` (auto-seeds from defaults on first edit) — full-page on `/rest-cues` via `RestCuesManager`, and embedded `compact` in the `/life` True Rest card. `InsightCard` cycles between Transition Tips and a cue every 2 min. `TrueRestCard` variants: `inline` (check-in modal) and `banner` (between-session). Not a Habit -- no logging, no streak, no completion.
 
 ### Session Capacity
 
@@ -298,21 +296,21 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 **File:** `src/lib/habitsTodoistSync.ts`
 
-**Sync layer** (on habit save): `buildDueString(habit)` -> `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates/updates/moves the recurring Todoist task. Self-heals stale project references and recreates deleted tasks. Sync failures are non-blocking.
+**Sync layer** (on habit save, v6.6 — both kinds): `buildDueString(habit)` -> `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates/updates/moves the recurring Todoist task (timed for stabilizers, untimed for light-coherent). Self-heals stale project references and recreates deleted tasks. Sync failures are non-blocking.
 
-**Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible stabilizers and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope and `windowBehavior === 'strict'`. No session auto-assignment -- `targetTime` drives timeline positioning only.
+**Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` filters to eligible habits (either kind) and returns `TodaysHabitInstance[]` for `REFRESH_TODAYS_HABITS`. Honors season scope; stabilizers get `targetTime` + the `windowBehavior === 'strict'` gate, light-coherent are untimed. No session auto-assignment -- `targetTime` drives timeline positioning only.
 
-**Central reconciliation** (v6.5, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueStabilizers(...)` and `findNeedsSyncStabilizers(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for habits without a live link) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `tasksHydrated` — so a legitimately empty task list still triggers needs-sync) and on window focus (gated by 5-min staleness); `useStabilizerReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
+**Central reconciliation** (v6.5, v6.6 both kinds, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueHabits(...)` and `findNeedsSyncHabits(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for habits without a live link — this is what auto-syncs pre-v6.6 light-coherent habits) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `tasksHydrated` — so a legitimately empty task list still triggers needs-sync) and on window focus (gated by 5-min staleness); `useHabitReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
 
   - **Step 1** no longer fires reconcile directly — the provider handles it.
   - **HabitsLibrary** "Migrate / Re-sync" button now delegates to `triggerReconcile()`.
   - **`HabitSyncChip`** mounted in the shared `HeaderControls` surfaces needs-sync count, error state, and in-flight pulse across the whole app; click navigates to `/habits`.
 
-**Overdue bump details** (v6.4): `reconcileOverdueStabilizers(...)` bumps each overdue stabilizer's Todoist task via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+**Overdue bump details** (v6.4): `reconcileOverdueHabits(...)` bumps each overdue habit's Todoist task via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
 
-**Reschedule semantics** (v6.4): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the `'unfinished'` status it produced is gone, and `migratePlan` coerces any persisted `'unfinished'` to `'skipped'`.)
+**Reschedule semantics** (v6.4; stabilizer-only since v6.6): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the `'unfinished'` status it produced is gone, and `migratePlan` coerces any persisted `'unfinished'` to `'skipped'`.)
 
-**Habits Library** (`/habits`): shows a "needs sync" banner for stabilizers that are either unsynced or whose Todoist task is missing. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races.
+**Habits Library** (`/habits`): shows a "needs sync" banner for habits (either kind) that are either unsynced or whose Todoist task is missing, plus a `NEEDS TIME` badge on active stabilizers lacking a `targetTime` (v6.6 — the form now requires one, but legacy habits may predate it). Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races.
 
 ### Intentions Backlog
 
@@ -330,13 +328,13 @@ Visual timeline rendering sessions as proportionally-positioned blocks with assi
 
 Three interlocking ideas:
 
-**Intentions own LinkedTasks.** An intention has `linkedTaskIds` (ordered Todoist IDs). Every `LinkedTask` has an `intentionId` back-reference. Stabilizer habits do not live here.
+**Intentions own LinkedTasks.** An intention has `linkedTaskIds` (ordered Todoist IDs). Every `LinkedTask` has an `intentionId` back-reference. Habits do not live here.
 
-**Stabilizers live separately on `DayPlan.todaysHabits`.** `TodaysHabitInstance` is the day-of carrier. Positioned on the timeline by `targetTime`; untimed instances cluster as "Anytime today". Independent of session assignment and excluded from capacity arithmetic.
+**Habits live separately on `DayPlan.todaysHabits`.** `TodaysHabitInstance` is the day-of carrier for both kinds. Timed (stabilizer) instances sit on the timeline by `targetTime`; untimed (light-coherent) instances cluster as "Anytime today". Independent of session assignment and excluded from capacity arithmetic.
 
 **Tasks (not intentions) are scheduled.** `DayPlan.taskSessions: Record<sessionId, todoistId[]>` is the source of truth. `LinkedTask.assignedSessions` is a derived mirror. Habits never participate.
 
-**LifeContext sits above the day.** Persistent state (`life: LifeContext`, persisted to `orchestrate-life-context`) holds `seasons[]`, `habits[]`, `activeSeasonId`, `backlog[]`, and `restCues`. Stabilizer habits carry `todoistTaskId`, `targetTime`, `targetDurationMinutes`, and `windowBehavior`. The `REFRESH_TODAYS_HABITS` action (fired on Step 1 mount) consumes `computeTodaysHabitInstances(...)` to populate `plan.todaysHabits`.
+**LifeContext sits above the day.** Persistent state (`life: LifeContext`, persisted to `orchestrate-life-context`) holds `seasons[]`, `habits[]`, `activeSeasonId`, `backlog[]`, and `restCues`. Habits carry `todoistTaskId` + `targetDurationMinutes`; stabilizers additionally carry `targetTime` + `windowBehavior` (light-coherent have neither). The `REFRESH_TODAYS_HABITS` action (fired on Step 1 mount) consumes `computeTodaysHabitInstances(...)` to populate `plan.todaysHabits`.
 
 The plan auto-resets daily. Stale task handling: completed tasks stay visible via `titleSnapshot`; deleted tasks auto-unlink; externally-completed tasks are detected and marked complete (not unlinked).
 
@@ -389,8 +387,8 @@ All via `localStorage`. No backend — this is the current implementation, not a
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
 | `useConfirmModal` | `hooks/useConfirmModal.ts` | Reusable confirm-dialog state |
-| `useStabilizerReconciliation` | `hooks/useStabilizerReconciliation.ts` | v6.5: read central reconcile status (counts, error, in-flight) + manual trigger |
-| `useSyncStabilizer` | `hooks/useSyncStabilizer.ts` | Per-habit stabilizer→Todoist sync + habit-patch write-back. Shared by HabitsLibrary save flow and `ReconciliationProvider`. |
+| `useHabitReconciliation` | `hooks/useHabitReconciliation.ts` | v6.5: read central reconcile status (counts, error, in-flight) + manual trigger |
+| `useSyncHabit` | `hooks/useSyncHabit.ts` | Per-habit (either kind) →Todoist sync + habit-patch write-back. Shared by HabitsLibrary save flow and `ReconciliationProvider`. |
 | `useHabitReschedule` | `hooks/useHabitReschedule.ts` | Shared inline-reschedule state for `TodaysHabitInstance` rows (HabitInstanceCard + Step3HabitsPanel); pairs with `HabitTimeEditor`. |
 
 ---
@@ -409,7 +407,7 @@ src/
 +-- context/
 |   +-- DayPlanContext.tsx          # Core reducer, migration, persistence
 |   +-- TodoistContext.tsx          # Todoist API layer, cache, reconciliation
-|   `-- ReconciliationContext.tsx   # v6.5: central stabilizer reconcile (overdue + needs-sync)
+|   `-- ReconciliationContext.tsx   # v6.5: central habit reconcile (overdue + needs-sync)
 |
 +-- hooks/
 |   +-- useCurrentSession.ts
@@ -425,8 +423,8 @@ src/
 +-- lib/
 |   +-- crypto.ts               # AES-256-GCM encryption/decryption
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)
-|   +-- habits.ts               # habitMatchesDate, getLightPoolHabits, getActiveHabits, getAnchorHabits
-|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findOverdueStabilizers, reconcileOverdueStabilizers, findNeedsSyncStabilizers
+|   +-- habits.ts               # habitMatchesDate, compareHabitInstancesByTime, getActiveHabits, getAnchorHabits
+|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findOverdueHabits, reconcileOverdueHabits, findNeedsSyncHabits
 |   +-- backlog.ts              # hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry
 |   +-- intentionUnschedule.ts  # unscheduleIntentionTasks pure helper
 |   +-- seasons.ts              # findActiveSeason, getSeasonProgress
@@ -449,7 +447,7 @@ src/
     +-- dashboard/
     |   +-- Dashboard.tsx, SessionTimeline.tsx, MusicPanel.tsx, DigitalClock.tsx
     |   +-- InsightCard.tsx, HistorySidebar.tsx, BacklogTab.tsx
-    |   +-- LightPoolPanel.tsx, HabitInstanceCard.tsx, TrueRestCard.tsx
+    |   +-- HabitInstanceCard.tsx, TrueRestCard.tsx
     |   +-- SessionCapacityBadge.tsx, SessionCapacityBanner.tsx
     +-- checkin/
     |   `-- CheckInModal.tsx
@@ -461,7 +459,7 @@ src/
     |   `-- UserGuide.tsx       # Single source for user guide content
     +-- life/
     |   +-- LifeShell.tsx, LifeView.tsx, SeasonsManager.tsx, SeasonDetail.tsx, SeasonForm.tsx
-    |   +-- HabitsLibrary.tsx, HabitForm.tsx, LightPoolSection.tsx, RestCuesManager.tsx
+    |   +-- HabitsLibrary.tsx, HabitForm.tsx, RestCuesManager.tsx, RestCuesEditor.tsx
     |   `-- ActiveSeasonBadge.tsx
     `-- ui/
         +-- Button.tsx, Card.tsx, Modal.tsx, ConfirmModal.tsx, ProgressBar.tsx

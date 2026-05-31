@@ -15,12 +15,13 @@ import type { TodaysHabitInstance } from '../../types';
 const SECTION_HEADING = 'text-sm font-semibold text-text-light uppercase tracking-wider';
 
 /**
- * v6.3: dashboard card surfacing today's stabilizer habit instances. Replaces the old
- * orphan-habit-task rendering inside session cards. Habits live independent of sessions —
- * each row has its own Start/Stop/Complete/Skip/Reschedule controls.
+ * v6.3: dashboard card surfacing today's habit instances (v6.6: both kinds — scheduled
+ * stabilizers and anytime light-coherent). Replaces the old orphan-habit-task rendering
+ * inside session cards. Habits live independent of sessions — each row has its own
+ * Start/Stop/Complete/Skip controls; Reschedule is stabilizer-only (light-coherent are anytime).
  *
- *  - planned    → [▶ Start] [✓ Complete] [⤴ Reschedule] [✕ Skip]
- *  - engaged    → [■ Stop]  [✓ Complete] [⤴ Reschedule] [✕ Skip]  + live m:s segment timer
+ *  - planned    → [▶ Start] [✓ Complete] [⤴ Reschedule*] [✕ Skip]   (*stabilizers only)
+ *  - engaged    → [■ Stop]  [✓ Complete] [⤴ Reschedule*] [✕ Skip]  + live m:s segment timer
  *  - completed / skipped → muted row (controls hidden)
  *
  * v6.4: the engagement log lives in its own sibling card ({@link EngagementLogCard}) on the
@@ -72,115 +73,144 @@ export function HabitInstanceCard() {
         });
     };
 
+    const renderRow = (i: TodaysHabitInstance) => {
+        const habit = habitById.get(i.habitId);
+        const isStabilizer = (habit?.kind ?? (i.targetTime ? 'stabilizer' : 'light-coherent')) === 'stabilizer';
+        const isEngaged = i.status === 'engaged';
+        const isCompleted = i.status === 'completed';
+        const isSkipped = i.status === 'skipped';
+        const isTerminal = isCompleted || isSkipped;
+        const isRescheduling = reschedule.reschedulingId === i.id;
+        const liveSegment = isEngaged ? openSegment(i.segments) : undefined;
+        // Kind-specific leading glyph: 🔁 scheduled stabilizer, ✦ anytime light-coherent.
+        const icon = isCompleted ? '🎉' : isStabilizer ? '🔁' : '✦';
+        return (
+            <li
+                key={i.id}
+                className={`px-1.5 py-1 rounded transition-colors ${
+                    isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
+                    : isTerminal ? 'opacity-60'
+                    : ''
+                }`}
+            >
+                {/* Line 1: icon, title, pills, live timer */}
+                <div className="flex items-center gap-1.5">
+                    <span className="text-xs flex-shrink-0" aria-hidden>{icon}</span>
+                    <span className={`flex-1 min-w-0 text-xs truncate ${isCompleted ? 'line-through text-text-light' : ''}`} title={i.titleSnapshot}>
+                        {i.titleSnapshot}
+                        {!isTerminal && habit?.minimumViable && (
+                            <span className="ml-1.5 text-[10px] text-text-light/70">· {habit.minimumViable}</span>
+                        )}
+                    </span>
+                    {isStabilizer && i.targetTime ? (
+                        <span className="text-[10px] px-1 py-px rounded-full bg-accent/10 text-accent tabular-nums flex-shrink-0">
+                            {i.targetTime}
+                        </span>
+                    ) : (
+                        <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light flex-shrink-0">
+                            Anytime
+                        </span>
+                    )}
+                    <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
+                        {i.durationMinutes}m
+                    </span>
+                    {liveSegment && (
+                        <span className="text-[10px] px-1 py-px rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0 inline-flex items-center gap-1">
+                            <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" aria-hidden />
+                            <EngagementTimer segment={liveSegment} />
+                        </span>
+                    )}
+                    {isSkipped && (
+                        <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light/70 capitalize flex-shrink-0">
+                            skipped
+                        </span>
+                    )}
+                </div>
+
+                {/* Line 2: actions */}
+                {!isTerminal && (
+                    <div className="flex items-center gap-0.5 mt-1 pl-5">
+                        {isRescheduling ? (
+                            <HabitTimeEditor
+                                value={reschedule.time}
+                                onChange={reschedule.setTime}
+                                onSave={() => reschedule.save(i)}
+                                onCancel={reschedule.cancel}
+                            />
+                        ) : (
+                            <>
+                                <button
+                                    onClick={() => handleStartStop(i)}
+                                    className={`w-5 h-5 flex items-center justify-center rounded text-[10px] cursor-pointer transition-colors ${isEngaged ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300' : 'text-text-light hover:bg-surface-dark hover:text-accent'}`}
+                                    title={isEngaged ? 'Stop' : 'Start'}
+                                    aria-label={isEngaged ? 'Stop engagement timer' : 'Start engagement timer'}
+                                >
+                                    {isEngaged ? '■' : '▶'}
+                                </button>
+                                <button
+                                    onClick={() => handleComplete(i)}
+                                    className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-success transition-colors cursor-pointer"
+                                    title="Mark complete"
+                                    aria-label="Complete habit"
+                                >
+                                    ✓
+                                </button>
+                                {/* v6.6: reschedule is stabilizer-only — light-coherent habits are anytime. */}
+                                {isStabilizer && (
+                                    <button
+                                        onClick={() => reschedule.open(i)}
+                                        className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
+                                        title="Reschedule"
+                                        aria-label="Reschedule"
+                                    >
+                                        ⤴
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => handleSkip(i)}
+                                    className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors cursor-pointer"
+                                    title="Skip for today"
+                                    aria-label="Skip"
+                                >
+                                    ✕
+                                </button>
+                            </>
+                        )}
+                    </div>
+                )}
+            </li>
+        );
+    };
+
+    // v6.6: split scheduled (stabilizer) from anytime (light-coherent) so the two kinds read
+    // distinctly. Sub-headers only appear when both are present — single-kind days stay flat.
+    const isStabilizerInstance = (i: TodaysHabitInstance) =>
+        (habitById.get(i.habitId)?.kind ?? (i.targetTime ? 'stabilizer' : 'light-coherent')) === 'stabilizer';
+    const scheduled = instances.filter(isStabilizerInstance);
+    const anytime = instances.filter((i) => !isStabilizerInstance(i));
+    const showGroups = scheduled.length > 0 && anytime.length > 0;
+
+    const GROUP_HEADING = 'text-[10px] uppercase tracking-wider text-text-light/70 px-1.5 mb-0.5';
+
     return (
         <section className="space-y-2">
             <h3 className={SECTION_HEADING}>Today&apos;s Habits</h3>
             <Card className="py-2 px-2">
                 <div className="max-h-[24rem] overflow-y-auto scrollbar-subtle -mr-1 pr-1">
-                    <ul className="space-y-0.5">
-                        {instances.map((i) => {
-                            const habit = habitById.get(i.habitId);
-                            const isEngaged = i.status === 'engaged';
-                            const isCompleted = i.status === 'completed';
-                            const isSkipped = i.status === 'skipped';
-                            const isTerminal = isCompleted || isSkipped;
-                            const isRescheduling = reschedule.reschedulingId === i.id;
-                            const liveSegment = isEngaged ? openSegment(i.segments) : undefined;
-                            return (
-                                <li
-                                    key={i.id}
-                                    className={`px-1.5 py-1 rounded transition-colors ${
-                                        isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
-                                        : isTerminal ? 'opacity-60'
-                                        : ''
-                                    }`}
-                                >
-                                    {/* Line 1: icon, title, pills, live timer */}
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="text-xs flex-shrink-0" aria-hidden>{isCompleted ? '🎉' : '🔁'}</span>
-                                        <span className={`flex-1 min-w-0 text-xs truncate ${isCompleted ? 'line-through text-text-light' : ''}`} title={i.titleSnapshot}>
-                                            {i.titleSnapshot}
-                                            {!isTerminal && habit?.minimumViable && (
-                                                <span className="ml-1.5 text-[10px] text-text-light/70">· {habit.minimumViable}</span>
-                                            )}
-                                        </span>
-                                        {i.targetTime ? (
-                                            <span className="text-[10px] px-1 py-px rounded-full bg-accent/10 text-accent tabular-nums flex-shrink-0">
-                                                {i.targetTime}
-                                            </span>
-                                        ) : (
-                                            <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light flex-shrink-0">
-                                                Anytime
-                                            </span>
-                                        )}
-                                        <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
-                                            {i.durationMinutes}m
-                                        </span>
-                                        {liveSegment && (
-                                            <span className="text-[10px] px-1 py-px rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0 inline-flex items-center gap-1">
-                                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" aria-hidden />
-                                                <EngagementTimer segment={liveSegment} />
-                                            </span>
-                                        )}
-                                        {isSkipped && (
-                                            <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light/70 capitalize flex-shrink-0">
-                                                skipped
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {/* Line 2: actions */}
-                                    {!isTerminal && (
-                                        <div className="flex items-center gap-0.5 mt-1 pl-5">
-                                            {isRescheduling ? (
-                                                <HabitTimeEditor
-                                                    value={reschedule.time}
-                                                    onChange={reschedule.setTime}
-                                                    onSave={() => reschedule.save(i)}
-                                                    onCancel={reschedule.cancel}
-                                                />
-                                            ) : (
-                                                <>
-                                                    <button
-                                                        onClick={() => handleStartStop(i)}
-                                                        className={`w-5 h-5 flex items-center justify-center rounded text-[10px] cursor-pointer transition-colors ${isEngaged ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300' : 'text-text-light hover:bg-surface-dark hover:text-accent'}`}
-                                                        title={isEngaged ? 'Stop' : 'Start'}
-                                                        aria-label={isEngaged ? 'Stop engagement timer' : 'Start engagement timer'}
-                                                    >
-                                                        {isEngaged ? '■' : '▶'}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleComplete(i)}
-                                                        className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-success transition-colors cursor-pointer"
-                                                        title="Mark complete"
-                                                        aria-label="Complete habit"
-                                                    >
-                                                        ✓
-                                                    </button>
-                                                    <button
-                                                        onClick={() => reschedule.open(i)}
-                                                        className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
-                                                        title="Reschedule"
-                                                        aria-label="Reschedule"
-                                                    >
-                                                        ⤴
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleSkip(i)}
-                                                        className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors cursor-pointer"
-                                                        title="Skip for today"
-                                                        aria-label="Skip"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-                                </li>
-                            );
-                        })}
-                    </ul>
+                    {showGroups ? (
+                        <div className="space-y-2">
+                            <div>
+                                <p className={GROUP_HEADING}>Scheduled</p>
+                                <ul className="space-y-0.5">{scheduled.map(renderRow)}</ul>
+                            </div>
+                            <div>
+                                <p className={GROUP_HEADING}>Anytime</p>
+                                <ul className="space-y-0.5">{anytime.map(renderRow)}</ul>
+                            </div>
+                        </div>
+                    ) : (
+                        <ul className="space-y-0.5">{instances.map(renderRow)}</ul>
+                    )}
                 </div>
             </Card>
         </section>

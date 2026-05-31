@@ -14,7 +14,6 @@ import type {
     LifeContext,
     Season,
     Habit,
-    HabitLogEntry,
     RestCue,
     BacklogEntry,
     TodaysHabitInstance,
@@ -52,7 +51,6 @@ function freshPlan(): DayPlan {
         wizardStep: 1,
         setupComplete: false,
         checkIns: [],
-        habitLog: [],
     };
 }
 
@@ -230,8 +228,7 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
             setupComplete: (raw.setupComplete as boolean) ?? false,
             checkIns: (raw.checkIns ?? []) as CheckIn[],
-            // v5 → v6: initialize habitLog if missing.
-            habitLog: ((raw.habitLog as HabitLogEntry[] | undefined) ?? []),
+            // v6.6: `habitLog` (Light Pool) removed — daily-ephemeral, simply not carried forward.
         };
     }
 
@@ -248,7 +245,6 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
         checkIns: (raw.checkIns ?? []) as CheckIn[],
-        habitLog: [],
     };
 }
 
@@ -309,16 +305,21 @@ function migrateHabit(h: Habit): Habit {
     const { autoLinkTodoistId, maxBlockMinutes, ...rest } = h;
     const kind = rest.kind ?? 'stabilizer';
     const migrated: Habit = { ...rest, kind };
+    if (autoLinkTodoistId && !rest.todoistTaskId) {
+        // v6.6: both kinds sync to Todoist, so migrate the legacy id regardless of kind.
+        migrated.todoistTaskId = autoLinkTodoistId;
+    }
+    if (maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
+        migrated.targetDurationMinutes = maxBlockMinutes;
+    }
     if (kind === 'stabilizer') {
-        if (autoLinkTodoistId && !rest.todoistTaskId) {
-            migrated.todoistTaskId = autoLinkTodoistId;
-        }
-        if (maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
-            migrated.targetDurationMinutes = maxBlockMinutes;
-        }
         if (!rest.windowBehavior) {
             migrated.windowBehavior = 'lenient';
         }
+    } else {
+        // v6.6: light-coherent habits are "anytime" — never carry schedule fields.
+        delete migrated.targetTime;
+        delete migrated.windowBehavior;
     }
     return migrated;
 }
@@ -497,10 +498,6 @@ type Action =
     | { type: 'DELETE_HABIT'; habitId: string }
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
     | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
-    // ---- v6: Light Pool log actions ----
-    | { type: 'LOG_HABIT_START'; habitId: string; sessionId?: string }
-    | { type: 'LOG_HABIT_COMPLETE'; entryId: string; durationMinutes?: number }
-    | { type: 'DELETE_HABIT_LOG_ENTRY'; entryId: string }
     // ---- True Rest cue customization ----
     | { type: 'ADD_REST_CUE'; cue: Omit<RestCue, 'id'> }
     | { type: 'UPDATE_REST_CUE'; cue: RestCue }
@@ -1068,41 +1065,6 @@ function reducer(state: State, action: Action): State {
                 return { ...i, rescheduleHistory };
             });
             return { ...state, plan: { ...plan, todaysHabits } };
-        }
-
-        // ---- v6: Light Pool log actions ----
-
-        case 'LOG_HABIT_START': {
-            const entry: HabitLogEntry = {
-                id: crypto.randomUUID(),
-                habitId: action.habitId,
-                startedAt: new Date().toISOString(),
-                ...(action.sessionId ? { sessionId: action.sessionId } : {}),
-            };
-            return { ...state, plan: { ...plan, habitLog: [...plan.habitLog, entry] } };
-        }
-
-        case 'LOG_HABIT_COMPLETE': {
-            const nowISO = new Date().toISOString();
-            const habitLog = plan.habitLog.map((e) => {
-                if (e.id !== action.entryId) return e;
-                // If durationMinutes wasn't supplied, derive from start → now.
-                const derivedMinutes = action.durationMinutes
-                    ?? Math.max(0, Math.round((Date.parse(nowISO) - Date.parse(e.startedAt)) / 60000));
-                return {
-                    ...e,
-                    completedAt: nowISO,
-                    durationMinutes: derivedMinutes,
-                };
-            });
-            return { ...state, plan: { ...plan, habitLog } };
-        }
-
-        case 'DELETE_HABIT_LOG_ENTRY': {
-            return {
-                ...state,
-                plan: { ...plan, habitLog: plan.habitLog.filter((e) => e.id !== action.entryId) },
-            };
         }
 
         case 'ADD_REST_CUE': {

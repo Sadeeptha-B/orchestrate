@@ -119,16 +119,6 @@ export interface TodaysHabitInstance {
     rescheduleHistory?: RescheduleEventEntry[]; // v6.4: every reschedule, surfaced in the engagement log.
 }
 
-/** v6: a logged "pull" from the Light Pool. Never becomes an intention or LinkedTask. */
-export interface HabitLogEntry {
-    id: string;
-    habitId: string;
-    startedAt: string;            // ISO
-    completedAt?: string;         // ISO; absent while in-progress
-    durationMinutes?: number;     // derived or user-entered on complete
-    sessionId?: string;           // active session when started, if any
-}
-
 export interface DayPlan {
     date: string; // ISO date string (YYYY-MM-DD)
     intentions: Intention[];
@@ -138,7 +128,6 @@ export interface DayPlan {
     wizardStep: number; // 1–4
     setupComplete: boolean;
     checkIns: CheckIn[];
-    habitLog: HabitLogEntry[];                            // v6: Light Pool log entries for today
 }
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';
@@ -157,10 +146,10 @@ export interface GoogleCalendarEntry {
     color?: string; // hex color for the embed, e.g. "#009688"
 }
 
-/** v6: per-kind defaults for the per-task duration cap. Stabilizer habit-tasks override via Habit.targetDurationMinutes (v6.1). */
+/** v6: per-kind defaults for habit-instance duration. Habits override via Habit.targetDurationMinutes (v6.1). */
 export interface TaskCapDefaults {
-    stabilizer: number;       // applied to stabilizer-habit-derived tasks
-    lightCoherent: number;    // applied to light-coherent-habit-derived tasks
+    stabilizer: number;       // default duration for scheduled (stabilizer) habit instances
+    lightCoherent: number;    // v6.6: default duration for anytime (light-coherent) habit instances
     manualBackground: number; // applied to manually-categorized 'background' tasks
 }
 
@@ -210,10 +199,11 @@ export interface HabitRecurrence {
 export type HabitCompletionRule = 'binary' | 'count' | 'duration';
 
 /**
- * Discriminator splitting durable recurring entities into:
- *  - 'stabilizer'      → anchor-style rituals (sleep, meditation, gym).
- *                        v6.1: synced as a recurring Todoist task; surfaces directly as a session-assigned background LinkedTask (no intention).
- *  - 'light-coherent'  → small resumable micro-gap fillers; never become tasks; surfaced via the Light Pool and logged-only.
+ * Discriminator splitting durable recurring entities by *scheduling* only. As of v6.6 both
+ * kinds sync to Todoist as recurring tasks, produce `TodaysHabitInstance`s, and share the
+ * full Start/Stop/Complete/Skip engagement lifecycle. The single difference:
+ *  - 'stabilizer'      → scheduled ritual; requires a `targetTime`; placed on the timeline at that time.
+ *  - 'light-coherent'  → "anytime" habit; never has a `targetTime`; pulled opportunistically. No reschedule.
  */
 export type HabitKind = 'stabilizer' | 'light-coherent';
 
@@ -234,7 +224,7 @@ export interface Habit {
     active: boolean;                     // user-toggle to pause without deleting
     todoistTaskId?: string;              // v6.1: persistent recurring Todoist task ID synced from this habit (stabilizer only)
     todoistProjectId?: string;           // v6.1: explicit Todoist project for this habit's task; falls back to AppSettings.habitsTodoistProjectId
-    targetTime?: string;                 // v6.1: "HH:mm" target time-of-day; drives session auto-assignment + window-behavior gate
+    targetTime?: string;                 // "HH:mm" target time-of-day. v6.6: required for stabilizers (enforced in the form), always absent for light-coherent. Optional on the type for legacy data.
     targetDurationMinutes?: number;      // v6.1: minutes; pushed to Todoist `duration` and used as the LinkedTask estimate
     windowBehavior?: HabitWindowBehavior;// v6.1: 'strict' hides the habit-task if past targetTime + duration; 'lenient' surfaces while still due in Todoist (default 'lenient')
     /** @deprecated v6.1: replaced by `todoistTaskId`. Retained for migration only. */

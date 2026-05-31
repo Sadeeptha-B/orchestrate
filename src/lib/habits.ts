@@ -10,18 +10,16 @@ export function getAnchorHabits(habits: Habit[]): Habit[] {
 }
 
 /**
- * v6: filter habits to the Light Pool — light-coherent habits that match today
- * AND that are either season-agnostic or member of the currently active season.
+ * Split habits into the two kinds, preserving input order within each bucket.
+ * Shared by the surfaces that group habits by kind (LifeView, SeasonDetail).
  */
-export function getLightPoolHabits(life: LifeContext, dateISO: string): Habit[] {
-    const activeSeasonId = life.activeSeasonId;
-    return life.habits.filter((h) => {
-        if (!h.active) return false;
-        if (h.kind !== 'light-coherent') return false;
-        if (!habitMatchesDate(h, dateISO)) return false;
-        if (h.seasonIds.length === 0) return true;
-        return activeSeasonId !== null && h.seasonIds.includes(activeSeasonId);
-    });
+export function partitionByKind(habits: Habit[]): { stabilizers: Habit[]; lightCoherent: Habit[] } {
+    const stabilizers: Habit[] = [];
+    const lightCoherent: Habit[] = [];
+    for (const h of habits) {
+        (h.kind === 'stabilizer' ? stabilizers : lightCoherent).push(h);
+    }
+    return { stabilizers, lightCoherent };
 }
 
 /**

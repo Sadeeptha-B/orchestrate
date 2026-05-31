@@ -6,6 +6,39 @@ import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { SeasonForm } from './SeasonForm';
+import { partitionByKind } from '../../lib/habits';
+import type { Habit } from '../../types';
+
+function MemberHabitGroup({ label, habits }: { label: string; habits: Habit[] }) {
+    if (habits.length === 0) return null;
+    return (
+        <div>
+            <p className="text-[11px] uppercase tracking-wider text-text-light mb-1.5">
+                {label} <span className="text-text-light/60">· {habits.length}</span>
+            </p>
+            <ul className="text-sm space-y-1">
+                {habits.map((h) => (
+                    <li key={h.id} className="flex items-center gap-2">
+                        <span>{h.name}</span>
+                        {h.kind === 'stabilizer' && h.targetTime && (
+                            <span className="text-[10px] tabular-nums text-text-light">{h.targetTime}</span>
+                        )}
+                        {h.isAnchor && (
+                            <span className="text-[10px] uppercase tracking-wider text-accent">
+                                anchor
+                            </span>
+                        )}
+                        {!h.active && (
+                            <span className="text-[10px] uppercase tracking-wider text-text-light">
+                                inactive
+                            </span>
+                        )}
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+}
 
 function FieldList({ items, empty }: { items: string[]; empty: string }) {
     if (items.length === 0) return <p className="text-xs text-text-light italic">{empty}</p>;
@@ -40,6 +73,7 @@ export function SeasonDetail() {
     }
 
     const memberHabits = life.habits.filter((h) => h.seasonIds.includes(season.id));
+    const { stabilizers: memberStabilizers, lightCoherent: memberLightCoherent } = partitionByKind(memberHabits);
 
     return (
         <LifeShell
@@ -159,23 +193,10 @@ export function SeasonDetail() {
                             No habits assigned to this season yet.
                         </p>
                     ) : (
-                        <ul className="text-sm space-y-1">
-                            {memberHabits.map((h) => (
-                                <li key={h.id} className="flex items-center gap-2">
-                                    <span>{h.name}</span>
-                                    {h.isAnchor && (
-                                        <span className="text-[10px] uppercase tracking-wider text-accent">
-                                            anchor
-                                        </span>
-                                    )}
-                                    {!h.active && (
-                                        <span className="text-[10px] uppercase tracking-wider text-text-light">
-                                            inactive
-                                        </span>
-                                    )}
-                                </li>
-                            ))}
-                        </ul>
+                        <div className="space-y-3">
+                            <MemberHabitGroup label="Stabilizers" habits={memberStabilizers} />
+                            <MemberHabitGroup label="Light-coherent" habits={memberLightCoherent} />
+                        </div>
                     )}
                 </Card>
             </div>
