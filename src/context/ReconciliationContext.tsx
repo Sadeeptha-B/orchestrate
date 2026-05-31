@@ -9,15 +9,15 @@ import {
 } from 'react';
 import { useDayPlan } from '../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../hooks/useTodoist';
-import { useSyncStabilizer } from '../hooks/useSyncStabilizer';
+import { useSyncHabit } from '../hooks/useSyncHabit';
 import {
     computeTodaysHabitInstances,
     ensureHabitsProject,
-    findNeedsSyncStabilizers,
-    findOverdueStabilizers,
-    reconcileOverdueStabilizers,
-    type NeedsSyncStabilizerInfo,
-    type OverdueStabilizerInfo,
+    findNeedsSyncHabits,
+    findOverdueHabits,
+    reconcileOverdueHabits,
+    type NeedsSyncHabitInfo,
+    type OverdueHabitInfo,
 } from '../lib/habitsTodoistSync';
 import { DEFAULT_TASK_CAPS } from '../lib/capacity';
 
@@ -28,9 +28,9 @@ import { DEFAULT_TASK_CAPS } from '../lib/capacity';
 const FOCUS_STALENESS_MS = 5 * 60_000;
 
 interface ReconciliationStatus {
-    /** Active stabilizers with an unchecked, overdue Todoist task whose recurrence matches today. */
+    /** Active habits with an unchecked, overdue Todoist task whose recurrence matches today. */
     overdueCount: number;
-    /** Active stabilizers whose Todoist task is missing — either never synced or deleted upstream. */
+    /** Active habits whose Todoist task is missing — either never synced or deleted upstream. */
     needsSyncCount: number;
     /** Of `needsSyncCount`, how many never had a `todoistTaskId`. */
     neverSyncedCount: number;
@@ -58,9 +58,9 @@ const ReconciliationContext = createContext<ReconciliationStatus | null>(null);
 export { ReconciliationContext };
 
 /**
- * v6.5: central reconciliation provider for stabilizer habits. Replaces the per-surface
- * reconciles that lived in Step1Intentions (overdue bump) and HabitsLibrary (manual
- * migrate). Detection is read-only and recomputed every render; the action runs:
+ * v6.5: central reconciliation provider for habits (v6.6: both kinds — stabilizer + light-coherent).
+ * Replaces the per-surface reconciles that lived in Step1Intentions (overdue bump) and HabitsLibrary
+ * (manual migrate). Detection is read-only and recomputed every render; the action runs:
  *
  *   1. **On first hydration** of the session — once Todoist is configured and `taskMap`
  *      has hydrated, runs a full reconcile pass.
@@ -74,7 +74,7 @@ export { ReconciliationContext };
  * pass), but this is fine in practice: a freshly-created recurring task starts at its
  * next valid occurrence, which is never overdue.
  *
- * Consumers read the status via `useStabilizerReconciliation()` (see `hooks/`). The
+ * Consumers read the status via `useHabitReconciliation()` (see `hooks/`). The
  * status object drives the `HabitSyncChip` in the shared header and the banner in
  * `/habits`.
  */
@@ -82,19 +82,19 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
     const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap, projects, isConfigured, tasksHydrated } = useTodoistData();
     const actions = useTodoistActions();
-    const syncStabilizer = useSyncStabilizer();
+    const syncHabit = useSyncHabit();
 
     const [isReconciling, setIsReconciling] = useState(false);
     const [lastReconciledAt, setLastReconciledAt] = useState<number | null>(null);
     const [lastError, setLastError] = useState<string | null>(null);
 
     // Pure detection — recomputed every render but bounded by habit count (small N).
-    const overdue = useMemo<OverdueStabilizerInfo[]>(
-        () => findOverdueStabilizers({ life, taskMap, dateISO: plan.date }),
+    const overdue = useMemo<OverdueHabitInfo[]>(
+        () => findOverdueHabits({ life, taskMap, dateISO: plan.date }),
         [life, taskMap, plan.date],
     );
-    const needsSync = useMemo<NeedsSyncStabilizerInfo[]>(
-        () => findNeedsSyncStabilizers({ life, taskMap }),
+    const needsSync = useMemo<NeedsSyncHabitInfo[]>(
+        () => findNeedsSyncHabits({ life, taskMap }),
         [life, taskMap],
     );
     const neverSyncedCount = useMemo(
@@ -138,7 +138,7 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
                 }
                 let failures = 0;
                 for (const { habit } of needsSync) {
-                    const ok = await syncStabilizer(habit, defaultProjectId);
+                    const ok = await syncHabit(habit, defaultProjectId);
                     if (!ok) failures += 1;
                 }
                 if (failures > 0) {
@@ -154,7 +154,7 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
             // tasks from Phase 1 don't participate, but they're never overdue (Todoist
             // creates them at the next valid occurrence), so this is safe.
             if (overdue.length > 0) {
-                const patched = await reconcileOverdueStabilizers({
+                const patched = await reconcileOverdueHabits({
                     overdue,
                     actions,
                     dateISO: plan.date,
@@ -188,7 +188,7 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
         }
     }, [
         isConfigured, needsSync, overdue, actions, settings, projects, taskMap, life, plan,
-        dispatch, syncStabilizer, stampReconcileAttempt,
+        dispatch, syncHabit, stampReconcileAttempt,
     ]);
 
     // Trigger 1: first hydration — fire once per session as soon as Todoist + tasks are ready.

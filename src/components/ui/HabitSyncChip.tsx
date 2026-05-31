@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom';
-import { useStabilizerReconciliation } from '../../hooks/useStabilizerReconciliation';
+import { useHabitReconciliation } from '../../hooks/useHabitReconciliation';
 
 /**
- * v6.5: header chip surfacing the central stabilizer reconciliation status across the
- * app. Three rendered states:
+ * v6.5: header chip surfacing the central habit reconciliation status across the
+ * app (v6.6: both kinds). Three rendered states:
  *
  *  - **Needs attention** (`needsSyncCount > 0`): orange dot + count. Click navigates to
  *    `/habits` where the user can hit Migrate / Re-sync.
@@ -21,7 +21,7 @@ export function HabitSyncChip() {
         isReconciling,
         lastError,
         isConfigured,
-    } = useStabilizerReconciliation();
+    } = useHabitReconciliation();
     const navigate = useNavigate();
 
     if (!isConfigured) return null;
@@ -31,7 +31,7 @@ export function HabitSyncChip() {
             <button
                 onClick={() => navigate('/habits')}
                 className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-xs cursor-pointer transition-colors"
-                title={`${needsSyncCount} stabilizer habit${needsSyncCount === 1 ? '' : 's'} need syncing to Todoist. Click to review.`}
+                title={`${needsSyncCount} habit${needsSyncCount === 1 ? '' : 's'} need syncing to Todoist. Click to review.`}
             >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                 <span className="font-medium tabular-nums">{needsSyncCount}</span>

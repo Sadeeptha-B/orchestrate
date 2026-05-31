@@ -3,14 +3,12 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoistData } from '../../hooks/useTodoist';
+import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import { spotifyPlaylistId } from '../../lib/spotify';
-import { getLightPoolHabits } from '../../lib/habits';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
 import { TrueRestCard } from '../dashboard/TrueRestCard';
-import { LightPoolRow } from '../dashboard/LightPoolRow';
-import type { WorkType, CheckIn, LinkedTask } from '../../types';
+import type { WorkType, CheckIn, LinkedTask, TodaysHabitInstance } from '../../types';
 
 const FEELINGS = [
     { value: 'great', label: 'Great', emoji: '\u{1F31F}' },
@@ -34,9 +32,10 @@ interface CheckInModalProps {
 }
 
 export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalProps) {
-    const { plan, life, settings, dispatch } = useDayPlan();
+    const { plan, settings, dispatch } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
+    const { completeTask } = useTodoistActions();
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
     const [workType, setWorkType] = useState<WorkType | null>(null);
     const [notes, setNotes] = useState('');
@@ -44,18 +43,32 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
 
     const suggestedPlaylist = workType ? getPlaylistForWorkType(workType) : undefined;
 
-    // v6: surface a Light Pool slice + a True Rest cue when the user is in a low-resource state.
+    // v6: surface a couple of anytime habits + a True Rest cue when the user is in a low-resource state.
     const lowState =
         feeling === 'struggling' || feeling === 'stuck' || workType === 'low-energy' || workType === 'restless';
-    const poolSlice = useMemo(
-        () => (lowState ? getLightPoolHabits(life, plan.date).slice(0, 2) : []),
-        [lowState, life, plan.date],
+    // v6.6: anytime (light-coherent) instances are the "smaller move" — untimed, non-terminal rows.
+    const anytimeInstances = useMemo(
+        () => (lowState
+            ? plan.todaysHabits
+                .filter((i) => !i.targetTime && (i.status === 'planned' || i.status === 'engaged'))
+                .slice(0, 2)
+            : []),
+        [lowState, plan.todaysHabits],
     );
-    const inProgressByHabit = useMemo(() => {
-        const m = new Map<string, string>();
-        for (const e of plan.habitLog) if (!e.completedAt) m.set(e.habitId, e.id);
-        return m;
-    }, [plan.habitLog]);
+
+    const toggleInstance = (i: TodaysHabitInstance) =>
+        dispatch({
+            type: i.status === 'engaged' ? 'STOP_HABIT_INSTANCE' : 'START_HABIT_INSTANCE',
+            instanceId: i.id,
+            now: new Date().toISOString(),
+        });
+    const completeInstance = (i: TodaysHabitInstance) => {
+        dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId: i.id, now: new Date().toISOString() });
+        completeTask(i.todoistTaskId).catch((err) => {
+            console.error(`[habits] checkin complete: Todoist task ${i.todoistTaskId} failed:`, err);
+        });
+    };
+
     const linkedTaskMap = useMemo(
         () => buildLinkedTaskMap(plan.linkedTasks),
         [plan.linkedTasks],
@@ -176,23 +189,44 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                     </div>
                 )}
 
-                {/* v6: low-state companion surfaces — True Rest cue always, Light Pool rows when non-empty */}
+                {/* v6: low-state companion surfaces — True Rest cue always, anytime habits when non-empty */}
                 {lowState && (
                     <div className="space-y-2 pt-1 border-t border-border">
                         <p className="text-[11px] uppercase tracking-wider text-text-light">
                             Try a smaller move
                         </p>
                         <TrueRestCard variant="inline" heading="True Rest" />
-                        {poolSlice.length > 0 && (
+                        {anytimeInstances.length > 0 && (
                             <ul className="space-y-1.5">
-                                {poolSlice.map((h) => (
-                                    <LightPoolRow
-                                        key={h.id}
-                                        habit={h}
-                                        activeEntryId={inProgressByHabit.get(h.id)}
-                                        sessionId={currentSession?.id}
-                                    />
-                                ))}
+                                {anytimeInstances.map((i) => {
+                                    const isEngaged = i.status === 'engaged';
+                                    return (
+                                        <li
+                                            key={i.id}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${isEngaged ? 'border-amber-300 bg-amber-50/50 dark:bg-amber-900/10' : 'border-border'}`}
+                                        >
+                                            <span className="flex-1 min-w-0 truncate" title={i.titleSnapshot}>
+                                                {i.titleSnapshot}
+                                            </span>
+                                            <button
+                                                onClick={() => toggleInstance(i)}
+                                                className="w-6 h-6 flex items-center justify-center rounded text-xs text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
+                                                title={isEngaged ? 'Stop' : 'Start'}
+                                                aria-label={isEngaged ? 'Stop engagement timer' : 'Start engagement timer'}
+                                            >
+                                                {isEngaged ? '■' : '▶'}
+                                            </button>
+                                            <button
+                                                onClick={() => completeInstance(i)}
+                                                className="w-6 h-6 flex items-center justify-center rounded text-xs text-text-light hover:bg-surface-dark hover:text-success transition-colors cursor-pointer"
+                                                title="Mark complete"
+                                                aria-label="Complete habit"
+                                            >
+                                                ✓
+                                            </button>
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         )}
                     </div>

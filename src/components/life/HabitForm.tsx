@@ -84,7 +84,9 @@ export function HabitForm({
 
     const showDayPicker = recurrenceKind === 'weekly' || recurrenceKind === 'custom';
     const isStabilizer = kind === 'stabilizer';
-    const canSubmit = name.trim().length > 0;
+    // v6.6: stabilizers must be scheduled; light-coherent are always anytime.
+    const hasValidTime = /^\d{2}:\d{2}$/.test(targetTime.trim());
+    const canSubmit = name.trim().length > 0 && (!isStabilizer || hasValidTime);
 
     // v6.1: detect a stale per-habit override — the project this habit previously pointed at
     // no longer exists in Todoist (deleted out-of-band). We only flag once a project list is loaded.
@@ -115,14 +117,15 @@ export function HabitForm({
             active,
             // v6.1: schedule fields preserve `todoistTaskId` from initial (set by the sync layer).
             ...(initial?.todoistTaskId ? { todoistTaskId: initial.todoistTaskId } : {}),
-            ...(isStabilizer && todoistProjectId ? { todoistProjectId } : {}),
-            ...(isStabilizer && trimmedTime ? { targetTime: trimmedTime } : {}),
-            ...(isStabilizer
-                && targetDurationMinutes.trim()
+            // v6.6: both kinds sync to Todoist, so project + duration apply to both.
+            ...(todoistProjectId ? { todoistProjectId } : {}),
+            ...(targetDurationMinutes.trim()
                 && Number.isFinite(parsedDuration)
                 && parsedDuration > 0
                 ? { targetDurationMinutes: Math.round(parsedDuration) }
                 : {}),
+            // Schedule fields are stabilizer-only — light-coherent are anytime.
+            ...(isStabilizer && trimmedTime ? { targetTime: trimmedTime } : {}),
             ...(isStabilizer ? { windowBehavior } : {}),
         });
     };
@@ -159,8 +162,8 @@ export function HabitForm({
                 </div>
                 <p className="text-[11px] text-text-light mt-1">
                     {kind === 'stabilizer'
-                        ? 'Anchor-style ritual — synced to Todoist as a recurring task. Surfaces directly as a session-assigned task each day it is due.'
-                        : 'Micro-gap filler — surfaces in the Light Pool and is logged opportunistically. Never enters the day plan.'}
+                        ? 'Scheduled ritual — synced to Todoist and placed on your timeline at its set time. Requires a target time.'
+                        : 'Anytime habit — synced & tracked like a stabilizer, but pulled opportunistically with no fixed time.'}
                 </p>
             </div>
 
@@ -206,74 +209,18 @@ export function HabitForm({
             {isStabilizer && (
                 <div className="rounded-lg border border-border p-3 space-y-3 bg-surface-dark/20">
                     <div className="text-xs font-medium text-text-light uppercase tracking-wide">Schedule</div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className={labelClass}>Target time (optional)</label>
-                            <input
-                                type="time"
-                                className={inputClass}
-                                value={targetTime}
-                                onChange={(e) => setTargetTime(e.target.value)}
-                            />
-                            <p className="text-[11px] text-text-light mt-1">
-                                Pushed to Todoist; drives session auto-assignment.
-                            </p>
-                        </div>
-                        <div>
-                            <label className={labelClass}>Duration (minutes)</label>
-                            <input
-                                type="number"
-                                min={1}
-                                className={inputClass}
-                                value={targetDurationMinutes}
-                                onChange={(e) => setTargetDurationMinutes(e.target.value)}
-                                placeholder="e.g. 10"
-                            />
-                            <p className="text-[11px] text-text-light mt-1">
-                                Used as the task estimate.
-                            </p>
-                        </div>
+                    <div>
+                        <label className={labelClass}>Target time</label>
+                        <input
+                            type="time"
+                            className={inputClass}
+                            value={targetTime}
+                            onChange={(e) => setTargetTime(e.target.value)}
+                        />
+                        <p className={`text-[11px] mt-1 ${isStabilizer && !hasValidTime ? 'text-amber-700 dark:text-amber-300' : 'text-text-light'}`}>
+                            Required for stabilizers — pushed to Todoist and places the habit on your timeline.
+                        </p>
                     </div>
-                    {todoistProjects.length > 0 && (
-                        <div>
-                            <div className="flex items-center justify-between">
-                                <label className={labelClass}>Todoist project</label>
-                                {onRefreshProjects && (
-                                    <button
-                                        type="button"
-                                        onClick={onRefreshProjects}
-                                        disabled={refreshingProjects}
-                                        className="text-[11px] text-text-light hover:text-accent cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                                        title="Re-fetch your Todoist project list"
-                                    >
-                                        {refreshingProjects ? 'Refreshing…' : '↻ Refresh'}
-                                    </button>
-                                )}
-                            </div>
-                            {overrideIsStale && (
-                                <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
-                                    ⚠ The previously-selected project no longer exists in Todoist.
-                                    Saving will fall back to the workspace default.
-                                </p>
-                            )}
-                            <select
-                                className={inputClass}
-                                value={overrideIsStale ? '' : todoistProjectId}
-                                onChange={(e) => setTodoistProjectId(e.target.value)}
-                            >
-                                <option value="">
-                                    Use default{defaultProjectName ? ` (${defaultProjectName})` : ''}
-                                </option>
-                                {todoistProjects.map((p) => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                            </select>
-                            <p className="text-[11px] text-text-light mt-1">
-                                Pick a specific project for this habit's recurring task. Changing this on
-                                an already-synced habit moves the existing task in Todoist.
-                            </p>
-                        </div>
-                    )}
                     <div>
                         <label className={labelClass}>If I'm planning past the target window</label>
                         <div className="flex gap-1 flex-wrap">
@@ -301,13 +248,72 @@ export function HabitForm({
                                 : 'Always surfaced as long as the Todoist task is due today and unchecked.'}
                         </p>
                     </div>
-                    {initial?.todoistTaskId && (
-                        <div className="text-[11px] text-text-light">
-                            Synced to Todoist · task <code className="font-mono">{initial.todoistTaskId}</code>
-                        </div>
-                    )}
                 </div>
             )}
+
+            {/* v6.6: Todoist sync applies to both kinds. */}
+            <div className="rounded-lg border border-border p-3 space-y-3 bg-surface-dark/20">
+                <div className="text-xs font-medium text-text-light uppercase tracking-wide">Todoist</div>
+                <div>
+                    <label className={labelClass}>Duration (minutes)</label>
+                    <input
+                        type="number"
+                        min={1}
+                        className={inputClass}
+                        value={targetDurationMinutes}
+                        onChange={(e) => setTargetDurationMinutes(e.target.value)}
+                        placeholder="e.g. 10"
+                    />
+                    <p className="text-[11px] text-text-light mt-1">
+                        Pushed to the Todoist task and used as the instance duration.
+                    </p>
+                </div>
+                {todoistProjects.length > 0 && (
+                    <div>
+                        <div className="flex items-center justify-between">
+                            <label className={labelClass}>Todoist project</label>
+                            {onRefreshProjects && (
+                                <button
+                                    type="button"
+                                    onClick={onRefreshProjects}
+                                    disabled={refreshingProjects}
+                                    className="text-[11px] text-text-light hover:text-accent cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                    title="Re-fetch your Todoist project list"
+                                >
+                                    {refreshingProjects ? 'Refreshing…' : '↻ Refresh'}
+                                </button>
+                            )}
+                        </div>
+                        {overrideIsStale && (
+                            <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
+                                ⚠ The previously-selected project no longer exists in Todoist.
+                                Saving will fall back to the workspace default.
+                            </p>
+                        )}
+                        <select
+                            className={inputClass}
+                            value={overrideIsStale ? '' : todoistProjectId}
+                            onChange={(e) => setTodoistProjectId(e.target.value)}
+                        >
+                            <option value="">
+                                Use default{defaultProjectName ? ` (${defaultProjectName})` : ''}
+                            </option>
+                            {todoistProjects.map((p) => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                        <p className="text-[11px] text-text-light mt-1">
+                            Pick a specific project for this habit's recurring task. Changing this on
+                            an already-synced habit moves the existing task in Todoist.
+                        </p>
+                    </div>
+                )}
+                {initial?.todoistTaskId && (
+                    <div className="text-[11px] text-text-light">
+                        Synced to Todoist · task <code className="font-mono">{initial.todoistTaskId}</code>
+                    </div>
+                )}
+            </div>
 
             <div>
                 <label className={labelClass}>Minimum viable version</label>

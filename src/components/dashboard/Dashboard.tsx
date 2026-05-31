@@ -18,7 +18,6 @@ import { Logo } from '../ui/Logo';
 import { HeaderControls } from '../ui/HeaderControls';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
-import { LightPoolPanel } from './LightPoolPanel';
 import { HabitInstanceCard, EngagementLogCard } from './HabitInstanceCard';
 import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
@@ -182,7 +181,7 @@ export function Dashboard() {
                         {nextSessionStartsWithin(60) && <TrueRestCard variant="banner" />}
 
                         {/* v6.4: two-column lower region. The habit card is a right rail spanning the
-                            whole left column (session + light pool + task manager + calendar), so its
+                            whole left column (session + task manager + calendar), so its
                             height — especially the engagement log — is absorbed beside that column
                             instead of pushing the task manager/calendar down. Task Manager + Calendar
                             therefore take the Current Session width. Stacks on small screens. */}
@@ -198,9 +197,6 @@ export function Dashboard() {
                                         onPinnedChange={setPinnedSessionId}
                                     />
                                 </div>
-
-                                {/* Light Pool — micro-gap fillers (v6) */}
-                                <LightPoolPanel />
 
                                 {/* Task Manager (Todoist) — collapsible */}
                                 <div>

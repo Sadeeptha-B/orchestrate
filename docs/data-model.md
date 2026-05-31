@@ -40,7 +40,7 @@ Lifecycle:
 
 ### TodaysHabitInstance
 
-A stabilizer habit's manifestation for today. Lives on `DayPlan.todaysHabits`, independent of session assignment. Positioned on the timeline by `targetTime`; untimed instances form an "Anytime today" cluster.
+A habit's manifestation for today (v6.6: both kinds). Lives on `DayPlan.todaysHabits`, independent of session assignment. **Stabilizer** instances carry a `targetTime` and are positioned on the timeline; **light-coherent** instances are always untimed and form the "Anytime today" cluster (pulled opportunistically). Reschedule is stabilizer-only.
 
 **Status semantics:**
 - **planned** — surfaced for today, not yet acted on.
@@ -72,10 +72,11 @@ The central document for a single day. Stored in localStorage and auto-reset dai
 
 **Key invariants:**
 - `linkedTasks` is the flat, denormalized list of intention-bound tasks. Each task's `intentionId` back-references its parent.
-- `todaysHabits` is a parallel list for stabilizer habit instances. Independent of `linkedTasks` / `taskSessions`.
+- `todaysHabits` is a parallel list for habit instances (both kinds, v6.6). Independent of `linkedTasks` / `taskSessions`.
 - `taskSessions` is a map from session IDs to ordered arrays of Todoist task IDs. **Habits never appear here.**
 - `intentions[i].linkedTaskIds` is the ordered list of task IDs belonging to that intention. Kept in sync with `linkedTasks` by the reducer.
-- `habitLog` records Light Pool (light-coherent) activity only.
+
+(v6.6 removed `habitLog` — the Light Pool log. Light-coherent habits now flow through `todaysHabits` like stabilizers.)
 
 ### SessionSlot
 
@@ -99,22 +100,20 @@ A medium-horizon focus period (4-12 weeks).
 
 ### Habit
 
-A first-class recurring entity. Discriminated by `kind`:
+A first-class recurring entity. As of **v6.6**, both kinds sync to Todoist as recurring tasks, produce `TodaysHabitInstance`s, and share the full Start/Stop/Complete/Skip engagement lifecycle. `kind` now discriminates **scheduling only**:
 
-- **stabilizer** — synced to Todoist as a recurring task. On Step 1 mount, `REFRESH_TODAYS_HABITS` adds today's eligible stabilizers to `plan.todaysHabits`. Rendered in the timeline's habit lane and the dashboard's `HabitInstanceCard`.
-- **light-coherent** — micro-gap filler. Surfaces in the Light Pool. Start/Complete writes a `HabitLogEntry`. Never enters the task plan.
+- **stabilizer** — scheduled ritual. Requires a `targetTime` (enforced in the form). On Step 1 mount / reconcile, `REFRESH_TODAYS_HABITS` adds today's eligible instances to `plan.todaysHabits`, placed on the timeline's habit lane at their time. Reschedulable.
+- **light-coherent** — "anytime" habit. Never has a `targetTime`; surfaces as an untimed ("Anytime today") instance pulled opportunistically. Same Todoist sync + engagement as stabilizers, but no scheduling and no reschedule.
 
 **`isAnchor`** is orthogonal to `kind` — a pure importance tag marking a habit as load-bearing (sleep, meditation, gym, shutdown, weekly review). It does **not** alter behavior or block deletion at the reducer level; the only current effect is UI affordances — anchors sort to the front of habit lists and deleting an *active* anchor prompts a confirm dialog (cancellable, but deletion is permitted once confirmed). The protection axis is forward-looking scaffolding for recovery-mode / Minimum Viable Day, where anchors are the non-negotiables preserved when the plan is narrowed.
 
 **Recurrence matching** (`src/lib/habits.ts -> habitMatchesDate`): `daily` = every day, `weekdays` = Mon-Fri, `weekly`/`custom` = only listed `daysOfWeek` (weekly without `daysOfWeek` does not match).
 
-**Light Pool filter** (`getLightPoolHabits`): `active && kind === 'light-coherent' && habitMatchesDate(today) && (seasonIds.length === 0 || seasonIds.includes(activeSeasonId))`.
+**Todoist sync** (`src/lib/habitsTodoistSync.ts`, v6.6 — both kinds): saving a habit calls `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates or updates the recurring task with `due_string` from `buildDueString(habit)` (timed for stabilizers, "every day"-style for light-coherent) and `duration` from `targetDurationMinutes`. Project changes trigger a Sync API `item_move`. Sync failures are non-blocking.
 
-**Todoist sync** (`src/lib/habitsTodoistSync.ts`): saving a stabilizer calls `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates or updates the recurring task with `due_string` from `buildDueString(habit)` and `duration` from `targetDurationMinutes`. Project changes trigger a Sync API `item_move`. Sync failures are non-blocking.
+**Today's instances** (`computeTodaysHabitInstances`): filters to active habits (either kind) with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope. Stabilizers get a `targetTime` and the `windowBehavior === 'strict'` past-window drop; light-coherent are always untimed and skip the window gate. The reducer is idempotent — any habit already represented in `plan.todaysHabits` is skipped.
 
-**Today's instances** (`computeTodaysHabitInstances`): filters to active stabilizers with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; applies `windowBehavior === 'strict'` to drop past-window instances. The reducer is idempotent — any habit already represented in `plan.todaysHabits` is skipped.
-
-**Overdue reconcile** (v6.4 helpers, v6.5 driver — `findOverdueStabilizers` + `reconcileOverdueStabilizers`): Todoist's recurrence engine only advances on completion, so a habit missed yesterday sits at yesterday's due date and never surfaces. Overdue stabilizers whose recurrence + season still match today get their Todoist `due_datetime` (or `due_date`) bumped forward to today; `due_string` is preserved so the rule continues to drive future occurrences. The helper returns an optimistic patch map so `computeTodaysHabitInstances` runs against the bumped state in the same tick. **As of v6.5 this is no longer fired from Step 1** — the central `ReconciliationProvider` runs it (preceded by a needs-sync repair) on first hydration and on window focus; see [synthesis.md](./synthesis.md) "Habit-Task Sync → Central reconciliation". Skip is handled in the UI by also calling Todoist `completeTask` so the recurrence engine advances cleanly without needing the next-day bump — see `SKIP_HABIT_INSTANCE`.
+**Overdue reconcile** (v6.4 helpers, v6.5 driver, v6.6 both kinds — `findOverdueHabits` + `reconcileOverdueHabits`): Todoist's recurrence engine only advances on completion, so a habit missed yesterday sits at yesterday's due date and never surfaces. Overdue habits whose recurrence + season still match today get their Todoist `due_datetime` (or `due_date`) bumped forward to today; `due_string` is preserved so the rule continues to drive future occurrences. The helper returns an optimistic patch map so `computeTodaysHabitInstances` runs against the bumped state in the same tick. **As of v6.5 this is no longer fired from Step 1** — the central `ReconciliationProvider` runs it (preceded by a needs-sync repair via `findNeedsSyncHabits`) on first hydration and on window focus; see [synthesis.md](./synthesis.md) "Habit-Task Sync → Central reconciliation". Skip is handled in the UI by also calling Todoist `completeTask` so the recurrence engine advances cleanly without needing the next-day bump — see `SKIP_HABIT_INSTANCE`.
 
 ### BacklogEntry
 
@@ -245,13 +244,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `DELETE_HABIT` | `habitId` | Removes the habit; also drops matching `TodaysHabitInstance` rows. (No anchor guard — `isAnchor` is a UI-only confirm prompt now.) |
 | `TOGGLE_HABIT_ACTIVE` | `habitId` | Flips `active` flag |
 
-### 3.8 Light Pool Actions
-
-| Action | Payload | Effect |
-|---|---|---|
-| `LOG_HABIT_START` | `habitId, sessionId?` | Appends HabitLogEntry with `startedAt = now` |
-| `LOG_HABIT_COMPLETE` | `entryId, durationMinutes?` | Sets `completedAt = now` on the entry |
-| `DELETE_HABIT_LOG_ENTRY` | `entryId` | Removes entry |
+(v6.6 removed the §3.8 Light Pool actions — `LOG_HABIT_START` / `LOG_HABIT_COMPLETE` / `DELETE_HABIT_LOG_ENTRY` — along with `HabitLogEntry`. Light-coherent habits now use the habit-instance lifecycle actions in §3.3.)
 
 ### 3.9 True Rest Cue Actions
 
@@ -310,6 +303,13 @@ Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On lo
 - Drops `HabitInstanceStatus` `'unfinished'` — `migratePlan` coerces persisted `'unfinished'` instances to `'skipped'`, and `'unfinished'` LinkedTask status to `'pending'`.
 - `BacklogEntry.unfinishedTaskRecords` becomes `Record<todoistId, EngagementSegment[]>`.
 - These are optional fields defaulted on read, so the `_schemaVersion` marker **stays at `6.3`** (no breaking shape change; plans reset daily).
+
+### v6.6: Unify light-coherent into habit instances (no schema-marker bump)
+- Both habit kinds now sync to Todoist + produce `TodaysHabitInstance`s. `kind` discriminates scheduling only (stabilizer = timed + required `targetTime`; light-coherent = always untimed/"anytime").
+- `DayPlan.habitLog` + `HabitLogEntry` + the `LOG_HABIT_*` actions are **removed**. `habitLog` was daily-ephemeral, so `migratePlan` simply doesn't carry it forward (no data to migrate).
+- `migrateHabit` strips stray `targetTime` / `windowBehavior` from light-coherent habits, and migrates legacy `autoLinkTodoistId` for **both** kinds. Existing light-coherent habits have no `todoistTaskId`, so the central `ReconciliationProvider` auto-creates their recurring Todoist tasks on next hydration.
+- Sync/reconcile helpers renamed: `findNeedsSyncStabilizers → findNeedsSyncHabits`, `findOverdueStabilizers → findOverdueHabits`, `reconcileOverdueStabilizers → reconcileOverdueHabits`; hooks `useSyncStabilizer → useSyncHabit`, `useStabilizerReconciliation → useHabitReconciliation`.
+- `_schemaVersion` marker **stays at `6.3`** (plans reset daily; no breaking persisted-shape bump).
 
 ### Wizard step migration
 - 6-step -> 5-step: steps 2+ shift down by 1.

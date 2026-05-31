@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
-import { useStabilizerReconciliation } from '../../hooks/useStabilizerReconciliation';
+import { useHabitReconciliation } from '../../hooks/useHabitReconciliation';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
@@ -10,7 +10,7 @@ import { LifeShell } from './LifeShell';
 import { HabitForm, type HabitDraft } from './HabitForm';
 import { getActiveHabits } from '../../lib/habits';
 import { ensureHabitsProject } from '../../lib/habitsTodoistSync';
-import { useSyncStabilizer } from '../../hooks/useSyncStabilizer';
+import { useSyncHabit } from '../../hooks/useSyncHabit';
 import type { Habit } from '../../types';
 
 interface HabitsLocationState {
@@ -37,7 +37,7 @@ export function HabitsLibrary() {
     const { life, settings, dispatch } = useDayPlan();
     const todoistActions = useTodoistActions();
     const { projects, isConfigured: isTodoistConfigured } = useTodoistData();
-    const syncStabilizer = useSyncStabilizer();
+    const syncHabit = useSyncHabit();
     // v6.5: detection + reconcile action are owned by the central provider. The
     // banner reads counts from here; the Migrate / Re-sync button delegates to it.
     const {
@@ -48,7 +48,7 @@ export function HabitsLibrary() {
         lastError: reconcileError,
         clearError,
         triggerReconcile,
-    } = useStabilizerReconciliation();
+    } = useHabitReconciliation();
     const location = useLocation();
     const navigate = useNavigate();
     const locationState = location.state as HabitsLocationState | null;
@@ -131,13 +131,13 @@ export function HabitsLibrary() {
         };
         dispatch({ type: 'ADD_HABIT', habit: newHabit });
         closeCreate();
-        if (newHabit.kind === 'stabilizer' && isTodoistConfigured) {
+        if (isTodoistConfigured) {
             const defaultProjectId = await resolveDefaultProject();
             if (!defaultProjectId) {
                 setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
                 return;
             }
-            const taskId = await syncStabilizer(newHabit, defaultProjectId);
+            const taskId = await syncHabit(newHabit, defaultProjectId);
             if (!taskId) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
         }
     };
@@ -146,13 +146,13 @@ export function HabitsLibrary() {
         const updated: Habit = { ...draft, id: target.id, createdAt: target.createdAt };
         dispatch({ type: 'UPDATE_HABIT', habit: updated });
         setEditing(null);
-        if (updated.kind === 'stabilizer' && isTodoistConfigured) {
+        if (isTodoistConfigured) {
             const defaultProjectId = await resolveDefaultProject();
             if (!defaultProjectId) {
                 setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
                 return;
             }
-            const taskId = await syncStabilizer(updated, defaultProjectId);
+            const taskId = await syncHabit(updated, defaultProjectId);
             if (!taskId) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
         }
     };
@@ -167,13 +167,13 @@ export function HabitsLibrary() {
     return (
         <LifeShell
             title="Habits"
-            subtitle="Stabilizers sync to Todoist as recurring tasks and surface on your timeline each day they're due. Light-coherent habits live in the Light Pool."
+            subtitle="All habits sync to Todoist as recurring tasks and surface in Today's Habits. Stabilizers are scheduled at a set time; light-coherent habits are anytime, pulled when you have a gap."
         >
             {needsSyncCount > 0 && (
                 <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
                     <div className="text-sm">
                         <strong>
-                            {needsSyncCount} stabilizer{needsSyncCount === 1 ? '' : 's'}
+                            {needsSyncCount} habit{needsSyncCount === 1 ? '' : 's'}
                         </strong>{' '}
                         {missingTaskCount === 0
                             ? 'need to be synced as recurring Todoist tasks.'
@@ -258,8 +258,8 @@ export function HabitsLibrary() {
                                             : 'bg-surface-dark text-text-light'
                                             }`}
                                         title={h.kind === 'stabilizer'
-                                            ? 'Synced to Todoist as a recurring task; surfaces on your timeline each day it is due'
-                                            : 'Surfaces in the Light Pool; never enters the day plan'}
+                                            ? 'Scheduled habit — synced to Todoist; surfaces on your timeline at its set time each day it is due'
+                                            : 'Anytime habit — synced to Todoist & tracked, but pulled opportunistically with no fixed time'}
                                     >
                                         {h.kind === 'stabilizer' ? 'STABILIZER' : 'LIGHT'}
                                     </span>
@@ -273,12 +273,20 @@ export function HabitsLibrary() {
                                             INACTIVE
                                         </span>
                                     )}
-                                    {h.kind === 'stabilizer' && !h.todoistTaskId && h.active && (
+                                    {h.active && !h.todoistTaskId && (
                                         <span
                                             className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
                                             title="Not yet synced to Todoist"
                                         >
                                             UNSYNCED
+                                        </span>
+                                    )}
+                                    {h.kind === 'stabilizer' && h.active && !h.targetTime && (
+                                        <span
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                                            title="Stabilizers need a scheduled time — edit this habit to set one"
+                                        >
+                                            NEEDS TIME
                                         </span>
                                     )}
                                 </div>

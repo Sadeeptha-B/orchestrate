@@ -90,9 +90,10 @@ export function resolveHabitProjectId(
 }
 
 /**
- * Sync a stabilizer Habit to Todoist as a recurring task. Caller resolves the target
- * project id (via `ensureHabitsProject` + `resolveHabitProjectId`) so a batch operation
- * can resolve once and reuse the id across iterations.
+ * Sync a Habit to Todoist as a recurring task (v6.6: both kinds — stabilizers carry a
+ * time-of-day via `buildDueString`, light-coherent are untimed "every day"). Caller resolves
+ * the target project id (via `ensureHabitsProject` + `resolveHabitProjectId`) so a batch
+ * operation can resolve once and reuse the id across iterations.
  *
  * - If the habit has no `todoistTaskId`: creates a new recurring task in `projectId`.
  * - If a task exists but in a different project: moves it via the Sync API.
@@ -107,7 +108,6 @@ export async function syncHabitToTodoist(args: {
     taskMap: Map<string, TodoistTask>;
 }): Promise<string | null> {
     const { habit, projectId, actions, taskMap } = args;
-    if (habit.kind !== 'stabilizer') return null;
 
     const dueString = buildDueString(habit);
     const duration = habit.targetDurationMinutes;
@@ -171,19 +171,20 @@ function dueDateLocal(due: { date: string; timezone: string | null }): string {
 }
 
 /**
- * v6.3: compute today's stabilizer habit instances.
+ * v6.3: compute today's habit instances. v6.6: both kinds (stabilizer + light-coherent).
  *
- * Filters active stabilizer habits to those whose:
+ * Filters active habits to those whose:
  *  - recurrence matches `plan.date`
  *  - season scope matches the active season (or is season-agnostic)
  *  - linked Todoist task exists, is due today, and is unchecked
- *  - `windowBehavior !== 'strict'` OR the current time is still inside the target window
+ *  - (stabilizers only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
  *
  * Idempotent against habits already present in `plan.todaysHabits` (caller passes the full plan;
  * the reducer's `REFRESH_TODAYS_HABITS` further dedupes by `habitId`).
  *
- * Each emitted instance gets a fresh uuid, `status: 'planned'`, and `targetTime` derived from the
- * Todoist `due` time-of-day if set, else the habit's `targetTime`. No session assignment.
+ * Each emitted instance gets a fresh uuid, `status: 'planned'`, and (stabilizers only) a `targetTime`
+ * derived from the Todoist `due` time-of-day if set, else the habit's `targetTime`. Light-coherent
+ * instances are always untimed ("anytime"). No session assignment.
  */
 export function computeTodaysHabitInstances(args: {
     life: LifeContext;
@@ -201,7 +202,6 @@ export function computeTodaysHabitInstances(args: {
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
-        if (habit.kind !== 'stabilizer') continue;
         if (!habit.todoistTaskId) continue;
         if (existingHabitIds.has(habit.id)) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
@@ -214,15 +214,19 @@ export function computeTodaysHabitInstances(args: {
         const taskDueDate = dueDateLocal(task.due);
         if (taskDueDate !== dateISO) continue;
 
-        // Window-behavior gate: 'strict' hides the instance if its window has passed.
-        const durationMinutes = habit.targetDurationMinutes ?? taskCaps.stabilizer;
-        if (habit.windowBehavior === 'strict' && habit.targetTime) {
+        const isStabilizer = habit.kind === 'stabilizer';
+        const durationMinutes = habit.targetDurationMinutes
+            ?? (isStabilizer ? taskCaps.stabilizer : taskCaps.lightCoherent);
+        // Window-behavior gate: 'strict' hides the instance if its window has passed. Stabilizers only —
+        // light-coherent habits are "anytime" and have no window.
+        if (isStabilizer && habit.windowBehavior === 'strict' && habit.targetTime) {
             const windowEnd = timeToMinutes(habit.targetTime) + durationMinutes;
             if (nowMinutes > windowEnd) continue;
         }
 
+        // Light-coherent instances are always untimed; only stabilizers carry a target time.
         const dueTime = dueTimeOfDay(task.due.date);
-        const targetTime = dueTime ?? habit.targetTime;
+        const targetTime = isStabilizer ? (dueTime ?? habit.targetTime) : undefined;
 
         out.push({
             id: crypto.randomUUID(),
@@ -237,25 +241,25 @@ export function computeTodaysHabitInstances(args: {
     return out;
 }
 
-export interface OverdueStabilizerInfo {
+export interface OverdueHabitInfo {
     habit: Habit;
     task: TodoistTask;
 }
 
 export type NeedsSyncReason = 'never-synced' | 'missing-in-todoist';
 
-export interface NeedsSyncStabilizerInfo {
+export interface NeedsSyncHabitInfo {
     habit: Habit;
     reason: NeedsSyncReason;
 }
 
 /**
- * v6.5: detect active stabilizer habits that need a (re-)sync to Todoist. Two failure
+ * v6.5: detect active habits that need a (re-)sync to Todoist (v6.6: both kinds). Two failure
  * modes are surfaced under one umbrella so callers can drive both the "needs attention"
  * count and the reconcile action from a single source:
  *
  *  - `'never-synced'`: habit was saved but `todoistTaskId` was never set (first-sync
- *    failed offline, or pre-v6.1 holdover).
+ *    failed offline, a pre-v6.1 holdover, or a pre-v6.6 light-coherent habit that never synced).
  *  - `'missing-in-todoist'`: habit had a `todoistTaskId`, but the linked task is no
  *    longer present in `taskMap` (deleted out-of-band in Todoist). The check is gated
  *    by `taskMap.size > 0` so a not-yet-hydrated cache doesn't false-positive every
@@ -265,14 +269,14 @@ export interface NeedsSyncStabilizerInfo {
  * the caller's responsibility. Used by the central `ReconciliationProvider` for both
  * the count display and the batched repair pass.
  */
-export function findNeedsSyncStabilizers(args: {
+export function findNeedsSyncHabits(args: {
     life: LifeContext;
     taskMap: Map<string, TodoistTask>;
-}): NeedsSyncStabilizerInfo[] {
+}): NeedsSyncHabitInfo[] {
     const { life, taskMap } = args;
-    const out: NeedsSyncStabilizerInfo[] = [];
+    const out: NeedsSyncHabitInfo[] = [];
     for (const habit of life.habits) {
-        if (habit.kind !== 'stabilizer' || !habit.active) continue;
+        if (!habit.active) continue;
         if (!habit.todoistTaskId) {
             out.push({ habit, reason: 'never-synced' });
             continue;
@@ -285,8 +289,8 @@ export function findNeedsSyncStabilizers(args: {
 }
 
 /**
- * v6.4: find active stabilizer habits whose Todoist task is overdue (due before `dateISO`),
- * unchecked, and whose recurrence rule + season scope match today. Todoist's recurrence
+ * v6.4: find active habits whose Todoist task is overdue (due before `dateISO`), unchecked,
+ * and whose recurrence rule + season scope match today (v6.6: both kinds). Todoist's recurrence
  * engine only advances on completion, so a missed habit sits stuck at yesterday's date —
  * `computeTodaysHabitInstances` filters it out by the "due today" gate, and the habit
  * silently disappears. This helper surfaces those for the reconcile step to bump forward.
@@ -294,18 +298,17 @@ export function findNeedsSyncStabilizers(args: {
  * Filter chain mirrors `computeTodaysHabitInstances` except the date gate: here we want
  * `task.due.date < dateISO` (strictly before).
  */
-export function findOverdueStabilizers(args: {
+export function findOverdueHabits(args: {
     life: LifeContext;
     taskMap: Map<string, TodoistTask>;
     dateISO: string;
-}): OverdueStabilizerInfo[] {
+}): OverdueHabitInfo[] {
     const { life, taskMap, dateISO } = args;
     const activeSeasonId = life.activeSeasonId;
-    const out: OverdueStabilizerInfo[] = [];
+    const out: OverdueHabitInfo[] = [];
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
-        if (habit.kind !== 'stabilizer') continue;
         if (!habit.todoistTaskId) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
         if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;
@@ -323,9 +326,9 @@ export function findOverdueStabilizers(args: {
 }
 
 /**
- * v6.4: bump overdue stabilizer Todoist tasks to `dateISO`, preserving the recurrence
- * rule. Returns a patch map (todoistTaskId → updated task) populated from Todoist's
- * actual server responses, so the caller can recompute today's instances immediately
+ * v6.4: bump overdue habit Todoist tasks to `dateISO`, preserving the recurrence
+ * rule (v6.6: both kinds). Returns a patch map (todoistTaskId → updated task) populated from
+ * Todoist's actual server responses, so the caller can recompute today's instances immediately
  * against authoritative state.
  *
  *  - Timed tasks → `due_datetime: '<dateISO>T<HH:mm:ss>'` (floating, user TZ).
@@ -341,8 +344,8 @@ export function findOverdueStabilizers(args: {
  * sanity-check the response's due date against what we asked for and log if it diverges,
  * so post-hoc debugging is possible without instrumentation.
  */
-export async function reconcileOverdueStabilizers(args: {
-    overdue: OverdueStabilizerInfo[];
+export async function reconcileOverdueHabits(args: {
+    overdue: OverdueHabitInfo[];
     actions: TodoistActionsValue;
     dateISO: string;
 }): Promise<Map<string, TodoistTask>> {

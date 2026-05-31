@@ -1,26 +1,82 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { LifeShell } from './LifeShell';
-import { LightPoolSection } from './LightPoolSection';
+import { RestCuesEditor } from './RestCuesEditor';
 import { findActiveSeason } from '../../lib/seasons';
-import { getActiveHabits } from '../../lib/habits';
-import { restCues as defaultRestCues } from '../../data/restCues';
+import { getActiveHabits, partitionByKind } from '../../lib/habits';
+import type { Habit } from '../../types';
+
+const anchorFirst = (a: Habit, b: Habit) => {
+    if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
+    return a.name.localeCompare(b.name);
+};
+
+function HabitPill({ habit }: { habit: Habit }) {
+    return (
+        <div className="px-3 py-2 rounded-lg border border-border text-sm flex items-center justify-between gap-2">
+            <span className="truncate">{habit.name}</span>
+            <span className="flex items-center gap-1.5 flex-shrink-0">
+                {habit.kind === 'stabilizer' && habit.targetTime && (
+                    <span className="text-[10px] tabular-nums text-text-light">{habit.targetTime}</span>
+                )}
+                {habit.isAnchor && (
+                    <span className="text-[10px] uppercase tracking-wider text-accent">anchor</span>
+                )}
+            </span>
+        </div>
+    );
+}
+
+/** One kind bucket (stabilizers or light-coherent) with a count sub-label + pill grid. */
+function KindBucket({ label, habits }: { label: string; habits: Habit[] }) {
+    if (habits.length === 0) return null;
+    const sorted = [...habits].sort(anchorFirst);
+    return (
+        <div>
+            <p className="text-[11px] uppercase tracking-wider text-text-light mb-1.5">
+                {label} <span className="text-text-light/60">· {habits.length}</span>
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {sorted.map((h) => <HabitPill key={h.id} habit={h} />)}
+            </div>
+        </div>
+    );
+}
+
+/** Both kind buckets for a set of habits. */
+function KindGroups({ habits }: { habits: Habit[] }) {
+    const { stabilizers, lightCoherent } = partitionByKind(habits);
+    return (
+        <div className="space-y-3">
+            <KindBucket label="Stabilizers" habits={stabilizers} />
+            <KindBucket label="Light-coherent" habits={lightCoherent} />
+        </div>
+    );
+}
 
 export function LifeView() {
     const { life } = useDayPlan();
     const navigate = useNavigate();
     const activeSeason = findActiveSeason(life);
     const activeHabits = getActiveHabits(life);
-    // Anchors are the load-bearing habits — float them to the front of the list so they read
-    // as foundational without needing a separate card.
-    const sortedActiveHabits = [...activeHabits].sort((a, b) => {
-        if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
-        return a.name.localeCompare(b.name);
-    });
-    const isCustomized = life.restCues !== undefined;
-    const restCueCount = (life.restCues ?? defaultRestCues).length;
+
+    // Scoping: always-on habits (no season) first, then each season with ≥1 active member.
+    const defaultHabits = activeHabits.filter((h) => h.seasonIds.length === 0);
+    const seasonGroups = life.seasons
+        .map((s) => ({ season: s, habits: activeHabits.filter((h) => h.seasonIds.includes(s.id)) }))
+        .filter((g) => g.habits.length > 0);
+
+    // Collapsible season sections — empty set = all expanded.
+    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+    const toggleSeason = (id: string) =>
+        setCollapsed((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
 
     return (
         <LifeShell
@@ -70,26 +126,18 @@ export function LifeView() {
                     )}
                 </Card>
 
-                <LightPoolSection />
-
                 <Card>
                     <div className="flex items-center justify-between mb-3">
                         <h3 className="font-medium">True Rest cues</h3>
-                        <Button variant="ghost" size="sm" onClick={() => navigate('/rest-cues')}>
-                            Manage
-                        </Button>
                     </div>
-                    <p className="text-sm text-text-light">
-                        {restCueCount} {restCueCount === 1 ? 'cue' : 'cues'}
-                        {!isCustomized && ' · using defaults'}
-                    </p>
-                    <p className="text-xs text-text-light mt-1">
+                    <p className="text-xs text-text-light mb-3">
                         Recovery prompts surfaced on the dashboard and during low-energy check-ins.
                     </p>
+                    <RestCuesEditor compact />
                 </Card>
 
                 <Card className="md:col-span-2">
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center justify-between mb-4">
                         <h3 className="font-medium">All active habits</h3>
                         <Button variant="ghost" size="sm" onClick={() => navigate('/habits')}>
                             Library
@@ -97,24 +145,61 @@ export function LifeView() {
                     </div>
                     {activeHabits.length === 0 ? (
                         <p className="text-sm text-text-light italic">
-                            None active. Stabilizers surface as session-assigned tasks each day they're due;
-                            light-coherent habits live in the Light Pool.
+                            None active. Stabilizers surface on your timeline at their set time;
+                            light-coherent habits surface as anytime rows — both in Today's Habits.
                         </p>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {sortedActiveHabits.map((h) => (
-                                <div
-                                    key={h.id}
-                                    className="px-3 py-2 rounded-lg border border-border text-sm flex items-center justify-between"
-                                >
-                                    <span className="truncate">{h.name}</span>
-                                    {h.isAnchor && (
-                                        <span className="text-[10px] uppercase tracking-wider text-accent ml-2">
-                                            anchor
+                        <div className="space-y-5">
+                            {defaultHabits.length > 0 && (
+                                <div>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <h4 className="text-sm font-medium">Always-on</h4>
+                                        <span className="text-[10px] uppercase tracking-wider text-text-light">
+                                            every season
                                         </span>
-                                    )}
+                                    </div>
+                                    <KindGroups habits={defaultHabits} />
                                 </div>
-                            ))}
+                            )}
+
+                            {seasonGroups.map(({ season, habits }) => {
+                                const isCollapsed = collapsed.has(season.id);
+                                return (
+                                    <div key={season.id} className="border-t border-border pt-4">
+                                        <button
+                                            onClick={() => toggleSeason(season.id)}
+                                            className="flex items-center gap-2 w-full text-left cursor-pointer group"
+                                            aria-expanded={!isCollapsed}
+                                        >
+                                            <svg
+                                                className={`w-3 h-3 text-text-light transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                                                fill="none"
+                                                viewBox="0 0 24 24"
+                                                stroke="currentColor"
+                                                strokeWidth={2}
+                                            >
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                            </svg>
+                                            <h4 className="text-sm font-medium group-hover:text-accent transition-colors">
+                                                {season.name}
+                                            </h4>
+                                            {season.active && (
+                                                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-accent text-white">
+                                                    active
+                                                </span>
+                                            )}
+                                            <span className="text-[10px] uppercase tracking-wider text-text-light">
+                                                {habits.length} {habits.length === 1 ? 'habit' : 'habits'}
+                                            </span>
+                                        </button>
+                                        {!isCollapsed && (
+                                            <div className="mt-3">
+                                                <KindGroups habits={habits} />
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </Card>

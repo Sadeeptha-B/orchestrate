@@ -404,7 +404,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         // cache entry. Todoist's `item_complete` on a recurring task advances the rule
         // server-side and keeps the task alive with a new due date — filtering it out of
         // the local cache (the old behavior) blinded `computeTodaysHabitInstances` and
-        // `findOverdueStabilizers` until the next 5-min staleness window expired, causing
+        // `findOverdueHabits` until the next 5-min staleness window expired, causing
         // habits to silently disappear post-completion / post-skip until refresh.
         const existing = tasksRef.current.find((t) => t.id === taskId);
         const isRecurring = Boolean(existing?.due?.is_recurring);
