@@ -519,7 +519,11 @@ type Action =
     | { type: 'RESCHEDULE_HABIT_INSTANCE'; instanceId: string; newTargetTime?: string; now: string }
     // ---- v6.3: Task engagement ----
     | { type: 'START_TASK_ENGAGEMENT'; todoistId: string; now: string }
-    | { type: 'STOP_TASK_ENGAGEMENT'; todoistId: string; now: string };
+    | { type: 'STOP_TASK_ENGAGEMENT'; todoistId: string; now: string }
+    // ---- v6.4: Engagement log deletion ----
+    | { type: 'DELETE_HABIT_ENGAGEMENT_SEGMENT'; instanceId: string; segmentStartedAt: string }
+    | { type: 'DELETE_TASK_ENGAGEMENT_SEGMENT'; todoistId: string; segmentStartedAt: string }
+    | { type: 'DELETE_HABIT_RESCHEDULE_ENTRY'; instanceId: string; rescheduleAt: string };
 
 interface State {
     plan: DayPlan;
@@ -1026,6 +1030,45 @@ function reducer(state: State, action: Action): State {
                 return { ...lt, status: 'pending' as const, segments: closeEngagementSegment(lt.segments, action.now) };
             });
             return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'DELETE_HABIT_ENGAGEMENT_SEGMENT': {
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId) return i;
+                const segments = (i.segments ?? []).filter(
+                    (s) => s.startedAt !== action.segmentStartedAt,
+                );
+                const status = i.status === 'engaged' && segments.every((s) => s.endedAt)
+                    ? 'planned' as const
+                    : i.status;
+                return { ...i, status, segments };
+            });
+            return { ...state, plan: { ...plan, todaysHabits } };
+        }
+
+        case 'DELETE_TASK_ENGAGEMENT_SEGMENT': {
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId) return lt;
+                const segments = (lt.segments ?? []).filter(
+                    (s) => s.startedAt !== action.segmentStartedAt,
+                );
+                const status = lt.status === 'engaged' && segments.every((s) => s.endedAt)
+                    ? 'pending' as const
+                    : lt.status;
+                return { ...lt, status, segments };
+            });
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'DELETE_HABIT_RESCHEDULE_ENTRY': {
+            const todaysHabits = plan.todaysHabits.map((i) => {
+                if (i.id !== action.instanceId) return i;
+                const rescheduleHistory = (i.rescheduleHistory ?? []).filter(
+                    (e) => e.at !== action.rescheduleAt,
+                );
+                return { ...i, rescheduleHistory };
+            });
+            return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         // ---- v6: Light Pool log actions ----

@@ -56,7 +56,7 @@ A stabilizer habit's manifestation for today. Lives on `DayPlan.todaysHabits`, i
 - **engagement rows** — **one per `EngagementSegment`** across all habit instances + tasks (individual, not cumulative — a Start/Stop/Start produces two rows). Each carries the `segment`; the row renders the ticking `<EngagementTimer>` (live while the segment is open).
 - **reschedule rows** — one per `rescheduleHistory` entry, rendered as "⤴ {title} · {from} → {to} · Rescheduled" at the clock time it happened.
 
-The dashboard renders this in a dedicated **`EngagementLogCard`** (a self-headed sibling of `HabitInstanceCard` on the right rail — the two are independent surfaces, each hidden when empty; both exported from `HabitInstanceCard.tsx`). It is the in-day record of "what actually happened today", and the read interface a future durable `life.engagementHistory` would feed (see [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)) — a flat list of segments harvested across days; the helper signature stays stable so the upgrade swaps the input source, not the consumer. The `HabitInstanceCard` ("Today's Habits") shows no "rescheduled" tag — reschedules live in the log.
+The dashboard renders this in a dedicated **`EngagementLogCard`** (a self-headed sibling of `HabitInstanceCard` on the right rail — the two are independent surfaces, each hidden when empty; both exported from `HabitInstanceCard.tsx`). It is the in-day record of "what actually happened today", and the read interface a future durable `life.engagementHistory` would feed (see [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)) — a flat list of segments harvested across days; the helper signature stays stable so the upgrade swaps the input source, not the consumer. The `HabitInstanceCard` ("Today's Habits") shows no "rescheduled" tag — reschedules live in the log. Closed (non-live) rows are individually deletable from the card via `DELETE_TASK_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_RESCHEDULE_ENTRY`.
 
 **Refresh merge (`REFRESH_TODAYS_HABITS`):** Called on Step 1 mount and whenever habits / Todoist cache change. For each habit:
 - If no existing instance → append the computed one.
@@ -114,7 +114,7 @@ A first-class recurring entity. Discriminated by `kind`:
 
 **Today's instances** (`computeTodaysHabitInstances`): filters to active stabilizers with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; applies `windowBehavior === 'strict'` to drop past-window instances. The reducer is idempotent — any habit already represented in `plan.todaysHabits` is skipped.
 
-**Overdue reconcile** (v6.4, `findOverdueStabilizers` + `reconcileOverdueStabilizers`): Todoist's recurrence engine only advances on completion, so a habit missed yesterday sits at yesterday's due date and never surfaces. On Step 1 mount (once per session), overdue stabilizers whose recurrence + season still match today get their Todoist `due_datetime` (or `due_date`) bumped forward to today; `due_string` is preserved so the rule continues to drive future occurrences. The helper returns an optimistic patch map so `computeTodaysHabitInstances` runs against the bumped state in the same tick. Skip is handled in the UI by also calling Todoist `completeTask` so the recurrence engine advances cleanly without needing the next-day bump — see `SKIP_HABIT_INSTANCE`.
+**Overdue reconcile** (v6.4 helpers, v6.5 driver — `findOverdueStabilizers` + `reconcileOverdueStabilizers`): Todoist's recurrence engine only advances on completion, so a habit missed yesterday sits at yesterday's due date and never surfaces. Overdue stabilizers whose recurrence + season still match today get their Todoist `due_datetime` (or `due_date`) bumped forward to today; `due_string` is preserved so the rule continues to drive future occurrences. The helper returns an optimistic patch map so `computeTodaysHabitInstances` runs against the bumped state in the same tick. **As of v6.5 this is no longer fired from Step 1** — the central `ReconciliationProvider` runs it (preceded by a needs-sync repair) on first hydration and on window focus; see [synthesis.md](./synthesis.md) "Habit-Task Sync → Central reconciliation". Skip is handled in the UI by also calling Todoist `completeTask` so the recurrence engine advances cleanly without needing the next-day bump — see `SKIP_HABIT_INSTANCE`.
 
 ### BacklogEntry
 
@@ -159,7 +159,7 @@ DayPlan          -->  SessionSlot[]  (via AppSettings.sessionSlots)
 
 ## 3. Reducer Action Catalog
 
-All state mutations flow through the `DayPlanContext` reducer (`src/context/DayPlanContext.tsx`). The `Action` type is a discriminated union of ~45 variants.
+All state mutations flow through the `DayPlanContext` reducer (`src/context/DayPlanContext.tsx`). The `Action` type is a discriminated union of ~57 variants.
 
 ### 3.1 Intention Actions
 
@@ -187,6 +187,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `REORDER_SESSION_TASKS` | `sessionId, taskIds` | Replaces task order within a session |
 | `START_TASK_ENGAGEMENT` | `todoistId, now` | Sets `status = 'engaged'`. Pushes a new open segment `{ startedAt: now }` to `segments` (no-op if one is open). |
 | `STOP_TASK_ENGAGEMENT` | `todoistId, now` | Closes the open segment (`endedAt = now`), returns `status` to `'pending'`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
+| `DELETE_TASK_ENGAGEMENT_SEGMENT` | `todoistId, segmentStartedAt` | Removes the matching segment from a LinkedTask (deletes one Engagement Log row). If it was the open segment and none remain open, returns `status` to `'pending'`. |
 
 ### 3.3 Habit Instance Actions
 
@@ -198,6 +199,8 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes any open segment. Caller completes Todoist task. |
 | `SKIP_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'skipped'`. Terminal. Closes any open segment so an in-flight engagement (Start then ✕ Skip) is recorded. Caller (v6.4) posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task, then fires `completeTask` so the recurrence engine advances. |
 | `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | **v6.4: always in-place.** Updates `targetTime`, stamps `rescheduledAt`, appends a `RescheduleEventEntry` to `rescheduleHistory`. Keeps `id`/`status`/`segments` (engaged instances keep their open segment running). Logged regardless of engagement. No clone, no Todoist write. |
+| `DELETE_HABIT_ENGAGEMENT_SEGMENT` | `instanceId, segmentStartedAt` | Removes the matching segment from a `TodaysHabitInstance` (deletes one Engagement Log row). If it was the open segment and none remain open, returns `status` to `'planned'`. |
+| `DELETE_HABIT_RESCHEDULE_ENTRY` | `instanceId, rescheduleAt` | Removes the matching `RescheduleEventEntry` from `rescheduleHistory` (deletes one reschedule row from the Engagement Log). Does not restore `targetTime`. |
 
 ### 3.4 Backlog Actions
 

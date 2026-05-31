@@ -193,38 +193,49 @@ export function HabitInstanceCard() {
  * on the right rail; hidden entirely until there's something to show.
  */
 export function EngagementLogCard() {
-    const { plan } = useDayPlan();
+    const { plan, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
 
     const rows = buildEngagementLog(plan, taskMap);
     if (rows.length === 0) return null;
 
+    const deleteRow = (row: (typeof rows)[number]) => {
+        if (row.entryType === 'reschedule') {
+            dispatch({ type: 'DELETE_HABIT_RESCHEDULE_ENTRY', instanceId: row.sourceId, rescheduleAt: row.at });
+        } else if (row.kind === 'habit') {
+            dispatch({ type: 'DELETE_HABIT_ENGAGEMENT_SEGMENT', instanceId: row.sourceId, segmentStartedAt: row.segment.startedAt });
+        } else {
+            dispatch({ type: 'DELETE_TASK_ENGAGEMENT_SEGMENT', todoistId: row.sourceId, segmentStartedAt: row.segment.startedAt });
+        }
+    };
+
     return (
         <section className="space-y-2">
             <h3 className={SECTION_HEADING}>Engagement Log</h3>
-            <Card>
+            <Card className="py-2 px-2">
                 <div className="max-h-[24rem] overflow-y-auto scrollbar-subtle -mr-1 pr-1">
-                    <ul className="space-y-1.5">
+                    <ul className="space-y-0.5">
                         {rows.map((row) => {
                             if (row.entryType === 'reschedule') {
                                 const at = formatLocalTimeOfDay(row.at);
                                 const from = row.fromTime ?? 'anytime';
                                 const to = row.toTime ?? 'anytime';
                                 return (
-                                    <li key={row.key} className="flex items-center gap-2 px-2 py-1.5 rounded text-sm">
-                                        <span className="text-[10px] tabular-nums text-text-light flex-shrink-0 min-w-[6.5rem]">
-                                            {at}
-                                        </span>
-                                        <span className="text-sm" aria-hidden>⤴</span>
-                                        <span className="flex-1 text-sm truncate" title={row.title}>
-                                            {row.title}
-                                        </span>
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
+                                    <li key={row.key} className="group flex items-center gap-1.5 px-1.5 py-1 rounded text-xs hover:bg-surface-dark/50 transition-colors">
+                                        <span className="tabular-nums text-text-light flex-shrink-0">{at}</span>
+                                        <span aria-hidden>⤴</span>
+                                        <span className="flex-1 min-w-0 truncate" title={row.title}>{row.title}</span>
+                                        <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
                                             {from} → {to}
                                         </span>
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light/70 flex-shrink-0">
-                                            Rescheduled
-                                        </span>
+                                        <button
+                                            onClick={() => deleteRow(row)}
+                                            className="w-4 h-4 flex items-center justify-center rounded text-[10px] text-text-light/40 hover:text-red-400 hover:bg-surface-dark transition-colors cursor-pointer opacity-0 group-hover:opacity-100 flex-shrink-0"
+                                            title="Delete entry"
+                                            aria-label="Delete reschedule entry"
+                                        >
+                                            ✕
+                                        </button>
                                     </li>
                                 );
                             }
@@ -234,19 +245,27 @@ export function EngagementLogCard() {
                             return (
                                 <li
                                     key={row.key}
-                                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm ${live ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}
+                                    className={`group flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${live ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'hover:bg-surface-dark/50'}`}
                                 >
-                                    <span className="text-[10px] tabular-nums text-text-light flex-shrink-0 min-w-[6.5rem]">
+                                    <span className="tabular-nums text-text-light flex-shrink-0">
                                         {start}{end ? ` → ${end}` : ' → …'}
                                     </span>
-                                    <span className="text-sm" aria-hidden>{row.kind === 'habit' ? '🔁' : '📝'}</span>
-                                    <span className="flex-1 text-sm truncate" title={row.title}>
-                                        {row.title}
-                                    </span>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 inline-flex items-center gap-1 ${live ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-surface-dark text-text-light'}`}>
+                                    <span aria-hidden>{row.kind === 'habit' ? '🔁' : '📝'}</span>
+                                    <span className="flex-1 min-w-0 truncate" title={row.title}>{row.title}</span>
+                                    <span className={`text-[10px] px-1 py-px rounded-full flex-shrink-0 inline-flex items-center gap-1 ${live ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-surface-dark text-text-light'}`}>
                                         {live && <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" aria-hidden />}
                                         <EngagementTimer segment={row.segment} />
                                     </span>
+                                    {!live && (
+                                        <button
+                                            onClick={() => deleteRow(row)}
+                                            className="w-4 h-4 flex items-center justify-center rounded text-[10px] text-text-light/40 hover:text-red-400 hover:bg-surface-dark transition-colors cursor-pointer opacity-0 group-hover:opacity-100 flex-shrink-0"
+                                            title="Delete entry"
+                                            aria-label="Delete engagement entry"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
                                 </li>
                             );
                         })}
