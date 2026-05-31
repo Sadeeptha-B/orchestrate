@@ -63,10 +63,10 @@ Nine routes, all defined in `AppRoutes` inside `App.tsx`:
 |---|---|---|
 | `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` (hub) |
 | `/setup` | `Wizard` | Accessible when `setupComplete` is true (editing) or navigated from Welcome |
-| `/life` | `LifeView` | Always reachable. Hub: active season + anchor habits + all active habits |
+| `/life` | `LifeView` | Always reachable. Hub: active season + all active habits (anchors sorted first) |
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
-| `/habits` | `HabitsLibrary` | Always reachable. CRUD habits with anchor protection |
+| `/habits` | `HabitsLibrary` | Always reachable. CRUD habits; deleting an active anchor prompts a confirm |
 | `/rest-cues` | `RestCuesManager` | Always reachable. CRUD True Rest cues |
 | `/settings` | `SettingsPage` | Always reachable. Vertical-tab layout: Integrations, Capacity, Data |
 | `/guide` | `UserGuide` | Always reachable. In-app user guide. Linked from the About modal. |
@@ -93,7 +93,7 @@ Life routes are always reachable (no `setupComplete` gate) — `setupComplete` i
 | **Light-coherent** | `kind: 'light-coherent'` habit. Micro-gap filler. Surfaces in the **Light Pool**, logged via `plan.habitLog`. Never enters the task plan. |
 | **Light Pool** | Dashboard panel + `/life` section listing today's active light-coherent habits. Start/Complete writes a `HabitLogEntry`. |
 | **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via `/rest-cues`. Surfaced on Dashboard `InsightCard`, in the check-in modal for low-energy states, and as a between-session banner. |
-| **Anchor habit** | `isAnchor: true` -- protected from accidental deletion while active. Orthogonal to `kind`. |
+| **Anchor habit** | `isAnchor: true` -- a load-bearing habit (sleep, meditation, gym, shutdown, review). Pure importance tag, orthogonal to `kind`: sorts first in habit lists and prompts a confirm before deleting an active one. Reserved for recovery-mode / Minimum Viable Day. |
 | **Session** | A configurable time block (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
 | **Session capacity** | Advisory arithmetic: `(session length - buffer) - total estimatedMinutes`. Status `over` at >150% -- non-blocking banner, wizard always advances. |
 | **Check-in** | Hourly prompt during active sessions: feeling + work type -> playlist suggestion. Low-resource states surface Light Pool rows + True Rest cue. `stuck` adds avoidance-note capture. |
@@ -193,7 +193,7 @@ Manages:
 **Cross-slice invariants the reducer enforces:**
 - Activating a season auto-deactivates the previously active one.
 - Deleting a season clears its id from any habit's `seasonIds`.
-- Anchor habits cannot be deleted while active (`DELETE_HABIT` no-ops; UI offers to deactivate first).
+- Anchor habits have no reducer-level deletion guard (`isAnchor` is a UI-only confirm prompt; `DELETE_HABIT` always removes once dispatched).
 - Deleting a habit also drops any `TodaysHabitInstance` rows for it from `plan.todaysHabits`.
 - `REFRESH_TODAYS_HABITS` is idempotent -- skips habits already represented. Payload precomputed by `lib/habitsTodoistSync.ts -> computeTodaysHabitInstances(...)`. Only stabilizer habits with a `todoistTaskId` whose Todoist task is due today + unchecked qualify.
 - Habit instance lifecycle: `START_HABIT_INSTANCE` pushes a new open `EngagementSegment`; `STOP_HABIT_INSTANCE` closes it (→ `planned`); `COMPLETE_HABIT_INSTANCE` closes + sets status, caller closes the Todoist occurrence; `SKIP_HABIT_INSTANCE` keeps the instance (prevents re-add); `RESCHEDULE_HABIT_INSTANCE` is always in-place (moves `targetTime`, stamps `rescheduledAt`, appends to `rescheduleHistory`; segments/status preserved). **No Todoist write** for start/stop/reschedule. `REFRESH_TODAYS_HABITS` merges habit-form edits into existing planned instances (refreshes `targetTime`/`durationMinutes`/`titleSnapshot`), but preserves the user-chosen time when `rescheduledAt` is set.

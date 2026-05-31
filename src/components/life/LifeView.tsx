@@ -5,7 +5,7 @@ import { Card } from '../ui/Card';
 import { LifeShell } from './LifeShell';
 import { LightPoolSection } from './LightPoolSection';
 import { findActiveSeason } from '../../lib/seasons';
-import { getActiveHabits, getAnchorHabits } from '../../lib/habits';
+import { getActiveHabits } from '../../lib/habits';
 import { restCues as defaultRestCues } from '../../data/restCues';
 
 export function LifeView() {
@@ -13,7 +13,12 @@ export function LifeView() {
     const navigate = useNavigate();
     const activeSeason = findActiveSeason(life);
     const activeHabits = getActiveHabits(life);
-    const anchorHabits = getAnchorHabits(activeHabits);
+    // Anchors are the load-bearing habits — float them to the front of the list so they read
+    // as foundational without needing a separate card.
+    const sortedActiveHabits = [...activeHabits].sort((a, b) => {
+        if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
+        return a.name.localeCompare(b.name);
+    });
     const isCustomized = life.restCues !== undefined;
     const restCueCount = (life.restCues ?? defaultRestCues).length;
 
@@ -65,35 +70,6 @@ export function LifeView() {
                     )}
                 </Card>
 
-                <Card>
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-medium">Anchor habits</h3>
-                        <Button variant="ghost" size="sm" onClick={() => navigate('/habits')}>
-                            Manage
-                        </Button>
-                    </div>
-                    {anchorHabits.length === 0 ? (
-                        <div className="text-sm text-text-light">
-                            <p className="mb-3">
-                                No anchor habits set. Anchors (sleep, meditation, gym, shutdown) are
-                                the foundation that protects everything else.
-                            </p>
-                            <Button size="sm" onClick={() => navigate('/habits')}>
-                                Add an anchor
-                            </Button>
-                        </div>
-                    ) : (
-                        <ul className="text-sm space-y-1.5">
-                            {anchorHabits.map((h) => (
-                                <li key={h.id} className="flex items-center gap-2">
-                                    <span className="text-accent">◆</span>
-                                    <span>{h.name}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </Card>
-
                 <LightPoolSection />
 
                 <Card>
@@ -126,7 +102,7 @@ export function LifeView() {
                         </p>
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {activeHabits.map((h) => (
+                            {sortedActiveHabits.map((h) => (
                                 <div
                                     key={h.id}
                                     className="px-3 py-2 rounded-lg border border-border text-sm flex items-center justify-between"

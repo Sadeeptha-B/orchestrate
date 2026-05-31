@@ -91,6 +91,8 @@ export function HabitsLibrary() {
     }, [settings.habitsTodoistProjectId, projects]);
 
     const tryDelete = (habit: Habit) => {
+        // Anchors are load-bearing, so deleting an active one asks for confirmation first.
+        // Everything else deletes immediately.
         if (habit.isAnchor && habit.active) {
             setConfirmDelete(habit);
             return;
@@ -355,13 +357,13 @@ export function HabitsLibrary() {
             <Modal
                 open={confirmDelete !== null}
                 onClose={() => setConfirmDelete(null)}
-                title="Anchor habit — deactivate first"
+                title="Delete anchor habit?"
             >
                 {confirmDelete && (
                     <div>
                         <p className="text-sm text-text-light mb-4">
-                            <strong>{confirmDelete.name}</strong> is an active anchor habit.
-                            Deactivate it before deleting — anchors are protected on purpose.
+                            <strong>{confirmDelete.name}</strong> is an anchor — one of your
+                            load-bearing habits. Delete it anyway?
                         </p>
                         <div className="flex justify-end gap-2">
                             <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(null)}>
@@ -370,15 +372,13 @@ export function HabitsLibrary() {
                             <Button
                                 variant="secondary"
                                 size="sm"
+                                className="text-red-500 hover:text-red-600"
                                 onClick={() => {
-                                    dispatch({
-                                        type: 'TOGGLE_HABIT_ACTIVE',
-                                        habitId: confirmDelete.id,
-                                    });
+                                    dispatch({ type: 'DELETE_HABIT', habitId: confirmDelete.id });
                                     setConfirmDelete(null);
                                 }}
                             >
-                                Deactivate now
+                                Delete
                             </Button>
                         </div>
                     </div>

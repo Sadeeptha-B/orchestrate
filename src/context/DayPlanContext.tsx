@@ -871,9 +871,8 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'DELETE_HABIT': {
-            const habit = state.life.habits.find((h) => h.id === action.habitId);
-            // Anchor habits cannot be deleted while active — caller must deactivate first.
-            if (habit?.isAnchor && habit.active) return state;
+            // `isAnchor` is a pure importance tag — it no longer blocks deletion. The UI shows
+            // a confirm dialog for active anchors, but deletion is always permitted once confirmed.
             const habits = state.life.habits.filter((h) => h.id !== action.habitId);
             // v6.3: also drop today's instances for this habit from `plan.todaysHabits`.
             const todaysHabits = plan.todaysHabits.filter((i) => i.habitId !== action.habitId);
