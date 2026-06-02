@@ -14,6 +14,7 @@ import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
 import { computeTodaysHabitInstances } from '../../lib/habitsTodoistSync';
+import { computeTodaysMicroGapInstances, habitKindOf } from '../../lib/habits';
 import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
 import type { LinkedTask } from '../../types';
 
@@ -21,21 +22,18 @@ export function Step1Intentions() {
     const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
 
-    // v6.3: surface today's stabilizer habits as TodaysHabitInstance entries on the timeline.
-    // Re-fires when the Todoist cache size, habits, active season, or existing instances change.
-    // REFRESH_TODAYS_HABITS dedupes by habitId, so redundant dispatches are harmless no-ops.
+    // v6.3: surface today's habits as TodaysHabitInstance entries on the timeline.
+    // v6.7: also surface today's micro-gaps (no Todoist; their own dashboard surface). Both feed
+    // the same REFRESH_TODAYS_HABITS, which dedupes by habitId so redundant dispatches are no-ops.
     //
     // v6.5: the overdue-reconcile half (bumping yesterday's missed habits forward to today)
-    // is now owned by `ReconciliationProvider` — Step 1 no longer fires it directly. This
-    // effect only handles the "compute & dispatch due-today instances" half.
+    // is owned by `ReconciliationProvider` — Step 1 only computes & dispatches due-today instances.
     useEffect(() => {
-        const instances = computeTodaysHabitInstances({
-            life,
-            plan,
-            taskMap,
-            now: new Date(),
-            taskCaps: settings.taskCapDefaults ?? DEFAULT_TASK_CAPS,
-        });
+        const taskCaps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
+        const instances = [
+            ...computeTodaysHabitInstances({ life, plan, taskMap, now: new Date(), taskCaps }),
+            ...computeTodaysMicroGapInstances({ life, plan, taskCaps }),
+        ];
         if (instances.length > 0) {
             dispatch({ type: 'REFRESH_TODAYS_HABITS', instances });
         }
@@ -118,10 +116,11 @@ export function Step1Intentions() {
         [plan.intentions],
     );
 
-    // v6.3: count today's habit instances for an informational chip in Phase 1.
+    // v6.3: count today's timeline-habit instances for an informational chip in Phase 1.
+    // v6.7: exclude micro-gaps — they're not "on the timeline".
     const habitTaskCount = useMemo(
-        () => plan.todaysHabits.filter((i) => i.status !== 'skipped').length,
-        [plan.todaysHabits],
+        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && habitKindOf(life, i) === 'habit').length,
+        [plan.todaysHabits, life],
     );
 
     const addIntention = () => {
@@ -584,7 +583,11 @@ export function Step1Intentions() {
                                 linkedTaskIds: currentMappingIntention.linkedTaskIds,
                                 allLinkedTasks: plan.linkedTasks,
                                 intentionTitles: intentionTitleMap,
-                                habitTodoistIds: new Set(plan.todaysHabits.map((i) => i.todoistTaskId)),
+                                habitTodoistIds: new Set(
+                                    plan.todaysHabits
+                                        .map((i) => i.todoistTaskId)
+                                        .filter((id): id is string => Boolean(id)),
+                                ),
                                 onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentMappingIntention.id, todoistId }),
                                 onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
                             } : undefined}

@@ -1,4 +1,12 @@
-import type { Habit, LifeContext, TodaysHabitInstance } from '../types';
+import type {
+    DayPlan,
+    Habit,
+    HabitKind,
+    HabitRecurrence,
+    LifeContext,
+    TaskCapDefaults,
+    TodaysHabitInstance,
+} from '../types';
 import { timeToMinutes } from './time';
 
 export function getActiveHabits(life: LifeContext): Habit[] {
@@ -11,15 +19,25 @@ export function getAnchorHabits(habits: Habit[]): Habit[] {
 
 /**
  * Split habits into the two kinds, preserving input order within each bucket.
- * Shared by the surfaces that group habits by kind (LifeView, SeasonDetail).
+ * Shared by the surfaces that group habits by kind (LifeView, SeasonDetail, HabitsLibrary).
  */
-export function partitionByKind(habits: Habit[]): { stabilizers: Habit[]; lightCoherent: Habit[] } {
-    const stabilizers: Habit[] = [];
-    const lightCoherent: Habit[] = [];
+export function partitionByKind(habits: Habit[]): { habits: Habit[]; microGaps: Habit[] } {
+    const habitsOut: Habit[] = [];
+    const microGaps: Habit[] = [];
     for (const h of habits) {
-        (h.kind === 'stabilizer' ? stabilizers : lightCoherent).push(h);
+        (h.kind === 'micro-gap' ? microGaps : habitsOut).push(h);
     }
-    return { stabilizers, lightCoherent };
+    return { habits: habitsOut, microGaps };
+}
+
+/**
+ * v6.7: resolve the kind of a today-instance by joining back to its parent habit. Consumers
+ * use this instead of the old `!targetTime` proxy, which is no longer reliable now that
+ * 'habit'-kind instances can also be untimed ("anytime"). Falls back to `'habit'` if the
+ * parent habit was deleted (the instance is dropped from the plan anyway).
+ */
+export function habitKindOf(life: LifeContext, instance: TodaysHabitInstance): HabitKind {
+    return life.habits.find((h) => h.id === instance.habitId)?.kind ?? 'habit';
 }
 
 /**
@@ -35,19 +53,62 @@ export function compareHabitInstancesByTime(a: TodaysHabitInstance, b: TodaysHab
 }
 
 /**
- * True if the habit's recurrence rule matches the given local-calendar date.
+ * True if a recurrence rule matches the given local-calendar date.
  * `dateISO` is YYYY-MM-DD; parsed as local date to avoid timezone off-by-one.
+ * v6.7: extracted so recurring-focus cadence can reuse it without a full Habit.
  */
-export function habitMatchesDate(habit: Habit, dateISO: string): boolean {
+export function recurrenceMatchesDate(recurrence: HabitRecurrence, dateISO: string): boolean {
     const [y, m, d] = dateISO.split('-').map(Number);
     const dow = new Date(y, m - 1, d).getDay(); // 0=Sun..6=Sat
-    switch (habit.recurrence.kind) {
+    switch (recurrence.kind) {
         case 'daily':
             return true;
         case 'weekdays':
             return dow >= 1 && dow <= 5;
         case 'weekly':
         case 'custom':
-            return habit.recurrence.daysOfWeek?.includes(dow) ?? false;
+            return recurrence.daysOfWeek?.includes(dow) ?? false;
     }
+}
+
+/** True if the habit's recurrence rule matches the given local-calendar date. */
+export function habitMatchesDate(habit: Habit, dateISO: string): boolean {
+    return recurrenceMatchesDate(habit.recurrence, dateISO);
+}
+
+/**
+ * v6.7: compute today's micro-gap instances — the no-Todoist counterpart to
+ * `computeTodaysHabitInstances`. Filters active 'micro-gap' habits whose recurrence + season
+ * scope match today and that aren't already represented in `plan.todaysHabits`. Emits untimed,
+ * non-Todoist instances; the repeatable lifecycle (planned↔engaged) is driven by the existing
+ * START/STOP reducer actions. Idempotent against `plan.todaysHabits` (caller passes the full plan;
+ * `REFRESH_TODAYS_HABITS` further dedupes by `habitId`).
+ */
+export function computeTodaysMicroGapInstances(args: {
+    life: LifeContext;
+    plan: DayPlan;
+    taskCaps: TaskCapDefaults;
+}): TodaysHabitInstance[] {
+    const { life, plan, taskCaps } = args;
+    const dateISO = plan.date;
+    const activeSeasonId = life.activeSeasonId;
+    const existingHabitIds = new Set(plan.todaysHabits.map((i) => i.habitId));
+    const out: TodaysHabitInstance[] = [];
+
+    for (const habit of life.habits) {
+        if (!habit.active) continue;
+        if (habit.kind !== 'micro-gap') continue;
+        if (existingHabitIds.has(habit.id)) continue;
+        if (!habitMatchesDate(habit, dateISO)) continue;
+        if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;
+
+        out.push({
+            id: crypto.randomUUID(),
+            habitId: habit.id,
+            titleSnapshot: habit.name,
+            durationMinutes: habit.targetDurationMinutes ?? taskCaps.microGap,
+            status: 'planned',
+        });
+    }
+    return out;
 }

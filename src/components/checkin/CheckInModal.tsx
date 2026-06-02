@@ -3,10 +3,11 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
+import { useTodoistData } from '../../hooks/useTodoist';
 import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import { spotifyPlaylistId } from '../../lib/spotify';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
+import { habitKindOf } from '../../lib/habits';
 import { TrueRestCard } from '../dashboard/TrueRestCard';
 import type { WorkType, CheckIn, LinkedTask, TodaysHabitInstance } from '../../types';
 
@@ -32,10 +33,9 @@ interface CheckInModalProps {
 }
 
 export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalProps) {
-    const { plan, settings, dispatch } = useDayPlan();
+    const { plan, life, settings, dispatch } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
-    const { completeTask } = useTodoistActions();
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
     const [workType, setWorkType] = useState<WorkType | null>(null);
     const [notes, setNotes] = useState('');
@@ -43,17 +43,15 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
 
     const suggestedPlaylist = workType ? getPlaylistForWorkType(workType) : undefined;
 
-    // v6: surface a couple of anytime habits + a True Rest cue when the user is in a low-resource state.
+    // v6: surface a couple of micro-gaps + a True Rest cue when the user is in a low-resource state.
     const lowState =
         feeling === 'struggling' || feeling === 'stuck' || workType === 'low-energy' || workType === 'restless';
-    // v6.6: anytime (light-coherent) instances are the "smaller move" — untimed, non-terminal rows.
-    const anytimeInstances = useMemo(
+    // v6.7: micro-gaps are the "smaller move" — repeatable, no Todoist. Start engages a rep.
+    const microGapInstances = useMemo(
         () => (lowState
-            ? plan.todaysHabits
-                .filter((i) => !i.targetTime && (i.status === 'planned' || i.status === 'engaged'))
-                .slice(0, 2)
+            ? plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'micro-gap').slice(0, 2)
             : []),
-        [lowState, plan.todaysHabits],
+        [lowState, plan.todaysHabits, life],
     );
 
     const toggleInstance = (i: TodaysHabitInstance) =>
@@ -62,12 +60,6 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
             instanceId: i.id,
             now: new Date().toISOString(),
         });
-    const completeInstance = (i: TodaysHabitInstance) => {
-        dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId: i.id, now: new Date().toISOString() });
-        completeTask(i.todoistTaskId).catch((err) => {
-            console.error(`[habits] checkin complete: Todoist task ${i.todoistTaskId} failed:`, err);
-        });
-    };
 
     const linkedTaskMap = useMemo(
         () => buildLinkedTaskMap(plan.linkedTasks),
@@ -189,22 +181,23 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                     </div>
                 )}
 
-                {/* v6: low-state companion surfaces — True Rest cue always, anytime habits when non-empty */}
+                {/* v6: low-state companion surfaces — True Rest cue always, micro-gaps when non-empty */}
                 {lowState && (
                     <div className="space-y-2 pt-1 border-t border-border">
                         <p className="text-[11px] uppercase tracking-wider text-text-light">
                             Try a smaller move
                         </p>
                         <TrueRestCard variant="inline" heading="True Rest" />
-                        {anytimeInstances.length > 0 && (
+                        {microGapInstances.length > 0 && (
                             <ul className="space-y-1.5">
-                                {anytimeInstances.map((i) => {
+                                {microGapInstances.map((i) => {
                                     const isEngaged = i.status === 'engaged';
                                     return (
                                         <li
                                             key={i.id}
                                             className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${isEngaged ? 'border-amber-300 bg-amber-50/50 dark:bg-amber-900/10' : 'border-border'}`}
                                         >
+                                            <span aria-hidden className="flex-shrink-0">✦</span>
                                             <span className="flex-1 min-w-0 truncate" title={i.titleSnapshot}>
                                                 {i.titleSnapshot}
                                             </span>
@@ -212,17 +205,9 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
                                                 onClick={() => toggleInstance(i)}
                                                 className="w-6 h-6 flex items-center justify-center rounded text-xs text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
                                                 title={isEngaged ? 'Stop' : 'Start'}
-                                                aria-label={isEngaged ? 'Stop engagement timer' : 'Start engagement timer'}
+                                                aria-label={isEngaged ? 'Stop engagement timer' : 'Start a rep'}
                                             >
                                                 {isEngaged ? '■' : '▶'}
-                                            </button>
-                                            <button
-                                                onClick={() => completeInstance(i)}
-                                                className="w-6 h-6 flex items-center justify-center rounded text-xs text-text-light hover:bg-surface-dark hover:text-success transition-colors cursor-pointer"
-                                                title="Mark complete"
-                                                aria-label="Complete habit"
-                                            >
-                                                ✓
                                             </button>
                                         </li>
                                     );

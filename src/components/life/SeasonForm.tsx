@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { inputClass, labelClass } from '../ui/formStyles';
 import { todayISO } from '../../lib/time';
-import type { Season, SeasonCapacity } from '../../types';
+import type { HabitRecurrenceKind, RecurringFocus, Season, SeasonCapacity } from '../../types';
+
+const FOCUS_DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 function splitLines(raw: string) {
     return raw
@@ -53,6 +55,24 @@ export function SeasonForm({
             : '',
     );
     const [capacityNotes, setCapacityNotes] = useState(initial?.capacityBudget?.notes ?? '');
+    const [focuses, setFocuses] = useState<RecurringFocus[]>(initial?.recurringFocuses ?? []);
+
+    const addFocus = () =>
+        setFocuses((f) => [...f, { id: crypto.randomUUID(), title: '', recurrence: { kind: 'daily' }, active: true }]);
+    const updateFocus = (id: string, patch: Partial<RecurringFocus>) =>
+        setFocuses((f) => f.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    const setFocusKind = (id: string, kind: HabitRecurrenceKind) =>
+        setFocuses((f) => f.map((x) => (x.id === id
+            ? { ...x, recurrence: { kind, ...(kind === 'weekly' ? { daysOfWeek: x.recurrence.daysOfWeek ?? [] } : {}) } }
+            : x)));
+    const toggleFocusDay = (id: string, day: number) =>
+        setFocuses((f) => f.map((x) => {
+            if (x.id !== id) return x;
+            const days = x.recurrence.daysOfWeek ?? [];
+            const next = days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort();
+            return { ...x, recurrence: { ...x.recurrence, daysOfWeek: next } };
+        }));
+    const removeFocus = (id: string) => setFocuses((f) => f.filter((x) => x.id !== id));
 
     const trimmedCapacityNotes = capacityNotes.trim();
     const hasInvalidDateRange = Boolean(endDate && startDate && endDate < startDate);
@@ -78,6 +98,9 @@ export function SeasonForm({
             successCriteria: successCriteria.trim(),
             capacityBudget,
             active,
+            recurringFocuses: focuses
+                .filter((f) => f.title.trim())
+                .map((f) => ({ ...f, title: f.title.trim() })),
             ...(initial?.archivedAt ? { archivedAt: initial.archivedAt } : {}),
         });
     };
@@ -161,6 +184,85 @@ export function SeasonForm({
                     onChange={(e) => setSuccessCriteria(e.target.value)}
                     placeholder="What does a successful end of season look like?"
                 />
+            </div>
+
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label className={labelClass}>Recurring focuses</label>
+                    <Button variant="ghost" size="sm" onClick={addFocus}>+ Add focus</Button>
+                </div>
+                <p className="text-[11px] text-text-light mb-2">
+                    Recurring work-threads (e.g. "Learn redis") that decompose into tasks. On matching days they
+                    appear as a "+ Add" chip in the planner — click to seed an intention you then break down.
+                </p>
+                {focuses.length === 0 ? (
+                    <p className="text-xs text-text-light italic">No recurring focuses.</p>
+                ) : (
+                    <div className="space-y-2">
+                        {focuses.map((f) => {
+                            const showDays = f.recurrence.kind === 'weekly' || f.recurrence.kind === 'custom';
+                            return (
+                                <div key={f.id} className="rounded-lg border border-border p-2 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            className={inputClass}
+                                            value={f.title}
+                                            onChange={(e) => updateFocus(f.id, { title: e.target.value })}
+                                            placeholder="e.g. Learn redis"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => removeFocus(f.id)}
+                                            className="text-text-light hover:text-red-500 text-sm cursor-pointer flex-shrink-0 px-1"
+                                            title="Remove focus"
+                                            aria-label="Remove focus"
+                                        >
+                                            &times;
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <select
+                                            className={`${inputClass} w-auto`}
+                                            value={f.recurrence.kind === 'custom' ? 'weekly' : f.recurrence.kind}
+                                            onChange={(e) => setFocusKind(f.id, e.target.value as HabitRecurrenceKind)}
+                                        >
+                                            <option value="daily">Daily</option>
+                                            <option value="weekdays">Weekdays</option>
+                                            <option value="weekly">Specific days</option>
+                                        </select>
+                                        {showDays && (
+                                            <div className="flex gap-1">
+                                                {FOCUS_DAY_LABELS.map((label, idx) => (
+                                                    <button
+                                                        key={idx}
+                                                        type="button"
+                                                        onClick={() => toggleFocusDay(f.id, idx)}
+                                                        className={`w-7 h-7 text-xs rounded-md border transition-colors cursor-pointer ${
+                                                            (f.recurrence.daysOfWeek ?? []).includes(idx)
+                                                                ? 'bg-accent text-white border-accent'
+                                                                : 'border-border hover:bg-surface-dark/50'
+                                                        }`}
+                                                        aria-label={`Day ${idx}`}
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <label className="flex items-center gap-1.5 text-xs text-text-light ml-auto">
+                                            <input
+                                                type="checkbox"
+                                                checked={f.active}
+                                                onChange={(e) => updateFocus(f.id, { active: e.target.checked })}
+                                            />
+                                            Active
+                                        </label>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
             <details className="rounded-lg border border-border p-3">

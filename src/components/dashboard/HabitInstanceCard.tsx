@@ -2,12 +2,12 @@ import { Card } from '../ui/Card';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
-import { compareHabitInstancesByTime } from '../../lib/habits';
+import { compareHabitInstancesByTime, habitKindOf } from '../../lib/habits';
 import {
     buildEngagementLog,
     formatLocalTimeOfDay,
 } from '../../lib/engagementLog';
-import { openSegment } from '../../lib/engagement';
+import { openSegment, totalEngagedSeconds } from '../../lib/engagement';
 import { EngagementTimer } from './EngagementTimer';
 import { HabitTimeEditor } from './HabitTimeEditor';
 import type { TodaysHabitInstance } from '../../types';
@@ -15,13 +15,13 @@ import type { TodaysHabitInstance } from '../../types';
 const SECTION_HEADING = 'text-sm font-semibold text-text-light uppercase tracking-wider';
 
 /**
- * v6.3: dashboard card surfacing today's habit instances (v6.6: both kinds — scheduled
- * stabilizers and anytime light-coherent). Replaces the old orphan-habit-task rendering
- * inside session cards. Habits live independent of sessions — each row has its own
- * Start/Stop/Complete/Skip controls; Reschedule is stabilizer-only (light-coherent are anytime).
+ * v6.3: dashboard card surfacing today's **'habit'-kind** instances (v6.7: micro-gaps moved to
+ * their own {@link MicroGapCard}). Habits live independent of sessions — each row has its own
+ * Start/Stop/Complete/Skip/Reschedule controls. Timed habits sort first ("Scheduled"); untimed
+ * habits cluster under "Anytime".
  *
- *  - planned    → [▶ Start] [✓ Complete] [⤴ Reschedule*] [✕ Skip]   (*stabilizers only)
- *  - engaged    → [■ Stop]  [✓ Complete] [⤴ Reschedule*] [✕ Skip]  + live m:s segment timer
+ *  - planned    → [▶ Start] [✓ Complete] [⤴ Reschedule] [✕ Skip]
+ *  - engaged    → [■ Stop]  [✓ Complete] [⤴ Reschedule] [✕ Skip]  + live m:s segment timer
  *  - completed / skipped → muted row (controls hidden)
  *
  * v6.4: the engagement log lives in its own sibling card ({@link EngagementLogCard}) on the
@@ -32,11 +32,12 @@ export function HabitInstanceCard() {
     const { completeTask, createTaskComment } = useTodoistActions();
     const reschedule = useHabitReschedule();
 
-    if (plan.todaysHabits.length === 0) return null;
-
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
-    // Sort: timed first (by targetTime), then untimed.
-    const instances = [...plan.todaysHabits].sort(compareHabitInstancesByTime);
+    // v6.7: this card is 'habit'-kind only; micro-gaps render in MicroGapCard.
+    const instances = plan.todaysHabits
+        .filter((i) => habitKindOf(life, i) === 'habit')
+        .sort(compareHabitInstancesByTime);
+    if (instances.length === 0) return null;
 
     const handleStartStop = (instance: TodaysHabitInstance) => {
         const nowISO = new Date().toISOString();
@@ -53,6 +54,7 @@ export function HabitInstanceCard() {
         // Push completion to the recurring Todoist task; failures don't block local state.
         // v6.4: log to console.error (in addition to the UI error surfaced by handleApiError)
         // so a habit failing to advance in Todoist leaves a debuggable trail.
+        if (!instance.todoistTaskId) return;
         completeTask(instance.todoistTaskId).catch((err) => {
             console.error(`[habits] complete: Todoist task ${instance.todoistTaskId} failed:`, err);
         });
@@ -65,6 +67,7 @@ export function HabitInstanceCard() {
         // done. Post a comment first so the skip is traceable in Todoist's own task
         // history, then complete the occurrence so its recurrence engine advances.
         // The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
+        if (!instance.todoistTaskId) return;
         createTaskComment(instance.todoistTaskId, `Skipped via Orchestrate on ${plan.date}`).catch((err) => {
             console.error(`[habits] skip: Todoist comment on ${instance.todoistTaskId} failed:`, err);
         });
@@ -75,15 +78,13 @@ export function HabitInstanceCard() {
 
     const renderRow = (i: TodaysHabitInstance) => {
         const habit = habitById.get(i.habitId);
-        const isStabilizer = (habit?.kind ?? (i.targetTime ? 'stabilizer' : 'light-coherent')) === 'stabilizer';
         const isEngaged = i.status === 'engaged';
         const isCompleted = i.status === 'completed';
         const isSkipped = i.status === 'skipped';
         const isTerminal = isCompleted || isSkipped;
         const isRescheduling = reschedule.reschedulingId === i.id;
         const liveSegment = isEngaged ? openSegment(i.segments) : undefined;
-        // Kind-specific leading glyph: 🔁 scheduled stabilizer, ✦ anytime light-coherent.
-        const icon = isCompleted ? '🎉' : isStabilizer ? '🔁' : '✦';
+        const icon = isCompleted ? '🎉' : '🔁';
         return (
             <li
                 key={i.id}
@@ -102,7 +103,7 @@ export function HabitInstanceCard() {
                             <span className="ml-1.5 text-[10px] text-text-light/70">· {habit.minimumViable}</span>
                         )}
                     </span>
-                    {isStabilizer && i.targetTime ? (
+                    {i.targetTime ? (
                         <span className="text-[10px] px-1 py-px rounded-full bg-accent/10 text-accent tabular-nums flex-shrink-0">
                             {i.targetTime}
                         </span>
@@ -155,17 +156,14 @@ export function HabitInstanceCard() {
                                 >
                                     ✓
                                 </button>
-                                {/* v6.6: reschedule is stabilizer-only — light-coherent habits are anytime. */}
-                                {isStabilizer && (
-                                    <button
-                                        onClick={() => reschedule.open(i)}
-                                        className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
-                                        title="Reschedule"
-                                        aria-label="Reschedule"
-                                    >
-                                        ⤴
-                                    </button>
-                                )}
+                                <button
+                                    onClick={() => reschedule.open(i)}
+                                    className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer"
+                                    title="Reschedule"
+                                    aria-label="Reschedule"
+                                >
+                                    ⤴
+                                </button>
                                 <button
                                     onClick={() => handleSkip(i)}
                                     className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors cursor-pointer"
@@ -182,12 +180,10 @@ export function HabitInstanceCard() {
         );
     };
 
-    // v6.6: split scheduled (stabilizer) from anytime (light-coherent) so the two kinds read
-    // distinctly. Sub-headers only appear when both are present — single-kind days stay flat.
-    const isStabilizerInstance = (i: TodaysHabitInstance) =>
-        (habitById.get(i.habitId)?.kind ?? (i.targetTime ? 'stabilizer' : 'light-coherent')) === 'stabilizer';
-    const scheduled = instances.filter(isStabilizerInstance);
-    const anytime = instances.filter((i) => !isStabilizerInstance(i));
+    // v6.7: within 'habit' kind, split timed ("Scheduled") from untimed ("Anytime"). Sub-headers
+    // only appear when both are present — single-bucket days stay flat.
+    const scheduled = instances.filter((i) => Boolean(i.targetTime));
+    const anytime = instances.filter((i) => !i.targetTime);
     const showGroups = scheduled.length > 0 && anytime.length > 0;
 
     const GROUP_HEADING = 'text-[10px] uppercase tracking-wider text-text-light/70 px-1.5 mb-0.5';
@@ -211,6 +207,86 @@ export function HabitInstanceCard() {
                     ) : (
                         <ul className="space-y-0.5">{instances.map(renderRow)}</ul>
                     )}
+                </div>
+            </Card>
+        </section>
+    );
+}
+
+/**
+ * v6.7: dashboard card surfacing today's **'micro-gap'-kind** instances — light, repeatable
+ * fillers pulled opportunistically. Unlike habits these are NOT terminal: ▶ Start / ■ Stop logs a
+ * rep (an engagement segment) and the row stays available all day. No Todoist, no complete/skip/
+ * reschedule. A rep counter + accumulated time render once the user has engaged it at least once.
+ * Segments still flow into the Engagement Log. Hidden when empty.
+ */
+export function MicroGapCard() {
+    const { plan, life, dispatch } = useDayPlan();
+
+    const instances = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'micro-gap');
+    if (instances.length === 0) return null;
+
+    const habitById = new Map(life.habits.map((h) => [h.id, h]));
+
+    const toggle = (i: TodaysHabitInstance) => {
+        dispatch({
+            type: i.status === 'engaged' ? 'STOP_HABIT_INSTANCE' : 'START_HABIT_INSTANCE',
+            instanceId: i.id,
+            now: new Date().toISOString(),
+        });
+    };
+
+    return (
+        <section className="space-y-2">
+            <h3 className={SECTION_HEADING}>Micro-gaps</h3>
+            <Card className="py-2 px-2">
+                <div className="max-h-[24rem] overflow-y-auto scrollbar-subtle -mr-1 pr-1">
+                    <ul className="space-y-0.5">
+                        {instances.map((i) => {
+                            const habit = habitById.get(i.habitId);
+                            const isEngaged = i.status === 'engaged';
+                            const liveSegment = isEngaged ? openSegment(i.segments) : undefined;
+                            const reps = (i.segments ?? []).length;
+                            // Sum completed reps only (pass 0 so any open segment contributes 0 — the
+                            // in-progress one is shown by the live timer, and `Date.now()` is impure in render).
+                            const totalMin = Math.floor(totalEngagedSeconds(i.segments, 0) / 60);
+                            return (
+                                <li
+                                    key={i.id}
+                                    className={`px-1.5 py-1 rounded transition-colors ${isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-xs flex-shrink-0" aria-hidden>✦</span>
+                                        <span className="flex-1 min-w-0 text-xs truncate" title={i.titleSnapshot}>
+                                            {i.titleSnapshot}
+                                            {habit?.minimumViable && (
+                                                <span className="ml-1.5 text-[10px] text-text-light/70">· {habit.minimumViable}</span>
+                                            )}
+                                        </span>
+                                        {reps > 0 && (
+                                            <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light tabular-nums flex-shrink-0">
+                                                {reps}× · {totalMin}m
+                                            </span>
+                                        )}
+                                        {liveSegment && (
+                                            <span className="text-[10px] px-1 py-px rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0 inline-flex items-center gap-1">
+                                                <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" aria-hidden />
+                                                <EngagementTimer segment={liveSegment} />
+                                            </span>
+                                        )}
+                                        <button
+                                            onClick={() => toggle(i)}
+                                            className={`w-5 h-5 flex items-center justify-center rounded text-[10px] cursor-pointer transition-colors flex-shrink-0 ${isEngaged ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300' : 'text-text-light hover:bg-surface-dark hover:text-accent'}`}
+                                            title={isEngaged ? 'Stop' : 'Start'}
+                                            aria-label={isEngaged ? 'Stop engagement timer' : 'Start a rep'}
+                                        >
+                                            {isEngaged ? '■' : '▶'}
+                                        </button>
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
                 </div>
             </Card>
         </section>

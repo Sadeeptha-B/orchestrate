@@ -16,7 +16,7 @@ export function CapacitySettings() {
         dispatch({ type: 'UPDATE_SETTINGS', settings: { sessionBufferMinutes: n } });
     };
 
-    const updateCap = (key: 'stabilizer' | 'lightCoherent' | 'manualBackground', raw: string) => {
+    const updateCap = (key: 'habit' | 'microGap' | 'manualBackground', raw: string) => {
         const n = Math.max(1, Math.round(Number(raw) || 1));
         dispatch({ type: 'UPDATE_SETTINGS', settings: { taskCapDefaults: { ...caps, [key]: n } } });
     };
@@ -42,23 +42,23 @@ export function CapacitySettings() {
                 <label className={labelClass}>Per-task duration caps</label>
                 <div className="grid grid-cols-3 gap-3">
                     <div>
-                        <span className="text-[11px] text-text-light block mb-1">Stabilizer</span>
+                        <span className="text-[11px] text-text-light block mb-1">Habit</span>
                         <input
                             type="number"
                             min={1}
                             className={inputClass}
-                            value={caps.stabilizer}
-                            onChange={(e) => updateCap('stabilizer', e.target.value)}
+                            value={caps.habit}
+                            onChange={(e) => updateCap('habit', e.target.value)}
                         />
                     </div>
                     <div>
-                        <span className="text-[11px] text-text-light block mb-1">Light-coherent</span>
+                        <span className="text-[11px] text-text-light block mb-1">Micro-gap</span>
                         <input
                             type="number"
                             min={1}
                             className={inputClass}
-                            value={caps.lightCoherent}
-                            onChange={(e) => updateCap('lightCoherent', e.target.value)}
+                            value={caps.microGap}
+                            onChange={(e) => updateCap('microGap', e.target.value)}
                         />
                     </div>
                     <div>
@@ -73,8 +73,8 @@ export function CapacitySettings() {
                     </div>
                 </div>
                 <p className="text-[11px] text-text-light mt-1">
-                    Caps applied in Step 2 to manually-categorized background tasks. Stabilizer
-                    habit-tasks use the per-habit <code>targetDurationMinutes</code> instead.
+                    Caps applied in Step 2 to manually-categorized background tasks. Habit
+                    instances use the per-habit <code>targetDurationMinutes</code> instead.
                 </p>
             </div>
         </div>

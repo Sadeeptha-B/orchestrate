@@ -98,14 +98,15 @@ export type HabitInstanceStatus =
     | 'skipped';
 
 /**
- * v6.3: today's manifestation of a stabilizer habit. Lives on `DayPlan.todaysHabits`,
- * independent of session assignment. Positioned on the timeline via `targetTime`. The
- * `id` is distinct from `todoistTaskId` so reschedule successors can coexist in the same day.
+ * v6.3: today's manifestation of a habit. Lives on `DayPlan.todaysHabits`, independent of
+ * session assignment. v6.7: carries both kinds — resolve via the parent habit's `kind`
+ * (`habitKindOf`). 'habit' instances are Todoist-backed + terminal; 'micro-gap' instances have
+ * no `todoistTaskId`, are always untimed, and cycle planned↔engaged repeatably (never terminal).
  */
 export interface TodaysHabitInstance {
     id: string;                            // uuid (primary key)
     habitId: string;                       // → life.habits[i].id
-    todoistTaskId: string;                 // recurring Todoist task id
+    todoistTaskId?: string;                // recurring Todoist task id. v6.7: absent for micro-gaps.
     titleSnapshot: string;
     durationMinutes: number;
     targetTime?: string;                   // "HH:mm" — drives timeline position; absent = "anytime today"
@@ -128,6 +129,7 @@ export interface DayPlan {
     wizardStep: number; // 1–4
     setupComplete: boolean;
     checkIns: CheckIn[];
+    seededFocusIds?: string[];                            // v6.7: recurring-focus ids already added as intentions today (chip dedup)
 }
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';
@@ -148,8 +150,8 @@ export interface GoogleCalendarEntry {
 
 /** v6: per-kind defaults for habit-instance duration. Habits override via Habit.targetDurationMinutes (v6.1). */
 export interface TaskCapDefaults {
-    stabilizer: number;       // default duration for scheduled (stabilizer) habit instances
-    lightCoherent: number;    // v6.6: default duration for anytime (light-coherent) habit instances
+    habit: number;            // v6.7: default duration for 'habit'-kind instances (was `stabilizer`)
+    microGap: number;         // v6.7: default duration for 'micro-gap' instances (was `lightCoherent`)
     manualBackground: number; // applied to manually-categorized 'background' tasks
 }
 
@@ -163,7 +165,7 @@ export interface AppSettings {
     calendarViewMode?: CalendarViewMode;
     taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
     sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)
-    habitsTodoistProjectId?: string;    // v6.1: Todoist project all stabilizer habit-tasks live under; lazily created on first habit save
+    habitsTodoistProjectId?: string;    // v6.1: Todoist project all habit-tasks live under; lazily created on first habit save
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────
@@ -186,6 +188,19 @@ export interface Season {
     capacityBudget: SeasonCapacity | null;
     active: boolean;                     // exactly one season can be active at a time
     archivedAt?: string;                 // ISO timestamp once retired
+    recurringFocuses?: RecurringFocus[]; // v6.7: cadenced work-threads that seed intentions; undefined = []
+}
+
+/**
+ * v6.7: a season-scoped recurring work-thread (e.g. "Learn redis") — recurring *work* that
+ * decomposes into tasks, not an atomic habit. On matching days it surfaces in the Step 1 season
+ * banner as a clickable "+ Add" chip that seeds an Intention into the plan (manual, not auto).
+ */
+export interface RecurringFocus {
+    id: string;
+    title: string;
+    recurrence: HabitRecurrence;
+    active: boolean;
 }
 
 export type HabitRecurrenceKind = 'daily' | 'weekdays' | 'weekly' | 'custom';
@@ -199,21 +214,23 @@ export interface HabitRecurrence {
 export type HabitCompletionRule = 'binary' | 'count' | 'duration';
 
 /**
- * Discriminator splitting durable recurring entities by *scheduling* only. As of v6.6 both
- * kinds sync to Todoist as recurring tasks, produce `TodaysHabitInstance`s, and share the
- * full Start/Stop/Complete/Skip engagement lifecycle. The single difference:
- *  - 'stabilizer'      → scheduled ritual; requires a `targetTime`; placed on the timeline at that time.
- *  - 'light-coherent'  → "anytime" habit; never has a `targetTime`; pulled opportunistically. No reschedule.
+ * Discriminator splitting durable recurring entities by *lifecycle* (v6.7):
+ *  - 'habit'      → the normal recurring thing. Todoist-backed, **terminal once per day**
+ *                   (Complete advances the recurrence). `targetTime` is OPTIONAL: timed → timeline
+ *                   lane; untimed → "anytime today". Reschedulable.
+ *  - 'micro-gap'  → light, **repeatable** filler (flashcards, a quick drill). NOT synced to Todoist,
+ *                   never terminal — Start/Stop logs a rep and it stays available all day. Lives on its
+ *                   own dashboard surface; still feeds the Engagement Log via segments. Always untimed.
  */
-export type HabitKind = 'stabilizer' | 'light-coherent';
+export type HabitKind = 'habit' | 'micro-gap';
 
-/** v6.1: how to handle stabilizer habits whose target time-of-day window has already passed at planning time. */
+/** v6.1: how to handle timed habits whose target time-of-day window has already passed at planning time. */
 export type HabitWindowBehavior = 'strict' | 'lenient';
 
 export interface Habit {
     id: string;
     name: string;                        // e.g. "Morning meditation"
-    kind: HabitKind;                     // v6: 'stabilizer' for anchor-style rituals, 'light-coherent' for micro-gap fillers
+    kind: HabitKind;                     // v6.7: 'habit' (Todoist-backed, terminal) | 'micro-gap' (no Todoist, repeatable)
     recurrence: HabitRecurrence;
     minimumViable: string;               // e.g. "5 min sit, no app required"
     triggerCue: string;                  // e.g. "After waking, before phone"
@@ -222,9 +239,9 @@ export interface Habit {
     isAnchor: boolean;                   // sleep, meditation, gym, shutdown, review
     seasonIds: string[];                 // which seasons this habit belongs to ([] = always-on)
     active: boolean;                     // user-toggle to pause without deleting
-    todoistTaskId?: string;              // v6.1: persistent recurring Todoist task ID synced from this habit (stabilizer only)
+    todoistTaskId?: string;              // v6.1: persistent recurring Todoist task ID. v6.7: 'habit' kind only — micro-gaps never sync.
     todoistProjectId?: string;           // v6.1: explicit Todoist project for this habit's task; falls back to AppSettings.habitsTodoistProjectId
-    targetTime?: string;                 // "HH:mm" target time-of-day. v6.6: required for stabilizers (enforced in the form), always absent for light-coherent. Optional on the type for legacy data.
+    targetTime?: string;                 // "HH:mm" target time-of-day. v6.7: optional for 'habit' (timed → timeline; absent → anytime); always absent for 'micro-gap'.
     targetDurationMinutes?: number;      // v6.1: minutes; pushed to Todoist `duration` and used as the LinkedTask estimate
     windowBehavior?: HabitWindowBehavior;// v6.1: 'strict' hides the habit-task if past targetTime + duration; 'lenient' surfaces while still due in Todoist (default 'lenient')
     /** @deprecated v6.1: replaced by `todoistTaskId`. Retained for migration only. */

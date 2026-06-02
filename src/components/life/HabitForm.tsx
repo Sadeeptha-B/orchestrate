@@ -43,7 +43,7 @@ export function HabitForm({
     onCancel,
 }: HabitFormProps) {
     const [name, setName] = useState(initial?.name ?? '');
-    const [kind, setKind] = useState<HabitKind>(initial?.kind ?? 'stabilizer');
+    const [kind, setKind] = useState<HabitKind>(initial?.kind ?? 'habit');
     const [recurrenceKind, setRecurrenceKind] = useState<HabitRecurrenceKind>(
         initial?.recurrence?.kind ?? 'daily',
     );
@@ -83,10 +83,8 @@ export function HabitForm({
         setSeasonIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
     const showDayPicker = recurrenceKind === 'weekly' || recurrenceKind === 'custom';
-    const isStabilizer = kind === 'stabilizer';
-    // v6.6: stabilizers must be scheduled; light-coherent are always anytime.
-    const hasValidTime = /^\d{2}:\d{2}$/.test(targetTime.trim());
-    const canSubmit = name.trim().length > 0 && (!isStabilizer || hasValidTime);
+    const isHabit = kind === 'habit';
+    const canSubmit = name.trim().length > 0;
 
     // v6.1: detect a stale per-habit override — the project this habit previously pointed at
     // no longer exists in Todoist (deleted out-of-band). We only flag once a project list is loaded.
@@ -115,18 +113,17 @@ export function HabitForm({
             isAnchor,
             seasonIds,
             active,
-            // v6.1: schedule fields preserve `todoistTaskId` from initial (set by the sync layer).
-            ...(initial?.todoistTaskId ? { todoistTaskId: initial.todoistTaskId } : {}),
-            // v6.6: both kinds sync to Todoist, so project + duration apply to both.
-            ...(todoistProjectId ? { todoistProjectId } : {}),
+            // Duration applies to both kinds (Todoist `duration` for habits; instance duration for both).
             ...(targetDurationMinutes.trim()
                 && Number.isFinite(parsedDuration)
                 && parsedDuration > 0
                 ? { targetDurationMinutes: Math.round(parsedDuration) }
                 : {}),
-            // Schedule fields are stabilizer-only — light-coherent are anytime.
-            ...(isStabilizer && trimmedTime ? { targetTime: trimmedTime } : {}),
-            ...(isStabilizer ? { windowBehavior } : {}),
+            // v6.7: Todoist + schedule fields are 'habit'-only — micro-gaps never sync and are untimed.
+            ...(isHabit && initial?.todoistTaskId ? { todoistTaskId: initial.todoistTaskId } : {}),
+            ...(isHabit && todoistProjectId ? { todoistProjectId } : {}),
+            ...(isHabit && trimmedTime ? { targetTime: trimmedTime } : {}),
+            ...(isHabit ? { windowBehavior } : {}),
         });
     };
 
@@ -145,7 +142,7 @@ export function HabitForm({
             <div>
                 <label className={labelClass}>Kind</label>
                 <div className="flex gap-1 flex-wrap">
-                    {(['stabilizer', 'light-coherent'] as HabitKind[]).map((k) => (
+                    {(['habit', 'micro-gap'] as HabitKind[]).map((k) => (
                         <button
                             key={k}
                             type="button"
@@ -156,14 +153,14 @@ export function HabitForm({
                                     : 'border-border hover:bg-surface-dark/50'
                             }`}
                         >
-                            {k === 'stabilizer' ? 'Stabilizer' : 'Light-coherent'}
+                            {k === 'habit' ? 'Habit' : 'Micro-gap'}
                         </button>
                     ))}
                 </div>
                 <p className="text-[11px] text-text-light mt-1">
-                    {kind === 'stabilizer'
-                        ? 'Scheduled ritual — synced to Todoist and placed on your timeline at its set time. Requires a target time.'
-                        : 'Anytime habit — synced & tracked like a stabilizer, but pulled opportunistically with no fixed time.'}
+                    {isHabit
+                        ? 'A recurring thing you do once a day — synced to Todoist. Add a target time to place it on the timeline, or leave it untimed ("anytime").'
+                        : 'A light, repeatable filler (flashcards, a quick drill) — no Todoist, no fixed time. Pull it from the Micro-gaps panel whenever you have a gap; it stays available all day.'}
                 </p>
             </div>
 
@@ -206,19 +203,19 @@ export function HabitForm({
                 )}
             </div>
 
-            {isStabilizer && (
+            {isHabit && (
                 <div className="rounded-lg border border-border p-3 space-y-3 bg-surface-dark/20">
                     <div className="text-xs font-medium text-text-light uppercase tracking-wide">Schedule</div>
                     <div>
-                        <label className={labelClass}>Target time</label>
+                        <label className={labelClass}>Target time (optional)</label>
                         <input
                             type="time"
                             className={inputClass}
                             value={targetTime}
                             onChange={(e) => setTargetTime(e.target.value)}
                         />
-                        <p className={`text-[11px] mt-1 ${isStabilizer && !hasValidTime ? 'text-amber-700 dark:text-amber-300' : 'text-text-light'}`}>
-                            Required for stabilizers — pushed to Todoist and places the habit on your timeline.
+                        <p className="text-[11px] text-text-light mt-1">
+                            Set a time to place this habit on the timeline; leave blank for an "anytime" habit.
                         </p>
                     </div>
                     <div>
@@ -253,7 +250,7 @@ export function HabitForm({
 
             {/* v6.6: Todoist sync applies to both kinds. */}
             <div className="rounded-lg border border-border p-3 space-y-3 bg-surface-dark/20">
-                <div className="text-xs font-medium text-text-light uppercase tracking-wide">Todoist</div>
+                <div className="text-xs font-medium text-text-light uppercase tracking-wide">Tracking</div>
                 <div>
                     <label className={labelClass}>Duration (minutes)</label>
                     <input
@@ -265,10 +262,12 @@ export function HabitForm({
                         placeholder="e.g. 10"
                     />
                     <p className="text-[11px] text-text-light mt-1">
-                        Pushed to the Todoist task and used as the instance duration.
+                        {isHabit
+                            ? 'Pushed to the Todoist task and used as the instance duration.'
+                            : 'Used as the displayed duration for this micro-gap.'}
                     </p>
                 </div>
-                {todoistProjects.length > 0 && (
+                {isHabit && todoistProjects.length > 0 && (
                     <div>
                         <div className="flex items-center justify-between">
                             <label className={labelClass}>Todoist project</label>
@@ -308,7 +307,7 @@ export function HabitForm({
                         </p>
                     </div>
                 )}
-                {initial?.todoistTaskId && (
+                {isHabit && initial?.todoistTaskId && (
                     <div className="text-[11px] text-text-light">
                         Synced to Todoist · task <code className="font-mono">{initial.todoistTaskId}</code>
                     </div>

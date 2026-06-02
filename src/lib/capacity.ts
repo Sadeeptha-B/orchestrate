@@ -9,8 +9,8 @@ export const DEFAULT_SESSION_BUFFER_MINUTES = 60;
  * Single source of truth — Step2Refine, CapacitySettings, and the reducer all read this.
  */
 export const DEFAULT_TASK_CAPS: TaskCapDefaults = {
-    stabilizer: 30,
-    lightCoherent: 20,
+    habit: 30,
+    microGap: 20,
     manualBackground: 30,
 };
 

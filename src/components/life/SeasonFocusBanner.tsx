@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { findActiveSeason } from '../../lib/seasons';
+import { recurrenceMatchesDate } from '../../lib/habits';
 
 export function SeasonFocusBanner() {
-    const { life } = useDayPlan();
+    const { plan, life, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const season = findActiveSeason(life);
     const [emptyDismissed, setEmptyDismissed] = useState(false);
@@ -38,6 +39,16 @@ export function SeasonFocusBanner() {
     }
 
     const goals = season.supportingGoals;
+
+    // v6.7: recurring focuses whose cadence matches today and haven't been added yet → "+ Add" chips.
+    const seeded = plan.seededFocusIds ?? [];
+    const dueFocuses = (season.recurringFocuses ?? []).filter(
+        (f) => f.active && recurrenceMatchesDate(f.recurrence, plan.date) && !seeded.includes(f.id),
+    );
+    const addFocus = (focusId: string, title: string) => {
+        dispatch({ type: 'ADD_INTENTION', title });
+        dispatch({ type: 'MARK_FOCUS_SEEDED', focusId });
+    };
 
     return (
         <div className="rounded-lg border border-accent/30 bg-accent-subtle/20 px-3 py-2 space-y-1">
@@ -74,6 +85,24 @@ export function SeasonFocusBanner() {
                             <span aria-hidden className="text-accent">◆</span>
                             <span>{goal}</span>
                         </span>
+                    ))}
+                </div>
+            )}
+
+            {/* v6.7: recurring focuses due today — click to seed an intention you'll break down. */}
+            {dueFocuses.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {dueFocuses.map((f) => (
+                        <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => addFocus(f.id, f.title)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-subtle border border-accent/30 text-accent text-[11px] hover:bg-accent/20 cursor-pointer transition-colors"
+                            title="Add this recurring focus as an intention for today"
+                        >
+                            <span aria-hidden>＋</span>
+                            <span>{f.title}</span>
+                        </button>
                     ))}
                 </div>
             )}

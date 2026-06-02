@@ -13,7 +13,7 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
-import { compareHabitInstancesByTime } from '../../lib/habits';
+import { compareHabitInstancesByTime, habitKindOf } from '../../lib/habits';
 import { getTaskTitle } from '../../lib/tasks';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
@@ -21,7 +21,9 @@ import { HabitTimeEditor } from '../dashboard/HabitTimeEditor';
 import type { Intention, LinkedTask } from '../../types';
 
 export function Step3Schedule() {
-    const { plan, settings, dispatch } = useDayPlan();
+    const { plan, life, settings, dispatch } = useDayPlan();
+    // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps are off-timeline.
+    const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
@@ -180,7 +182,7 @@ export function Step3Schedule() {
                         selectedSessionId={selectedSessionId}
                         onSelectSession={setSelectedSessionId}
                         capacities={capacities}
-                        todaysHabits={plan.todaysHabits}
+                        todaysHabits={timelineHabits}
                     />
 
                     {/* v6.3: Habit instances panel — reschedule is available from planning. */}
@@ -461,11 +463,12 @@ export function Step3Schedule() {
  * `computeTodaysHabitInstances` and never appear. Rendered in both Phase 1 and Phase 2.
  */
 function Step3HabitsPanel() {
-    const { plan } = useDayPlan();
+    const { plan, life } = useDayPlan();
     const reschedule = useHabitReschedule();
 
+    // v6.7: timeline-habits only; micro-gaps aren't scheduled.
     const active = plan.todaysHabits
-        .filter((i) => i.status === 'planned' || i.status === 'engaged')
+        .filter((i) => habitKindOf(life, i) === 'habit' && (i.status === 'planned' || i.status === 'engaged'))
         .sort(compareHabitInstancesByTime);
 
     if (active.length === 0) return null;
