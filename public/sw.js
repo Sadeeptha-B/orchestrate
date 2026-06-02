@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 const sw = self;
 
-const CACHE_NAME = 'orchestrate-v1';
+const CACHE_NAME = 'orchestrate-v2';
 
 // Cache app shell on install
 sw.addEventListener('install', (event) => {
@@ -49,12 +49,19 @@ sw.addEventListener('fetch', (event) => {
                 return response;
             })
             .catch(() =>
-                // Offline: serve from cache, fall back to index.html for SPA routing.
+                // Offline / network error: serve from cache when we have it.
                 caches.match(event.request).then((cached) => {
                     if (cached) return cached;
-                    return caches.match('/orchestrate/index.html').then(
-                        (fallback) => fallback || Response.error(),
-                    );
+                    // Only substitute the app shell for navigations (SPA deep-link routing).
+                    // NEVER return index.html in place of a failed asset/module request —
+                    // feeding HTML to a dynamic `import()` breaks lazy routes with
+                    // "Failed to fetch dynamically imported module".
+                    if (event.request.mode === 'navigate') {
+                        return caches.match('/orchestrate/index.html').then(
+                            (fallback) => fallback || Response.error(),
+                        );
+                    }
+                    return Response.error();
                 }),
             ),
     );
