@@ -14,6 +14,8 @@ import type {
     LifeContext,
     Season,
     Habit,
+    HabitKind,
+    TaskCapDefaults,
     RestCue,
     BacklogEntry,
     TodaysHabitInstance,
@@ -229,6 +231,8 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             setupComplete: (raw.setupComplete as boolean) ?? false,
             checkIns: (raw.checkIns ?? []) as CheckIn[],
             // v6.6: `habitLog` (Light Pool) removed — daily-ephemeral, simply not carried forward.
+            // v6.7: preserve same-day recurring-focus seeding so a reload doesn't re-offer added chips.
+            ...(raw.seededFocusIds ? { seededFocusIds: raw.seededFocusIds as string[] } : {}),
         };
     }
 
@@ -251,8 +255,22 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
 function withV6SettingsDefaults(s: AppSettings): AppSettings {
     return {
         ...s,
-        taskCapDefaults: s.taskCapDefaults ?? { ...DEFAULT_TASK_CAPS },
+        taskCapDefaults: migrateTaskCaps(s.taskCapDefaults),
         sessionBufferMinutes: s.sessionBufferMinutes ?? DEFAULT_SESSION_BUFFER_MINUTES,
+    };
+}
+
+/**
+ * v6.7: rename the per-kind cap keys `stabilizer → habit`, `lightCoherent → microGap`.
+ * Reads legacy keys off persisted settings and maps them forward; falls back to defaults.
+ */
+function migrateTaskCaps(caps: AppSettings['taskCapDefaults']): TaskCapDefaults {
+    if (!caps) return { ...DEFAULT_TASK_CAPS };
+    const legacy = caps as Partial<TaskCapDefaults> & { stabilizer?: number; lightCoherent?: number };
+    return {
+        habit: legacy.habit ?? legacy.stabilizer ?? DEFAULT_TASK_CAPS.habit,
+        microGap: legacy.microGap ?? legacy.lightCoherent ?? DEFAULT_TASK_CAPS.microGap,
+        manualBackground: legacy.manualBackground ?? DEFAULT_TASK_CAPS.manualBackground,
     };
 }
 
@@ -293,31 +311,36 @@ function emptyLifeContext(): LifeContext {
 
 /**
  * Per-habit schema migration:
- *  - v5 → v6: ensure `kind`, defaulting legacy habits to `'stabilizer'`.
+ *  - v5 → v6: ensure `kind`.
  *  - v6 → v6.1: fold `autoLinkTodoistId` → `todoistTaskId`, `maxBlockMinutes` → `targetDurationMinutes`,
- *    default `windowBehavior` to `'lenient'`. The deprecated fields are stripped so storage doesn't
- *    accumulate cruft — they only need to round-trip once.
+ *    default `windowBehavior` to `'lenient'`.
+ *  - v6.7: remap kind values `'stabilizer' → 'habit'`, `'light-coherent' → 'micro-gap'`. Micro-gaps
+ *    are no-Todoist / untimed / repeatable, so strip `todoistTaskId` (a v6.6 light-coherent habit may
+ *    have one — we clear it locally; the orphaned Todoist task is left for the user to delete),
+ *    `targetTime`, and `windowBehavior`.
  *
  * Called from both `loadLifeContext` (initial localStorage load) and the `IMPORT_BACKUP` reducer
- * case (so imported v6 payloads also get the v6.1 shape applied).
+ * case (so imported payloads also get the current shape applied).
  */
 function migrateHabit(h: Habit): Habit {
     const { autoLinkTodoistId, maxBlockMinutes, ...rest } = h;
-    const kind = rest.kind ?? 'stabilizer';
+    // v6.7: remap legacy kind values (the old strings are no longer in the HabitKind union).
+    const rawKind = (rest.kind ?? 'habit') as string;
+    const kind: HabitKind = rawKind === 'micro-gap' || rawKind === 'light-coherent' ? 'micro-gap' : 'habit';
     const migrated: Habit = { ...rest, kind };
-    if (autoLinkTodoistId && !rest.todoistTaskId) {
-        // v6.6: both kinds sync to Todoist, so migrate the legacy id regardless of kind.
-        migrated.todoistTaskId = autoLinkTodoistId;
-    }
     if (maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
         migrated.targetDurationMinutes = maxBlockMinutes;
     }
-    if (kind === 'stabilizer') {
+    if (kind === 'habit') {
+        if (autoLinkTodoistId && !rest.todoistTaskId) {
+            migrated.todoistTaskId = autoLinkTodoistId;
+        }
         if (!rest.windowBehavior) {
             migrated.windowBehavior = 'lenient';
         }
     } else {
-        // v6.6: light-coherent habits are "anytime" — never carry schedule fields.
+        // v6.7: micro-gaps never sync to Todoist and are always untimed/repeatable.
+        delete migrated.todoistTaskId;
         delete migrated.targetTime;
         delete migrated.windowBehavior;
     }
@@ -480,6 +503,7 @@ type Action =
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
+    | { type: 'MARK_FOCUS_SEEDED'; focusId: string }
     | { type: 'RESET_DAY' }
     | { type: 'RESET_ALL' }
     | { type: 'UPDATE_SETTINGS'; settings: Partial<AppSettings> }
@@ -497,6 +521,7 @@ type Action =
     | { type: 'UPDATE_HABIT'; habit: Habit }
     | { type: 'DELETE_HABIT'; habitId: string }
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
+    | { type: 'PRUNE_TODAYS_HABITS' }
     | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
     // ---- True Rest cue customization ----
     | { type: 'ADD_REST_CUE'; cue: Omit<RestCue, 'id'> }
@@ -748,6 +773,14 @@ function reducer(state: State, action: Action): State {
                 plan: { ...plan, checkIns: [...plan.checkIns, action.checkIn] },
             };
 
+        case 'MARK_FOCUS_SEEDED': {
+            // v6.7: record that a recurring focus was added as an intention today, so the banner
+            // chip drops out and doesn't re-offer it on the same day.
+            const seeded = plan.seededFocusIds ?? [];
+            if (seeded.includes(action.focusId)) return state;
+            return { ...state, plan: { ...plan, seededFocusIds: [...seeded, action.focusId] } };
+        }
+
         case 'RESET_DAY':
             return { ...state, plan: freshPlan(), editingStep: null };
 
@@ -885,6 +918,15 @@ function reducer(state: State, action: Action): State {
                 h.id === action.habitId ? { ...h, active: !h.active } : h,
             );
             return { ...state, life: { ...state.life, habits } };
+        }
+
+        case 'PRUNE_TODAYS_HABITS': {
+            // v6.7: drop any instance whose habit no longer exists (defensive — a deleted habit
+            // should never linger in Today's Habits / the timeline / the Micro-gaps panel).
+            const ids = new Set(state.life.habits.map((h) => h.id));
+            const todaysHabits = plan.todaysHabits.filter((i) => ids.has(i.habitId));
+            if (todaysHabits.length === plan.todaysHabits.length) return state;
+            return { ...state, plan: { ...plan, todaysHabits } };
         }
 
         case 'REFRESH_TODAYS_HABITS': {

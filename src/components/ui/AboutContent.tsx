@@ -30,10 +30,10 @@ export function AboutContent({ onOpenGuide }: AboutContentProps = {}) {
                 the <em>why</em> across days, weeks, and months.{' '}
                 <strong className="text-text">Seasons</strong> are medium-horizon focus periods — a theme, supporting
                 goals, and an optional capacity budget that shape what you take on each day.{' '}
-                <strong className="text-text">Habits</strong> all sync to Todoist as recurring tasks and are tracked the
-                same way; they come in two kinds by <em>scheduling</em> — <em>stabilizers</em> (sleep, gym, deep-work
-                rituals) that sit on the timeline at a fixed target time, and <em>light-coherent</em> habits that surface
-                as resumable <strong className="text-text">anytime</strong> rows you pull when a gap appears.
+                <strong className="text-text">Habits</strong> come in two kinds by <em>lifecycle</em>: a plain
+                <em> habit</em> (sleep, gym, deep-work rituals) syncs to Todoist as a recurring task and is done once a
+                day — timed on the timeline or "anytime"; a <em>micro-gap</em> is a light, <strong className="text-text">repeatable</strong> filler
+                (flashcards, a quick drill) with no Todoist task, pulled from its own panel whenever you have a gap.
             </p>
             <p>
                 Together, they counter <strong className="text-text">task blindness and time blindness</strong>:{' '}

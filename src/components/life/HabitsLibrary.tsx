@@ -93,7 +93,7 @@ export function HabitsLibrary() {
     }, [settings.habitsTodoistProjectId, projects]);
 
     // Filtered + grouped derivation — stable identity helps avoid render cascades.
-    const { stabilizers, lightCoherent, inactive } = useMemo(() => {
+    const { habitList, microGapList, inactive } = useMemo(() => {
         const base = seasonFilter
             ? life.habits.filter((h) => h.seasonIds.includes(seasonFilter))
             : life.habits;
@@ -103,8 +103,8 @@ export function HabitsLibrary() {
             return a.name.localeCompare(b.name);
         });
         const active = sorted.filter((h) => h.active);
-        const { stabilizers, lightCoherent } = partitionByKind(active);
-        return { stabilizers, lightCoherent, inactive: sorted.filter((h) => !h.active) };
+        const { habits: habitList, microGaps: microGapList } = partitionByKind(active);
+        return { habitList, microGapList, inactive: sorted.filter((h) => !h.active) };
     }, [life.habits, seasonFilter]);
 
     const handleRefreshProjects = async () => {
@@ -144,7 +144,8 @@ export function HabitsLibrary() {
         const newHabit: Habit = { ...draft, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
         dispatch({ type: 'ADD_HABIT', habit: newHabit });
         closeCreate();
-        if (isTodoistConfigured) {
+        // v6.7: only 'habit' kind syncs to Todoist — micro-gaps are local-only.
+        if (newHabit.kind === 'habit' && isTodoistConfigured) {
             const defaultProjectId = await resolveDefaultProject();
             if (!defaultProjectId) {
                 setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
@@ -159,7 +160,8 @@ export function HabitsLibrary() {
         const updated: Habit = { ...draft, id: target.id, createdAt: target.createdAt };
         dispatch({ type: 'UPDATE_HABIT', habit: updated });
         setEditing(null);
-        if (isTodoistConfigured) {
+        // v6.7: only 'habit' kind syncs to Todoist — micro-gaps are local-only.
+        if (updated.kind === 'habit' && isTodoistConfigured) {
             const defaultProjectId = await resolveDefaultProject();
             if (!defaultProjectId) {
                 setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
@@ -193,20 +195,12 @@ export function HabitsLibrary() {
                                 INACTIVE
                             </span>
                         )}
-                        {h.active && !h.todoistTaskId && (
+                        {h.kind === 'habit' && h.active && !h.todoistTaskId && (
                             <span
                                 className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
                                 title="Not yet synced to Todoist"
                             >
                                 UNSYNCED
-                            </span>
-                        )}
-                        {h.kind === 'stabilizer' && h.active && !h.targetTime && (
-                            <span
-                                className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                                title="Stabilizers need a scheduled time — edit this habit to set one"
-                            >
-                                NEEDS TIME
                             </span>
                         )}
                     </div>
@@ -244,12 +238,12 @@ export function HabitsLibrary() {
         </Card>
     );
 
-    const activeCount = stabilizers.length + lightCoherent.length;
+    const activeCount = habitList.length + microGapList.length;
 
     return (
         <LifeShell
             title="Habits"
-            subtitle="All habits sync to Todoist as recurring tasks and surface in Today's Habits. Stabilizers are scheduled at a set time; light-coherent habits are anytime, pulled when you have a gap."
+            subtitle="Habits sync to Todoist and surface in Today's Habits (timed on the timeline, or anytime). Micro-gaps are light, repeatable fillers — no Todoist, pulled from their own panel when you have a gap."
         >
             {/* ── Sync banner ── */}
             {needsSyncCount > 0 && (
@@ -354,29 +348,29 @@ export function HabitsLibrary() {
 
             {/* ── Grouped habit list ── */}
             <div className="space-y-6">
-                {/* Stabilizers */}
-                {stabilizers.length > 0 && (
+                {/* Habits */}
+                {habitList.length > 0 && (
                     <div>
                         <h4 className={GROUP_HEADING}>
-                            Stabilizers
+                            Habits
                             <span className="text-text-light/60 font-normal normal-case tracking-normal">
-                                {stabilizers.length}
+                                {habitList.length}
                             </span>
                         </h4>
-                        <div className="space-y-2">{stabilizers.map(renderCard)}</div>
+                        <div className="space-y-2">{habitList.map(renderCard)}</div>
                     </div>
                 )}
 
-                {/* Light-coherent */}
-                {lightCoherent.length > 0 && (
+                {/* Micro-gaps */}
+                {microGapList.length > 0 && (
                     <div>
                         <h4 className={GROUP_HEADING}>
-                            Light-coherent
+                            Micro-gaps
                             <span className="text-text-light/60 font-normal normal-case tracking-normal">
-                                {lightCoherent.length}
+                                {microGapList.length}
                             </span>
                         </h4>
-                        <div className="space-y-2">{lightCoherent.map(renderCard)}</div>
+                        <div className="space-y-2">{microGapList.map(renderCard)}</div>
                     </div>
                 )}
 

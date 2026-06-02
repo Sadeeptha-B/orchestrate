@@ -5,7 +5,7 @@ import { HeaderControls } from '../ui/HeaderControls';
 
 /**
  * User Guide — mental model and how-to for the three execution pathways
- * (Deep Track / Stabilizer / Light-coherent) plus manual background, True Rest,
+ * (Deep Track / Habit / Micro-gap) plus manual background, recurring focus, True Rest,
  * and capacity arithmetic. This component is the single source for user-facing
  * guide content.
  */
@@ -68,8 +68,8 @@ export function UserGuide() {
                    └────────────────────────────────┘
 
       Deep Track       → Your main work: big tasks in dedicated session blocks
-      Stabilizer       → Scheduled rituals: synced to Todoist, on the timeline at their target time (independent of sessions)
-      Light-coherent   → Anytime habits: synced + tracked like stabilizers, but pulled opportunistically (no fixed time)
+      Habit            → Recurring things, done once a day: synced to Todoist. Timed → on the timeline; untimed → "anytime"
+      Micro-gap        → Light, repeatable fillers: NO Todoist, pulled whenever; logged each rep, never "done for the day"
 
       + Manual background  → Small today-only nudges inside an intention
       + True Rest          → Recovery cues with zero tracking overhead
@@ -117,14 +117,14 @@ export function UserGuide() {
 
                         <SubHeading>What kind of habit is it?</SubHeading>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Stabilizer</strong> — a habit that needs a dedicated slot in your day. Think rituals: meditation, gym, shutdown routine. You give it a <strong>target time</strong> (required), and Orchestrate surfaces it on the dashboard timeline at that time (in a habit lane above the session blocks), with Start / Stop / Complete / Skip / Reschedule controls.</li>
-                            <li><strong>Light-coherent</strong> — a small, resumable activity you do when you have a gap. Think flashcards, short reading, idea capture. Same tracking as a stabilizer — synced to Todoist, Start / Stop / Complete / Skip — but it's <strong>anytime</strong>: no fixed time, so it surfaces as an "Anytime today" row you pull from when you're ready (no scheduling, no reschedule).</li>
+                            <li><strong>Habit</strong> — the normal recurring thing you do once a day. Synced to Todoist as a recurring task; Complete checks it off and advances the recurrence. Give it a <strong>target time</strong> to place it on the dashboard timeline, or leave it untimed and it surfaces as an "Anytime today" row. Start / Stop / Complete / Skip / Reschedule.</li>
+                            <li><strong>Micro-gap</strong> — a light, <strong>repeatable</strong> filler you dip into when you have a window (flashcards, a quick drill, a few pages). <strong>Not</strong> synced to Todoist and never "done for the day": Start / Stop logs a rep and it stays available. Lives in its own <strong>Micro-gaps</strong> panel, separate from the obligations list, so it never feels like a chore.</li>
                         </ul>
                         <p className="text-text-light">
-                            As of v6.6 both kinds sync to Todoist as recurring tasks, appear in the same{' '}
-                            <strong>Today's Habits</strong> card, and feed the <strong>Engagement Log</strong>. The
-                            only difference is scheduling: stabilizers are timed, light-coherent are anytime. Habits
-                            are independent of sessions and never burn session capacity.
+                            Both kinds feed the <strong>Engagement Log</strong> and never burn session capacity, but
+                            they differ in lifecycle: a <strong>habit</strong> syncs to Todoist and is done once a day;
+                            a <strong>micro-gap</strong> has no Todoist task and repeats freely. Habits show in the
+                            <strong> Today's Habits</strong> card; micro-gaps in their own <strong>Micro-gaps</strong> panel.
                         </p>
 
                         <SubHeading>How protected is it?</SubHeading>
@@ -162,13 +162,13 @@ export function UserGuide() {
                         </ExampleList>
                         <p className="text-text-light"><strong>When to use it:</strong> the task is big enough to need a dedicated session block, and it's specific to today.</p>
 
-                        <SubHeading id="pathway-b">4.2 Stabilizer — your daily rituals</SubHeading>
+                        <SubHeading id="pathway-b">4.2 Habit — your recurring rituals</SubHeading>
                         <p>
-                            These are habits that automatically show up as tasks every day their recurrence rule matches.
-                            You don't have to remember to add "morning meditation" — Orchestrate creates a recurring
-                            Todoist task once, and from then on it surfaces in your plan whenever it's due.
+                            These show up automatically every day their recurrence rule matches. You don't have to
+                            remember to add "morning meditation" — Orchestrate creates a recurring Todoist task once,
+                            and from then on it surfaces in your plan whenever it's due. Done once a day.
                         </p>
-                        <Flow>{`You set up a stabilizer Habit once (e.g., "Morning meditation", daily, 07:00, 10 min)
+                        <Flow>{`You set up a Habit once (e.g., "Morning meditation", daily, 07:00, 10 min)
   → Orchestrate creates a recurring Todoist task in the Habits project
      (with due_string like "every day at 7:00" and duration 10 min)
   → each matching day, if the task is due and unchecked, it appears as a
@@ -186,7 +186,7 @@ export function UserGuide() {
      engagement log. The recurring Todoist task is untouched, so your recurrence stays clean.`}</Flow>
                         <p>A few knobs in the form:</p>
                         <ul className="list-disc pl-5 space-y-1.5">
-                            <li><strong>Target time</strong> (required for stabilizers) — positions the instance on the timeline. If you want an untimed habit, make it light-coherent instead.</li>
+                            <li><strong>Target time</strong> (optional) — set it to place the instance on the timeline; leave it blank for an "anytime" habit that clusters under "Anytime today".</li>
                             <li><strong>Duration</strong> — pushed to Todoist as the task duration and used as the displayed estimate / lane width.</li>
                             <li><strong>Todoist project</strong> — pick which project this habit's recurring task lives in. Leave on "Use default" to use the workspace default in <strong>Settings → Integrations → Default Habits Project</strong> (which itself defaults to a lazily-created project named "Habits"). Changing the project on an already-synced habit moves the recurring task.</li>
                             <li><strong>Window behavior</strong>:
@@ -196,15 +196,15 @@ export function UserGuide() {
                                 </ul>
                             </li>
                         </ul>
-                        <p><strong>Good for:</strong> anchor-style rituals that need to live in a time slot.</p>
-                        <ExampleList heading="Anchor stabilizers — the non-negotiables">
+                        <p><strong>Good for:</strong> recurring rituals — timed (meditation 7am) or anytime-but-once (vitamins, an evening shutdown, an anime episode).</p>
+                        <ExampleList heading="Anchor habits — the non-negotiables">
                             <li><em>Morning meditation</em> — daily, 5–15 min.</li>
                             <li><em>Sleep wind-down</em> — daily, evening.</li>
                             <li><em>Gym workout</em> — Mon/Wed/Fri, 45 min.</li>
                             <li><em>Evening shutdown ritual</em> — daily, 10 min.</li>
                             <li><em>Take medication</em> — daily, 5 min.</li>
                         </ExampleList>
-                        <ExampleList heading="Non-anchor stabilizers — recurring but flexible">
+                        <ExampleList heading="Non-anchor habits — recurring but flexible">
                             <li><em>Daily standup attendance</em> — weekdays, 15 min.</li>
                             <li><em>Daily journal</em> — daily, 10 min.</li>
                             <li><em>Evening planning ritual</em> — daily, 15 min.</li>
@@ -212,23 +212,22 @@ export function UserGuide() {
                         </ExampleList>
                         <p className="text-text-light"><strong>When to use it:</strong> the activity recurs on a schedule, you want to be reminded about it, and it deserves a slot in the day.</p>
 
-                        <SubHeading id="pathway-c">4.3 Light-coherent — your anytime habits</SubHeading>
+                        <SubHeading id="pathway-c">4.3 Micro-gap — your repeatable fillers</SubHeading>
                         <p>
-                            These are small, resumable activities that you pull from when you have a window — between
-                            sessions, when your attention drifts, or when you're waiting for something. They're tracked
-                            and synced to Todoist exactly like stabilizers, but they have <strong>no fixed time</strong>:
-                            they surface as "Anytime today" rows in your Today's Habits card, and you start them whenever
-                            a gap appears. They never become intentions or get assigned to a session.
+                            Small, resumable activities you pull from when you have a window — between sessions, when
+                            your attention drifts, or while you're waiting. Unlike habits they are <strong>not</strong>{' '}
+                            synced to Todoist and are <strong>repeatable</strong>: you can do one several times a day,
+                            and they never go "done for the day". They live in their own <strong>Micro-gaps</strong>{' '}
+                            panel — deliberately separate from the obligations list so dipping in never feels like a chore.
+                            Each rep is still tracked in the Engagement Log.
                         </p>
-                        <Flow>{`You set up a light-coherent Habit (e.g., "Anki flashcards", daily)
-  → Orchestrate creates an untimed recurring Todoist task ("every day")
-  → each matching day it appears as an "Anytime today" TodaysHabitInstance
-     in the Today's Habits card (Start / Stop / Complete / Skip — no Reschedule)
-  → press ▶ when you have a gap → a live timer runs; ■ pauses it
-     (each Start→Stop is one Engagement Log entry)
-  → press ✓ when done → the recurring Todoist task's occurrence is checked off
-  → it never enters your task plan and never burns session capacity.`}</Flow>
-                        <p><strong>Good for:</strong> the "Light Coherent Track" — small coherent activities that replace the impulse to open YouTube or scroll Hacker News, but that you still want to track and keep recurring.</p>
+                        <Flow>{`You set up a Micro-gap Habit (e.g., "Anki flashcards", daily) — no Todoist task is created
+  → each matching day it appears as a row in the Micro-gaps panel
+  → press ▶ when you have a gap → a live timer runs; ■ logs the rep (an Engagement Log entry)
+  → the row stays available — press ▶ again later for another rep
+  → a "N× · Mm" badge shows today's reps + total time. It never enters your task plan
+     or burns session capacity, and there's no Todoist completion.`}</Flow>
+                        <p><strong>Good for:</strong> the "Light Coherent Track" — small coherent activities that replace the impulse to open YouTube or scroll Hacker News, that you want to track but not turn into a daily obligation.</p>
                         <ExampleList heading="Tied to your current season">
                             <li><em>Anki / flashcard review</em> — during a "Spanish sprint" season.</li>
                             <li><em>Read one section of [current book]</em> — during a "Systems study" season.</li>
@@ -257,8 +256,8 @@ export function UserGuide() {
                         </ExampleList>
                         <Callout tone="info">
                             <strong>Rule of thumb:</strong>{' '}
-                            If it recurs and you'd want it back next week, make it a light-coherent Habit. If
-                            it's just for today, manual background.
+                            If it recurs and you'd want it back next week, make it a Habit (or a Micro-gap if it's
+                            a light, repeatable filler). If it's just for today, manual background.
                         </Callout>
                     </Section>
 
@@ -280,14 +279,14 @@ export function UserGuide() {
                             <em>Stretch</em>, <em>Sit in silence</em>.
                         </p>
                         <Callout tone="info">
-                            <strong>Why not just make it a light-coherent habit?</strong> Because the whole point is
+                            <strong>Why not just make it a micro-gap?</strong> Because the whole point is
                             zero cognitive overhead. No "should I log this?" decision. If you find yourself wanting
-                            to track walks, make that a light-coherent habit. True Rest is the deliberately untracked corner.
+                            to track walks, make that a micro-gap. True Rest is the deliberately untracked corner.
                         </Callout>
                     </Section>
 
-                    <Section id="stabilizer-vs-anchor" title="6. Stabilizer vs Anchor — they're not the same thing">
-                        <p>This is worth spelling out because the two labels look similar but answer different questions:</p>
+                    <Section id="stabilizer-vs-anchor" title="6. Kind vs Anchor — they're not the same thing">
+                        <p>This is worth spelling out because the two settings look similar but answer different questions:</p>
                         <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
                             <thead className="bg-surface-dark text-left">
                                 <tr>
@@ -299,8 +298,8 @@ export function UserGuide() {
                             <tbody>
                                 <Tr>
                                     <Td><Code>kind</Code></Td>
-                                    <Td><strong>Scheduling</strong> — both kinds sync to Todoist and track the same way; <Code>stabilizer</Code> is timed (sits on the timeline at its target time), <Code>light-coherent</Code> is anytime (an "Anytime today" pull)</Td>
-                                    <Td><em>"Does this need a slot in the day, or do I pull it anytime?"</em></Td>
+                                    <Td><strong>Lifecycle</strong> — <Code>habit</Code> syncs to Todoist and is done once a day (timed or anytime); <Code>micro-gap</Code> has no Todoist task and repeats freely</Td>
+                                    <Td><em>"Is this a once-a-day recurring thing, or a repeatable filler?"</em></Td>
                                 </Tr>
                                 <Tr>
                                     <Td><Code>isAnchor: true</Code></Td>
@@ -322,27 +321,27 @@ export function UserGuide() {
                             </thead>
                             <tbody>
                                 <Tr>
-                                    <Td>Stabilizer</Td>
+                                    <Td>Habit</Td>
                                     <Td>Yes</Td>
                                     <Td>The foundation — non-negotiable, the day collapses without it.</Td>
                                     <Td>Sleep, meditation, gym, shutdown, medication.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td>Stabilizer</Td>
+                                    <Td>Habit</Td>
                                     <Td>No</Td>
-                                    <Td>Recurring ritual that lands in a session daily, but might retire quietly.</Td>
-                                    <Td>Daily standup, journal, evening planning.</Td>
+                                    <Td>Recurring ritual done once a day, but might retire quietly.</Td>
+                                    <Td>Daily standup, journal, evening planning, an anime episode.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td>Light-coherent</Td>
+                                    <Td>Micro-gap</Td>
                                     <Td>Yes</Td>
-                                    <Td>Unusual but valid — a micro-gap practice you want to protect.</Td>
+                                    <Td>Unusual but valid — a repeatable filler you want to protect.</Td>
                                     <Td>Long-form weekly reading you don't want to delete on a whim.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td>Light-coherent</Td>
+                                    <Td>Micro-gap</Td>
                                     <Td>No</Td>
-                                    <Td>The typical anytime habit.</Td>
+                                    <Td>The typical repeatable filler.</Td>
                                     <Td>Flashcards, idea capture, language drills.</Td>
                                 </Tr>
                             </tbody>
@@ -351,7 +350,7 @@ export function UserGuide() {
                         <Callout tone="success">
                             <strong>The mental shortcut.</strong>{' '}
                             <Code>isAnchor</Code> answers <em>"which habits, if I dropped them, would let the day fall apart?"</em>{' '}
-                            <Code>kind</Code> answers <em>"does this need a slot in the day, or do I pull it anytime?"</em>
+                            <Code>kind</Code> answers <em>"is this a once-a-day recurring thing (habit), or a repeatable filler (micro-gap)?"</em>
                         </Callout>
                     </Section>
 
@@ -362,7 +361,7 @@ export function UserGuide() {
                         <ol className="list-decimal pl-5 space-y-1">
                             <li><strong>Empty list</strong> means <strong>always-on</strong>. The habit shows up regardless of which season is active. Use this for foundational stuff.</li>
                             <li><strong>Specific season(s)</strong> means <strong>season-scoped</strong>. The habit only shows up when that season is active. Use this for practices tied to a specific focus period.</li>
-                            <li><strong>Season membership doesn't change anything else.</strong> A stabilizer stays a stabilizer, an anchor stays an anchor, regardless of season.</li>
+                            <li><strong>Season membership doesn't change anything else.</strong> A habit stays a habit, a micro-gap stays a micro-gap, an anchor stays an anchor, regardless of season.</li>
                         </ol>
 
                         <SubHeading id="always-on-anchor">The "always-on anchor" principle</SubHeading>
@@ -388,25 +387,25 @@ export function UserGuide() {
                             </thead>
                             <tbody>
                                 <Tr>
-                                    <Td>Stabilizer</Td>
+                                    <Td>Habit</Td>
                                     <Td>Yes</Td>
                                     <Td>No (always-on)</Td>
                                     <Td><strong>Your foundation.</strong> 3–6 of these, cross-season. Sleep, meditation, gym, shutdown.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td>Stabilizer</Td>
+                                    <Td>Habit</Td>
                                     <Td>No</Td>
                                     <Td>Yes</Td>
-                                    <Td><strong>A season's ritual.</strong> Lands in a session daily while the season is active. E.g., daily research log during a "Research push" season.</Td>
+                                    <Td><strong>A season's ritual.</strong> Done daily while the season is active. E.g., daily research log during a "Research push" season.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td>Light-coherent</Td>
+                                    <Td>Micro-gap</Td>
                                     <Td>No</Td>
                                     <Td>Yes</Td>
-                                    <Td><strong>A season's micro-practice.</strong> An anytime habit only while that season is active. E.g., flashcards during an "Interview prep" season.</Td>
+                                    <Td><strong>A season's micro-practice.</strong> A repeatable filler only while that season is active. E.g., flashcards during an "Interview prep" season.</Td>
                                 </Tr>
                                 <Tr>
-                                    <Td>Light-coherent</Td>
+                                    <Td>Micro-gap</Td>
                                     <Td>No</Td>
                                     <Td>No (always-on)</Td>
                                     <Td><strong>General curiosity.</strong> Survives every season change. Idea capture, general reading, Duolingo.</Td>
@@ -422,10 +421,11 @@ export function UserGuide() {
                             <li>Anchors stay protected regardless — even between seasons.</li>
                         </ul>
                         <Callout tone="success">
-                            <strong>When setting up a new season,</strong> think in three buckets:
-                            (1) <strong>stabilizer rituals</strong> for this season's daily structure;
-                            (2) <strong>light-coherent micro-practices</strong> that support it;
-                            (3) <strong>leave your anchors alone</strong> — they're already always-on.
+                            <strong>When setting up a new season,</strong> think in buckets:
+                            (1) <strong>habit rituals</strong> for this season's daily structure;
+                            (2) <strong>micro-gap fillers</strong> that support it;
+                            (3) <strong>recurring focuses</strong> for bigger work-threads that decompose into tasks;
+                            (4) <strong>leave your anchors alone</strong> — they're already always-on.
                         </Callout>
                     </Section>
 
@@ -536,7 +536,7 @@ export function UserGuide() {
                         <Flow>{`Is X a non-task recovery move (walk, breathe, gaze)?
 ├─ YES → Don't model it. True Rest will surface organically.
 │        If you find yourself wanting to log it, that's the signal
-│        it should be a light-coherent habit instead.
+│        it should be a Micro-gap instead.
 └─ NO ↓
 
 Is X today-only?
@@ -547,16 +547,17 @@ Is X today-only?
 │            under an existing or new intention.
 │
 └─ NO  (X is recurring) ↓
-    Does X need a slot in the day to anchor your structure?
-    ├─ YES → create a stabilizer Habit.
-    │        Set targetTime + duration so Orchestrate can drop it in the right session.
+    Is X a once-a-day recurring thing you want to track in Todoist?
+    ├─ YES → create a Habit.
+    │        Add a target time to place it on the timeline, or leave it "anytime".
     │        Mark as anchor ONLY if dropping it would let the day collapse.
     │        Set seasonIds = [] for always-on, [seasonId] for season-scoped.
-    │        (Saving will create a recurring Todoist task in the chosen project.)
-    └─ NO  (X is opportunistic, pulled when you have a gap)
-        → create a light-coherent Habit.
-          Set seasonIds = [seasonId] if tied to current focus,
-          [] for general curiosity practices.`}</Flow>
+    │        (Saving creates a recurring Todoist task in the chosen project.)
+    ├─ NO, it's a light repeatable filler (pulled when you have a gap)
+    │   → create a Micro-gap. No Todoist; do it as many times as you like.
+    └─ NO, it's a bigger work-thread that breaks into tasks (e.g. "learn redis")
+        → add it as a Recurring focus on the active season.
+          On matching days it offers a "+ Add" chip in Step 1 that seeds an intention.`}</Flow>
                     </Section>
 
                     <Section id="typical-day" title="11. A typical day, start to finish">
@@ -565,17 +566,18 @@ Is X today-only?
                         <SubHeading>Your setup (durable, lives across days)</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
                             <li>Active season: <em>"Stabilization Q2"</em> — sleep + planning consistency + degree groundwork.</li>
-                            <li>Anchor stabilizers (always-on): <em>Morning meditation</em>, <em>Gym (M/W/F)</em>, <em>Sleep wind-down</em>, <em>Evening shutdown</em>.</li>
-                            <li>Season stabilizer: <em>Daily 15-min planning ritual</em>.</li>
-                            <li>Season light-coherent: <em>Read one section of [current systems book]</em>, <em>Algorithms warm-up (one easy problem)</em>.</li>
-                            <li>Always-on light-coherent: <em>Idea capture freewrite</em>, <em>Duolingo session</em>.</li>
+                            <li>Anchor habits (always-on): <em>Morning meditation</em>, <em>Gym (M/W/F)</em>, <em>Sleep wind-down</em>, <em>Evening shutdown</em>.</li>
+                            <li>Season habit: <em>Daily 15-min planning ritual</em>.</li>
+                            <li>Season micro-gaps: <em>Read one section of [current systems book]</em>, <em>Algorithms warm-up (one easy problem)</em>.</li>
+                            <li>Always-on micro-gaps: <em>Idea capture freewrite</em>, <em>Duolingo session</em>.</li>
+                            <li>Recurring focus: <em>Learn redis</em> (Mon/Wed/Fri) — seeds an intention you break into tasks.</li>
                         </ul>
 
                         <SubHeading>Step 1 — Intentions</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
                             <li>Habits are <em>not</em> in the intention list. Instead, an inline chip says: <em>"6 habits will fire today — already in Today's Habits."</em></li>
                             <li>You add manually: <em>"Finish v6 capacity arithmetic"</em>, <em>"Read paper on session scheduling"</em>.</li>
-                            <li>Light-coherent habits don't appear here either — they surface as anytime rows in the Today's Habits card.</li>
+                            <li>Micro-gaps don't appear here either — they surface in their own Micro-gaps panel on the dashboard. A "+ Add: Learn redis" focus chip is offered (it's M/W/F) — you click it to seed an intention.</li>
                         </ul>
 
                         <SubHeading>Step 2 — Refine</SubHeading>
@@ -583,7 +585,7 @@ Is X today-only?
                             <li><em>Finish v6 capacity arithmetic</em> → main, 120 min.</li>
                             <li><em>Read paper on session scheduling</em> → main, 60 min.</li>
                             <li>You add a manual background: <em>"Push WIP commit before lunch"</em>, 10 min.</li>
-                            <li>Stabilizer habits aren't here — they live separately on the timeline.</li>
+                            <li>Habits aren't here — they live separately on the timeline / in Today's Habits.</li>
                         </ul>
 
                         <SubHeading>Step 3 — Schedule</SubHeading>
@@ -600,18 +602,18 @@ Is X today-only?
                             <li>The dashboard habit lane shows 🔁 <em>Morning meditation</em> (07:00), 🔁 <em>Gym</em>, 🔁 <em>Daily planning ritual</em> (14:00), 🔁 <em>Evening shutdown</em> (22:00). The HabitInstanceCard lists them with Start/Stop/Complete/Skip/Reschedule controls.</li>
                             <li>7:02 AM — you press ▶ on Morning meditation, sit 12 minutes, press ✓. The pill turns 🎉, the recurring Todoist task is checked off.</li>
                             <li>For a main task you've started but need to pause, hit ■ on its TaskRow. Each Start→Stop is logged as its own entry in the <em>Engagement Log</em> card; pressing ▶ again starts a fresh segment. If you defer the intention to the backlog, those segments ride along as a memo.</li>
-                            <li>The Today's Habits card also lists the anytime (light-coherent) rows: <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. Between morning and afternoon sessions, you pull <em>Algorithms warm-up</em> — Start, work for 12 minutes, ✓ Done. Tracked in the Engagement Log; doesn't touch the task graph.</li>
+                            <li>The Micro-gaps panel lists <em>Read one section</em>, <em>Algorithms warm-up</em>, <em>Idea capture</em>, <em>Duolingo</em>. Between morning and afternoon sessions you pull <em>Algorithms warm-up</em> — ▶ Start, 12 minutes, ■ Stop (one rep, logged). Later you pull it again — it never greyed out. No Todoist, doesn't touch the task graph.</li>
                             <li>Between-session True Rest banner: <em>"Walk 5 minutes — outside if possible."</em> No tracking.</li>
-                            <li>2:00 PM check-in: feeling <em>struggling</em>, work type <em>low-energy</em>. The modal shows a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>) and a couple anytime habit rows. You try the breathing, then resume your main work.</li>
+                            <li>2:00 PM check-in: feeling <em>struggling</em>, work type <em>low-energy</em>. The modal shows a True Rest cue (<em>"Long-exhale breathing — 3 min"</em>) and a couple micro-gap rows. You try the breathing, then resume your main work.</li>
                             <li>3:00 PM check-in: feeling <em>stuck</em>. The avoidance prompt appears. You write: <em>"The paper's math section — I don't have the prerequisites yet."</em> Saved for later reflection.</li>
                             <li>6:30 PM — you realize you haven't done Gym yet. You press ⤴ Reschedule on the Gym row, pick 19:30. The instance just moves to 19:30 (keeping any engagement it had); the move shows up as a "⤴ Gym · 08:00 → 19:30 · Rescheduled" entry in the Engagement Log. The recurring Todoist task is untouched.</li>
                         </ul>
 
                         <SubHeading>End of day</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Stabilizer habit instances: 4/4 completed (their recurring Todoist tasks were checked off as you completed each).</li>
+                            <li>Habit instances: 4/4 completed (their recurring Todoist tasks were checked off as you completed each).</li>
                             <li>Main tasks: 1.5/2 completed.</li>
-                            <li>Anytime (light-coherent) habits: 2/4 completed (algorithms warm-up and Duolingo; flashcards and reading skipped today). Each completion advanced its recurring Todoist task.</li>
+                            <li>Micro-gaps: 3 reps logged across the day (algorithms warm-up ×2, Duolingo ×1) — no completion, just reps in the Engagement Log.</li>
                             <li>True Rest: surfaced but untracked, as intended.</li>
                         </ul>
                     </Section>
@@ -626,12 +628,13 @@ Is X today-only?
                             </thead>
                             <tbody>
                                 <Tr><Td>A today-only big work thread</Td><Td>Main task (Deep Track)</Td></Tr>
-                                <Tr><Td>A recurring ritual that needs a slot</Td><Td>Stabilizer Habit (set <Code>targetTime</Code> + duration so it auto-lands in the right session). Add <Code>isAnchor</Code> if foundational.</Td></Tr>
-                                <Tr><Td>A small recurring practice you pull opportunistically</Td><Td>Light-coherent Habit (anytime — tracked + synced, no fixed time)</Td></Tr>
+                                <Tr><Td>A recurring ritual done once a day</Td><Td>Habit (add <Code>targetTime</Code> to place it on the timeline, or leave it anytime). Add <Code>isAnchor</Code> if foundational.</Td></Tr>
+                                <Tr><Td>A small repeatable filler you pull opportunistically</Td><Td>Micro-gap (no Todoist, repeatable, its own panel)</Td></Tr>
+                                <Tr><Td>A recurring work-thread that breaks into tasks (e.g. "learn redis")</Td><Td>Recurring focus on the active season (offers a "+ Add" chip in Step 1)</Td></Tr>
                                 <Tr><Td>A today-only small chore tied to an intention</Td><Td>Manual background task</Td></Tr>
                                 <Tr><Td>A non-task recovery prompt</Td><Td>Don't model. True Rest handles it.</Td></Tr>
-                                <Tr><Td>A practice tied to a specific focus period</Td><Td>Light-coherent Habit with <Code>seasonIds</Code> set</Td></Tr>
-                                <Tr><Td>A foundational habit that survives season changes</Td><Td>Stabilizer Habit with <Code>isAnchor</Code>, always-on</Td></Tr>
+                                <Tr><Td>A filler tied to a specific focus period</Td><Td>Micro-gap with <Code>seasonIds</Code> set</Td></Tr>
+                                <Tr><Td>A foundational habit that survives season changes</Td><Td>Habit with <Code>isAnchor</Code>, always-on</Td></Tr>
                                 <Tr><Td>An intention you want to defer (today's too full, or plans shifted)</Td><Td>Click <Code>📥</Code> on the intention row. Bring it back from the Backlog sidebar tab on a future day.</Td></Tr>
                             </tbody>
                         </table>
@@ -675,7 +678,7 @@ const TOC_ENTRIES: { id: string; label: string }[] = [
     { id: 'habit-entity', label: '3. Habits: the recurring backbone' },
     { id: 'pathways', label: '4. The three work pathways' },
     { id: 'true-rest', label: '5. True Rest' },
-    { id: 'stabilizer-vs-anchor', label: '6. Stabilizer vs Anchor' },
+    { id: 'stabilizer-vs-anchor', label: '6. Kind vs Anchor' },
     { id: 'anchor-stabilizer-seasons', label: '7. Habits, Seasons, Anchors' },
     { id: 'capacity', label: '8. Session capacity' },
     { id: 'check-in', label: '9. The hourly check-in' },

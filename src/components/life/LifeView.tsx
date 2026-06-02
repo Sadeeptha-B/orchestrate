@@ -28,7 +28,7 @@ function HabitPill({ habit }: { habit: Habit }) {
         <div className="group px-3 py-2 rounded-lg border border-border text-sm flex items-center justify-between gap-2">
             <span className="truncate">{habit.name}</span>
             <span className="flex items-center gap-1.5 flex-shrink-0">
-                {habit.kind === 'stabilizer' && habit.targetTime && (
+                {habit.kind === 'habit' && habit.targetTime && (
                     <span className="text-[10px] tabular-nums text-text-light">{habit.targetTime}</span>
                 )}
                 {habit.isAnchor && (
@@ -46,7 +46,7 @@ function HabitPill({ habit }: { habit: Habit }) {
     );
 }
 
-/** One kind bucket (stabilizers or light-coherent) with a count sub-label + pill grid. */
+/** One kind bucket (habits or micro-gaps) with a count sub-label + pill grid. */
 function KindBucket({ label, habits }: { label: string; habits: Habit[] }) {
     if (habits.length === 0) return null;
     const sorted = [...habits].sort(anchorFirst);
@@ -64,11 +64,11 @@ function KindBucket({ label, habits }: { label: string; habits: Habit[] }) {
 
 /** Both kind buckets for a set of habits. */
 function KindGroups({ habits }: { habits: Habit[] }) {
-    const { stabilizers, lightCoherent } = partitionByKind(habits);
+    const { habits: habitItems, microGaps } = partitionByKind(habits);
     return (
         <div className="space-y-3">
-            <KindBucket label="Stabilizers" habits={stabilizers} />
-            <KindBucket label="Light-coherent" habits={lightCoherent} />
+            <KindBucket label="Habits" habits={habitItems} />
+            <KindBucket label="Micro-gaps" habits={microGaps} />
         </div>
     );
 }

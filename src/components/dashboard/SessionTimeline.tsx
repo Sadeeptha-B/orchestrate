@@ -9,6 +9,7 @@ import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
+import { habitKindOf } from '../../lib/habits';
 import { EngagementTimer } from './EngagementTimer';
 import { openSegment } from '../../lib/engagement';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
@@ -471,9 +472,12 @@ interface SessionTimelineProps {
 }
 
 export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTimelineProps) {
-    const { plan, settings } = useDayPlan();
+    const { plan, life, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
+
+    // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps live in their own panel.
+    const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
 
     return (
         <SessionTimelineBar
@@ -484,7 +488,7 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
             currentSessionId={currentSession?.id}
             selectedSessionId={pinnedSessionId}
             onSelectSession={onSelectSession}
-            todaysHabits={plan.todaysHabits}
+            todaysHabits={timelineHabits}
         />
     );
 }

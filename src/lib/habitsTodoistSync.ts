@@ -90,10 +90,10 @@ export function resolveHabitProjectId(
 }
 
 /**
- * Sync a Habit to Todoist as a recurring task (v6.6: both kinds — stabilizers carry a
- * time-of-day via `buildDueString`, light-coherent are untimed "every day"). Caller resolves
- * the target project id (via `ensureHabitsProject` + `resolveHabitProjectId`) so a batch
- * operation can resolve once and reuse the id across iterations.
+ * Sync a 'habit'-kind Habit to Todoist as a recurring task (v6.7: micro-gaps never sync —
+ * early-returns null for them). Timed habits carry a time-of-day via `buildDueString`; untimed
+ * habits are "every day". Caller resolves the target project id (via `ensureHabitsProject` +
+ * `resolveHabitProjectId`) so a batch operation can resolve once and reuse the id across iterations.
  *
  * - If the habit has no `todoistTaskId`: creates a new recurring task in `projectId`.
  * - If a task exists but in a different project: moves it via the Sync API.
@@ -108,6 +108,7 @@ export async function syncHabitToTodoist(args: {
     taskMap: Map<string, TodoistTask>;
 }): Promise<string | null> {
     const { habit, projectId, actions, taskMap } = args;
+    if (habit.kind !== 'habit') return null; // v6.7: micro-gaps never sync to Todoist.
 
     const dueString = buildDueString(habit);
     const duration = habit.targetDurationMinutes;
@@ -171,20 +172,20 @@ function dueDateLocal(due: { date: string; timezone: string | null }): string {
 }
 
 /**
- * v6.3: compute today's habit instances. v6.6: both kinds (stabilizer + light-coherent).
+ * v6.3: compute today's habit instances. v6.7: **'habit' kind only** — micro-gaps go through
+ * `computeTodaysMicroGapInstances` (no Todoist).
  *
- * Filters active habits to those whose:
+ * Filters active 'habit'-kind entries to those whose:
  *  - recurrence matches `plan.date`
  *  - season scope matches the active season (or is season-agnostic)
  *  - linked Todoist task exists, is due today, and is unchecked
- *  - (stabilizers only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
+ *  - (timed habits only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
  *
  * Idempotent against habits already present in `plan.todaysHabits` (caller passes the full plan;
  * the reducer's `REFRESH_TODAYS_HABITS` further dedupes by `habitId`).
  *
- * Each emitted instance gets a fresh uuid, `status: 'planned'`, and (stabilizers only) a `targetTime`
- * derived from the Todoist `due` time-of-day if set, else the habit's `targetTime`. Light-coherent
- * instances are always untimed ("anytime"). No session assignment.
+ * Each emitted instance gets a fresh uuid, `status: 'planned'`, and a `targetTime` derived from the
+ * Todoist `due` time-of-day if set, else the habit's `targetTime` (absent → "anytime"). No session assignment.
  */
 export function computeTodaysHabitInstances(args: {
     life: LifeContext;
@@ -202,6 +203,7 @@ export function computeTodaysHabitInstances(args: {
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
+        if (habit.kind !== 'habit') continue; // v6.7: micro-gaps use computeTodaysMicroGapInstances (no Todoist).
         if (!habit.todoistTaskId) continue;
         if (existingHabitIds.has(habit.id)) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
@@ -214,19 +216,15 @@ export function computeTodaysHabitInstances(args: {
         const taskDueDate = dueDateLocal(task.due);
         if (taskDueDate !== dateISO) continue;
 
-        const isStabilizer = habit.kind === 'stabilizer';
-        const durationMinutes = habit.targetDurationMinutes
-            ?? (isStabilizer ? taskCaps.stabilizer : taskCaps.lightCoherent);
-        // Window-behavior gate: 'strict' hides the instance if its window has passed. Stabilizers only —
-        // light-coherent habits are "anytime" and have no window.
-        if (isStabilizer && habit.windowBehavior === 'strict' && habit.targetTime) {
-            const windowEnd = timeToMinutes(habit.targetTime) + durationMinutes;
+        const durationMinutes = habit.targetDurationMinutes ?? taskCaps.habit;
+        // Timed habits carry a target time (from the Todoist due, else the habit). Untimed habits
+        // ("anytime") have no target time. Window-behavior gate only applies to timed habits.
+        const dueTime = dueTimeOfDay(task.due.date);
+        const targetTime = dueTime ?? habit.targetTime;
+        if (habit.windowBehavior === 'strict' && targetTime) {
+            const windowEnd = timeToMinutes(targetTime) + durationMinutes;
             if (nowMinutes > windowEnd) continue;
         }
-
-        // Light-coherent instances are always untimed; only stabilizers carry a target time.
-        const dueTime = dueTimeOfDay(task.due.date);
-        const targetTime = isStabilizer ? (dueTime ?? habit.targetTime) : undefined;
 
         out.push({
             id: crypto.randomUUID(),
@@ -277,6 +275,7 @@ export function findNeedsSyncHabits(args: {
     const out: NeedsSyncHabitInfo[] = [];
     for (const habit of life.habits) {
         if (!habit.active) continue;
+        if (habit.kind !== 'habit') continue; // v6.7: micro-gaps don't sync to Todoist.
         if (!habit.todoistTaskId) {
             out.push({ habit, reason: 'never-synced' });
             continue;
@@ -309,6 +308,7 @@ export function findOverdueHabits(args: {
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
+        if (habit.kind !== 'habit') continue; // v6.7: micro-gaps have no Todoist task to bump.
         if (!habit.todoistTaskId) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
         if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;

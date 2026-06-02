@@ -7,7 +7,18 @@ import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { SeasonForm } from './SeasonForm';
 import { partitionByKind } from '../../lib/habits';
-import type { Habit } from '../../types';
+import type { Habit, RecurringFocus } from '../../types';
+
+const FOCUS_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Compact recurrence label for a recurring focus, e.g. "Daily", "Weekdays", "Mon, Wed". */
+function focusRecurrenceLabel(f: RecurringFocus): string {
+    const r = f.recurrence;
+    if (r.kind === 'daily') return 'Daily';
+    if (r.kind === 'weekdays') return 'Weekdays';
+    const days = r.daysOfWeek ?? [];
+    return days.length > 0 ? days.map((d) => FOCUS_DOW[d]).join(', ') : 'Weekly';
+}
 
 function MemberHabitGroup({ label, habits }: { label: string; habits: Habit[] }) {
     if (habits.length === 0) return null;
@@ -20,7 +31,7 @@ function MemberHabitGroup({ label, habits }: { label: string; habits: Habit[] })
                 {habits.map((h) => (
                     <li key={h.id} className="flex items-center gap-2">
                         <span>{h.name}</span>
-                        {h.kind === 'stabilizer' && h.targetTime && (
+                        {h.kind === 'habit' && h.targetTime && (
                             <span className="text-[10px] tabular-nums text-text-light">{h.targetTime}</span>
                         )}
                         {h.isAnchor && (
@@ -73,7 +84,7 @@ export function SeasonDetail() {
     }
 
     const memberHabits = life.habits.filter((h) => h.seasonIds.includes(season.id));
-    const { stabilizers: memberStabilizers, lightCoherent: memberLightCoherent } = partitionByKind(memberHabits);
+    const { habits: memberHabitsByKind, microGaps: memberMicroGaps } = partitionByKind(memberHabits);
 
     return (
         <LifeShell
@@ -143,6 +154,27 @@ export function SeasonDetail() {
 
                 <Card>
                     <h4 className="text-xs font-medium uppercase tracking-wider text-text-light mb-2">
+                        Recurring focuses
+                    </h4>
+                    {(season.recurringFocuses ?? []).length === 0 ? (
+                        <p className="text-xs text-text-light italic">No recurring focuses</p>
+                    ) : (
+                        <ul className="text-sm space-y-1">
+                            {(season.recurringFocuses ?? []).map((f) => (
+                                <li key={f.id} className="flex items-center gap-2">
+                                    <span aria-hidden className="text-accent">＋</span>
+                                    <span className={f.active ? '' : 'text-text-light line-through'}>{f.title}</span>
+                                    <span className="text-[10px] uppercase tracking-wider text-text-light">
+                                        {focusRecurrenceLabel(f)}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Card>
+
+                <Card>
+                    <h4 className="text-xs font-medium uppercase tracking-wider text-text-light mb-2">
                         Non-goals
                     </h4>
                     <FieldList items={season.nonGoals} empty="Nothing explicitly out of scope" />
@@ -194,8 +226,8 @@ export function SeasonDetail() {
                         </p>
                     ) : (
                         <div className="space-y-3">
-                            <MemberHabitGroup label="Stabilizers" habits={memberStabilizers} />
-                            <MemberHabitGroup label="Light-coherent" habits={memberLightCoherent} />
+                            <MemberHabitGroup label="Habits" habits={memberHabitsByKind} />
+                            <MemberHabitGroup label="Micro-gaps" habits={memberMicroGaps} />
                         </div>
                     )}
                 </Card>
