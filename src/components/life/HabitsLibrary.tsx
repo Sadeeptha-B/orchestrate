@@ -8,13 +8,17 @@ import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
 import { HabitForm, type HabitDraft } from './HabitForm';
-import { getActiveHabits } from '../../lib/habits';
+import { getActiveHabits, partitionByKind } from '../../lib/habits';
 import { ensureHabitsProject } from '../../lib/habitsTodoistSync';
 import { useSyncHabit } from '../../hooks/useSyncHabit';
 import type { Habit } from '../../types';
 
 interface HabitsLocationState {
     createHabitKind?: HabitDraft['kind'];
+    /** Pre-select a season filter when arriving from a season detail page. */
+    seasonFilter?: string;
+    /** Open the edit modal for this habit ID immediately on mount. */
+    editHabitId?: string;
 }
 
 function recurrenceSummary(h: Habit): string {
@@ -33,13 +37,14 @@ function recurrenceSummary(h: Habit): string {
     }
 }
 
+const GROUP_HEADING = 'text-xs font-medium uppercase tracking-wider text-text-light flex items-center gap-2 mb-2';
+const CHEVRON_CLS = 'w-3 h-3 text-text-light transition-transform';
+
 export function HabitsLibrary() {
     const { life, settings, dispatch } = useDayPlan();
     const todoistActions = useTodoistActions();
     const { projects, isConfigured: isTodoistConfigured } = useTodoistData();
     const syncHabit = useSyncHabit();
-    // v6.5: detection + reconcile action are owned by the central provider. The
-    // banner reads counts from here; the Migrate / Re-sync button delegates to it.
     const {
         needsSyncCount,
         neverSyncedCount,
@@ -53,15 +58,54 @@ export function HabitsLibrary() {
     const navigate = useNavigate();
     const locationState = location.state as HabitsLocationState | null;
     const createHabitKindFromState = locationState?.createHabitKind;
+    const editHabitIdFromState = locationState?.editHabitId;
+
     const [showCreate, setShowCreate] = useState(() => Boolean(createHabitKindFromState));
     const [createInitial, setCreateInitial] = useState<Partial<HabitDraft> | undefined>(() =>
         createHabitKindFromState ? { kind: createHabitKindFromState } : undefined,
     );
-    const [editing, setEditing] = useState<Habit | null>(null);
+    const [editing, setEditing] = useState<Habit | null>(() =>
+        editHabitIdFromState ? (life.habits.find((h) => h.id === editHabitIdFromState) ?? null) : null,
+    );
     const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
     const [syncError, setSyncError] = useState<string | null>(null);
     const [refreshingProjects, setRefreshingProjects] = useState(false);
+    const [inactiveOpen, setInactiveOpen] = useState(false);
+
+    // Season filter — initialized from navigation state so arriving from a season page
+    // pre-filters automatically; the user can then change or clear it via the filter pills.
+    const [seasonFilter, setSeasonFilter] = useState<string | null>(
+        () => locationState?.seasonFilter ?? null,
+    );
+
+    // Clear navigation state after reading so back/forward nav doesn't restore stale filters.
+    useEffect(() => {
+        if (!createHabitKindFromState && !locationState?.seasonFilter && !editHabitIdFromState) return;
+        navigate(location.pathname, { replace: true, state: null });
+    }, [createHabitKindFromState, locationState?.seasonFilter, editHabitIdFromState, location.pathname, navigate]);
+
     const activeHabitCount = getActiveHabits(life).length;
+
+    const defaultProjectName = useMemo(() => {
+        const id = settings.habitsTodoistProjectId;
+        if (!id) return undefined;
+        return projects.find((p) => p.id === id)?.name;
+    }, [settings.habitsTodoistProjectId, projects]);
+
+    // Filtered + grouped derivation — stable identity helps avoid render cascades.
+    const { stabilizers, lightCoherent, inactive } = useMemo(() => {
+        const base = seasonFilter
+            ? life.habits.filter((h) => h.seasonIds.includes(seasonFilter))
+            : life.habits;
+        const sorted = [...base].sort((a, b) => {
+            if (a.active !== b.active) return a.active ? -1 : 1;
+            if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
+            return a.name.localeCompare(b.name);
+        });
+        const active = sorted.filter((h) => h.active);
+        const { stabilizers, lightCoherent } = partitionByKind(active);
+        return { stabilizers, lightCoherent, inactive: sorted.filter((h) => !h.active) };
+    }, [life.habits, seasonFilter]);
 
     const handleRefreshProjects = async () => {
         setRefreshingProjects(true);
@@ -72,27 +116,7 @@ export function HabitsLibrary() {
         }
     };
 
-    useEffect(() => {
-        if (!createHabitKindFromState) return;
-
-        navigate(location.pathname, { replace: true, state: null });
-    }, [createHabitKindFromState, location.pathname, navigate]);
-
-    const sorted = [...life.habits].sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
-        return a.name.localeCompare(b.name);
-    });
-
-    const defaultProjectName = useMemo(() => {
-        const id = settings.habitsTodoistProjectId;
-        if (!id) return undefined;
-        return projects.find((p) => p.id === id)?.name;
-    }, [settings.habitsTodoistProjectId, projects]);
-
     const tryDelete = (habit: Habit) => {
-        // Anchors are load-bearing, so deleting an active one asks for confirmation first.
-        // Everything else deletes immediately.
         if (habit.isAnchor && habit.active) {
             setConfirmDelete(habit);
             return;
@@ -113,22 +137,11 @@ export function HabitsLibrary() {
     const onUpdateSettings = (updates: Partial<typeof settings>) =>
         dispatch({ type: 'UPDATE_SETTINGS', settings: updates });
 
-    /** Resolve (or lazily create) the workspace default Habits project. Returns null on failure. */
-    const resolveDefaultProject = async (): Promise<string | null> => {
-        return ensureHabitsProject({
-            actions: todoistActions,
-            settings,
-            projects,
-            onUpdateSettings,
-        });
-    };
+    const resolveDefaultProject = async (): Promise<string | null> =>
+        ensureHabitsProject({ actions: todoistActions, settings, projects, onUpdateSettings });
 
     const handleCreate = async (draft: HabitDraft) => {
-        const newHabit: Habit = {
-            ...draft,
-            id: crypto.randomUUID(),
-            createdAt: new Date().toISOString(),
-        };
+        const newHabit: Habit = { ...draft, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
         dispatch({ type: 'ADD_HABIT', habit: newHabit });
         closeCreate();
         if (isTodoistConfigured) {
@@ -157,24 +170,92 @@ export function HabitsLibrary() {
         }
     };
 
-    // v6.5: delegated to the central provider. The hook handles the loop, default-project
-    // resolution, and error funneling; we just trigger it. Errors land in `reconcileError`.
     const handleMigrate = () => {
         setSyncError(null);
         void triggerReconcile();
     };
+
+    // Render one habit card — inlined so it can close over dispatch/setEditing/tryDelete
+    // without prop-drilling. Called as a function (not a component) to avoid React rules issues.
+    const renderCard = (h: Habit) => (
+        <Card key={h.id} className="hover:border-accent/40 transition-colors">
+            <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <h3 className="font-medium">{h.name}</h3>
+                        {h.isAnchor && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent text-white">
+                                ANCHOR
+                            </span>
+                        )}
+                        {!h.active && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface-dark text-text-light">
+                                INACTIVE
+                            </span>
+                        )}
+                        {h.active && !h.todoistTaskId && (
+                            <span
+                                className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                                title="Not yet synced to Todoist"
+                            >
+                                UNSYNCED
+                            </span>
+                        )}
+                        {h.kind === 'stabilizer' && h.active && !h.targetTime && (
+                            <span
+                                className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                                title="Stabilizers need a scheduled time — edit this habit to set one"
+                            >
+                                NEEDS TIME
+                            </span>
+                        )}
+                    </div>
+                    <p className="text-xs text-text-light">
+                        {recurrenceSummary(h)}
+                        {h.targetTime && ` · ${h.targetTime}`}
+                        {h.targetDurationMinutes && ` · ${h.targetDurationMinutes}m`}
+                        {h.minimumViable && ` · MVP: ${h.minimumViable}`}
+                        {h.triggerCue && ` · cue: ${h.triggerCue}`}
+                    </p>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={isReconciling}
+                        onClick={() => dispatch({ type: 'TOGGLE_HABIT_ACTIVE', habitId: h.id })}
+                    >
+                        {h.active ? 'Pause' : 'Activate'}
+                    </Button>
+                    <Button variant="ghost" size="sm" disabled={isReconciling} onClick={() => setEditing(h)}>
+                        Edit
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={isReconciling}
+                        onClick={() => tryDelete(h)}
+                        className="text-red-500 hover:text-red-600"
+                    >
+                        Delete
+                    </Button>
+                </div>
+            </div>
+        </Card>
+    );
+
+    const activeCount = stabilizers.length + lightCoherent.length;
 
     return (
         <LifeShell
             title="Habits"
             subtitle="All habits sync to Todoist as recurring tasks and surface in Today's Habits. Stabilizers are scheduled at a set time; light-coherent habits are anytime, pulled when you have a gap."
         >
+            {/* ── Sync banner ── */}
             {needsSyncCount > 0 && (
                 <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
                     <div className="text-sm">
-                        <strong>
-                            {needsSyncCount} habit{needsSyncCount === 1 ? '' : 's'}
-                        </strong>{' '}
+                        <strong>{needsSyncCount} habit{needsSyncCount === 1 ? '' : 's'}</strong>{' '}
                         {missingTaskCount === 0
                             ? 'need to be synced as recurring Todoist tasks.'
                             : neverSyncedCount === 0
@@ -183,15 +264,10 @@ export function HabitsLibrary() {
                         {isTodoistConfigured ? (
                             <span className="text-text-light">
                                 {' '}Will sync to{' '}
-                                <strong className="text-text">
-                                    {defaultProjectName ?? 'a new "Habits" project'}
-                                </strong>
-                                .
+                                <strong className="text-text">{defaultProjectName ?? 'a new "Habits" project'}</strong>.
                             </span>
                         ) : (
-                            <span className="text-text-light">
-                                {' '}Connect Todoist in Settings first.
-                            </span>
+                            <span className="text-text-light"> Connect Todoist in Settings first.</span>
                         )}
                     </div>
                     {isTodoistConfigured && (
@@ -218,22 +294,19 @@ export function HabitsLibrary() {
                     <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                            setSyncError(null);
-                            clearError();
-                        }}
+                        onClick={() => { setSyncError(null); clearError(); }}
                     >
                         Dismiss
                     </Button>
                 </div>
             )}
 
-            <div className="flex items-center justify-between mb-4">
+            {/* ── Header row ── */}
+            <div className="flex items-center justify-between mb-3">
                 <p className="text-sm text-text-light">
                     {life.habits.length === 0
                         ? 'No habits yet — start with one anchor habit (sleep, meditation, or gym).'
-                        : `${life.habits.length} habit${life.habits.length === 1 ? '' : 's'}, ${activeHabitCount
-                        } active.`}
+                        : `${life.habits.length} habit${life.habits.length === 1 ? '' : 's'}, ${activeHabitCount} active.`}
                 </p>
                 <Button
                     size="sm"
@@ -245,88 +318,110 @@ export function HabitsLibrary() {
                 </Button>
             </div>
 
-            <div className="space-y-2">
-                {sorted.map((h) => (
-                    <Card key={h.id} className="hover:border-accent/40 transition-colors">
-                        <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap mb-1">
-                                    <h3 className="font-medium">{h.name}</h3>
-                                    <span
-                                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${h.kind === 'stabilizer'
-                                            ? 'bg-accent-subtle text-accent'
-                                            : 'bg-surface-dark text-text-light'
-                                            }`}
-                                        title={h.kind === 'stabilizer'
-                                            ? 'Scheduled habit — synced to Todoist; surfaces on your timeline at its set time each day it is due'
-                                            : 'Anytime habit — synced to Todoist & tracked, but pulled opportunistically with no fixed time'}
-                                    >
-                                        {h.kind === 'stabilizer' ? 'STABILIZER' : 'LIGHT'}
-                                    </span>
-                                    {h.isAnchor && (
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent text-white">
-                                            ANCHOR
-                                        </span>
-                                    )}
-                                    {!h.active && (
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface-dark text-text-light">
-                                            INACTIVE
-                                        </span>
-                                    )}
-                                    {h.active && !h.todoistTaskId && (
-                                        <span
-                                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                                            title="Not yet synced to Todoist"
-                                        >
-                                            UNSYNCED
-                                        </span>
-                                    )}
-                                    {h.kind === 'stabilizer' && h.active && !h.targetTime && (
-                                        <span
-                                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                                            title="Stabilizers need a scheduled time — edit this habit to set one"
-                                        >
-                                            NEEDS TIME
-                                        </span>
-                                    )}
-                                </div>
-                                <p className="text-xs text-text-light">
-                                    {recurrenceSummary(h)}
-                                    {h.targetTime && ` · ${h.targetTime}`}
-                                    {h.targetDurationMinutes && ` · ${h.targetDurationMinutes}m`}
-                                    {h.minimumViable && ` · MVP: ${h.minimumViable}`}
-                                    {h.triggerCue && ` · cue: ${h.triggerCue}`}
-                                </p>
-                            </div>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    disabled={isReconciling}
-                                    onClick={() =>
-                                        dispatch({ type: 'TOGGLE_HABIT_ACTIVE', habitId: h.id })
-                                    }
-                                >
-                                    {h.active ? 'Pause' : 'Activate'}
-                                </Button>
-                                <Button variant="ghost" size="sm" disabled={isReconciling} onClick={() => setEditing(h)}>
-                                    Edit
-                                </Button>
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    disabled={isReconciling}
-                                    onClick={() => tryDelete(h)}
-                                    className="text-red-500 hover:text-red-600"
-                                >
-                                    Delete
-                                </Button>
-                            </div>
-                        </div>
-                    </Card>
-                ))}
+            {/* ── Season filter pills ── */}
+            {life.seasons.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-5">
+                    <button
+                        type="button"
+                        onClick={() => setSeasonFilter(null)}
+                        className={`text-xs px-3 py-1 rounded-full border transition-colors cursor-pointer ${
+                            !seasonFilter
+                                ? 'border-accent bg-accent text-white'
+                                : 'border-border text-text-light hover:border-accent/40 hover:text-text'
+                        }`}
+                    >
+                        All seasons
+                    </button>
+                    {life.seasons.map((s) => (
+                        <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setSeasonFilter(s.id)}
+                            className={`text-xs px-3 py-1 rounded-full border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                                seasonFilter === s.id
+                                    ? 'border-accent bg-accent text-white'
+                                    : 'border-border text-text-light hover:border-accent/40 hover:text-text'
+                            }`}
+                        >
+                            {s.name}
+                            {s.active && (
+                                <span className={`w-1.5 h-1.5 rounded-full ${seasonFilter === s.id ? 'bg-white/70' : 'bg-accent'}`} />
+                            )}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* ── Grouped habit list ── */}
+            <div className="space-y-6">
+                {/* Stabilizers */}
+                {stabilizers.length > 0 && (
+                    <div>
+                        <h4 className={GROUP_HEADING}>
+                            Stabilizers
+                            <span className="text-text-light/60 font-normal normal-case tracking-normal">
+                                {stabilizers.length}
+                            </span>
+                        </h4>
+                        <div className="space-y-2">{stabilizers.map(renderCard)}</div>
+                    </div>
+                )}
+
+                {/* Light-coherent */}
+                {lightCoherent.length > 0 && (
+                    <div>
+                        <h4 className={GROUP_HEADING}>
+                            Light-coherent
+                            <span className="text-text-light/60 font-normal normal-case tracking-normal">
+                                {lightCoherent.length}
+                            </span>
+                        </h4>
+                        <div className="space-y-2">{lightCoherent.map(renderCard)}</div>
+                    </div>
+                )}
+
+                {/* Empty state */}
+                {activeCount === 0 && (
+                    <p className="text-sm text-text-light italic">
+                        {seasonFilter
+                            ? 'No active habits for this season — assign some from the Habits form.'
+                            : 'No active habits yet — start with one anchor habit (sleep, meditation, or gym).'}
+                    </p>
+                )}
+
+                {/* Inactive — collapsible, hidden by default */}
+                {inactive.length > 0 && (
+                    <div className={activeCount > 0 ? 'border-t border-border pt-5' : ''}>
+                        <button
+                            type="button"
+                            onClick={() => setInactiveOpen((o) => !o)}
+                            className="flex items-center gap-2 cursor-pointer group"
+                            aria-expanded={inactiveOpen}
+                        >
+                            <svg
+                                className={`${CHEVRON_CLS} ${inactiveOpen ? 'rotate-90' : ''}`}
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth={2}
+                            >
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                            <span className="text-xs font-medium uppercase tracking-wider text-text-light group-hover:text-text transition-colors">
+                                Inactive
+                            </span>
+                            <span className="text-text-light/60 text-xs font-normal normal-case tracking-normal">
+                                {inactive.length}
+                            </span>
+                        </button>
+                        {inactiveOpen && (
+                            <div className="space-y-2 mt-2">{inactive.map(renderCard)}</div>
+                        )}
+                    </div>
+                )}
             </div>
 
+            {/* ── Modals ── */}
             <Modal open={showCreate} onClose={closeCreate} title="New habit">
                 <HabitForm
                     initial={createInitial}
@@ -360,7 +455,6 @@ export function HabitsLibrary() {
                     />
                 )}
             </Modal>
-
 
             <Modal
                 open={confirmDelete !== null}

@@ -90,7 +90,7 @@ export function InsightCard() {
                             />
                             <button
                                 type="button"
-                                onClick={() => navigate('/rest-cues')}
+                                onClick={() => navigate('/life')}
                                 className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
                             >
                                 Manage →

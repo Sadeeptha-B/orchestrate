@@ -13,7 +13,6 @@ const LifeView = lazy(() => import('./components/life/LifeView').then((mod) => (
 const SeasonsManager = lazy(() => import('./components/life/SeasonsManager').then((mod) => ({ default: mod.SeasonsManager })));
 const SeasonDetail = lazy(() => import('./components/life/SeasonDetail').then((mod) => ({ default: mod.SeasonDetail })));
 const HabitsLibrary = lazy(() => import('./components/life/HabitsLibrary').then((mod) => ({ default: mod.HabitsLibrary })));
-const RestCuesManager = lazy(() => import('./components/life/RestCuesManager').then((mod) => ({ default: mod.RestCuesManager })));
 const UserGuide = lazy(() => import('./components/guide/UserGuide').then((mod) => ({ default: mod.UserGuide })));
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then((mod) => ({ default: mod.SettingsPage })));
 
@@ -51,8 +50,7 @@ function AppRoutes() {
                 <Route path="/season" element={<SeasonsManager />} />
                 <Route path="/season/:id" element={<SeasonDetail />} />
                 <Route path="/habits" element={<HabitsLibrary />} />
-                <Route path="/rest-cues" element={<RestCuesManager />} />
-                <Route path="/settings" element={<SettingsPage />} />
+<Route path="/settings" element={<SettingsPage />} />
                 <Route path="/guide" element={<UserGuide />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
