@@ -938,6 +938,12 @@ function reducer(state: State, action: Action): State {
             //     refresh `durationMinutes` + `titleSnapshot`. Preserve the user's chosen time.
             //   - existing match is in any other status → leave alone (engaged/completed/skipped
             //     state lives only here).
+            //
+            // The merge is **value-stable**: a matched `planned` instance only allocates a new
+            // object when a surfaced field actually changed. Combined with the bail-out below, a
+            // re-fire with unchanged data is a true no-op — the compute helpers re-emit every
+            // matching habit each tick (so form edits propagate), and the surfaces that depend on
+            // `plan.todaysHabits` settle instead of looping.
             const incomingByHabitId = new Map(action.instances.map((i) => [i.habitId, i]));
             const seenHabitIds = new Set<string>();
             const merged = plan.todaysHabits.map((existing) => {
@@ -945,16 +951,20 @@ function reducer(state: State, action: Action): State {
                 if (!incoming) return existing;
                 seenHabitIds.add(existing.habitId);
                 if (existing.status !== 'planned') return existing;
-                const userRescheduled = Boolean(existing.rescheduledAt);
+                // User-chosen time wins; otherwise the habit-form's latest time propagates.
+                const nextTargetTime = existing.rescheduledAt ? existing.targetTime : incoming.targetTime;
+                if (
+                    existing.durationMinutes === incoming.durationMinutes
+                    && existing.titleSnapshot === incoming.titleSnapshot
+                    && existing.targetTime === nextTargetTime
+                ) {
+                    return existing;
+                }
                 return {
                     ...existing,
                     durationMinutes: incoming.durationMinutes,
                     titleSnapshot: incoming.titleSnapshot,
-                    ...(userRescheduled
-                        ? {}
-                        : incoming.targetTime !== undefined
-                            ? { targetTime: incoming.targetTime }
-                            : { targetTime: undefined }),
+                    targetTime: nextTargetTime,
                 };
             });
             const appended = action.instances.filter((i) => !seenHabitIds.has(i.habitId));

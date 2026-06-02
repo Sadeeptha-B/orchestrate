@@ -8,8 +8,9 @@ import { getPlaylistForWorkType, playlists } from '../../data/playlists';
 import { spotifyPlaylistId } from '../../lib/spotify';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
 import { habitKindOf } from '../../lib/habits';
+import { useToggleHabitInstance } from '../../hooks/useToggleHabitInstance';
 import { TrueRestCard } from '../dashboard/TrueRestCard';
-import type { WorkType, CheckIn, LinkedTask, TodaysHabitInstance } from '../../types';
+import type { WorkType, CheckIn, LinkedTask } from '../../types';
 
 const FEELINGS = [
     { value: 'great', label: 'Great', emoji: '\u{1F31F}' },
@@ -54,12 +55,7 @@ export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalP
         [lowState, plan.todaysHabits, life],
     );
 
-    const toggleInstance = (i: TodaysHabitInstance) =>
-        dispatch({
-            type: i.status === 'engaged' ? 'STOP_HABIT_INSTANCE' : 'START_HABIT_INSTANCE',
-            instanceId: i.id,
-            now: new Date().toISOString(),
-        });
+    const toggleInstance = useToggleHabitInstance();
 
     const linkedTaskMap = useMemo(
         () => buildLinkedTaskMap(plan.linkedTasks),

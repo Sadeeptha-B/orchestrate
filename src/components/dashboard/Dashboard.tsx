@@ -1,11 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
-import { useTodoistData } from '../../hooks/useTodoist';
-import { computeTodaysMicroGapInstances } from '../../lib/habits';
-import { computeTodaysHabitInstances } from '../../lib/habitsTodoistSync';
-import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
+import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
 import { HistorySidebar, type HistoryTab } from './HistorySidebar';
@@ -35,26 +32,10 @@ export function Dashboard() {
         settings.notificationPreference,
     );
     const { nextSessionStartsWithin } = useCurrentSession(settings.sessionSlots);
-    const { taskMap } = useTodoistData();
 
     // v6.7: keep `plan.todaysHabits` in sync with the library while on the dashboard, so a habit
-    // created/edited/deleted in /habits is reflected without re-running the wizard:
-    //  - compute today's 'habit' (Todoist-gated) + 'micro-gap' (no-Todoist) instances and append
-    //    them (REFRESH_TODAYS_HABITS dedupes by habitId — safe to re-fire);
-    //  - prune any instance whose habit was deleted (defensive — DELETE_HABIT already prunes, this
-    //    catches anything that slipped through so deleted habits never linger on the dashboard).
-    useEffect(() => {
-        const taskCaps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
-        const instances = [
-            ...computeTodaysHabitInstances({ life, plan, taskMap, now: new Date(), taskCaps }),
-            ...computeTodaysMicroGapInstances({ life, plan, taskCaps }),
-        ];
-        if (instances.length > 0) dispatch({ type: 'REFRESH_TODAYS_HABITS', instances });
-        if (plan.todaysHabits.some((i) => !life.habits.some((h) => h.id === i.habitId))) {
-            dispatch({ type: 'PRUNE_TODAYS_HABITS' });
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [taskMap, life.habits, life.activeSeasonId, plan.todaysHabits, plan.date, settings.taskCapDefaults, dispatch]);
+    // created/edited/deleted in /habits is reflected without re-running the wizard.
+    useTodaysHabitsSync();
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import type { SessionSlot } from '../types';
-import { timeToMinutes } from '../lib/time';
+import { minutesOfDay, timeToMinutes } from '../lib/time';
 
 export function useCurrentSession(slots: SessionSlot[]) {
     const [tick, setTick] = useState(0);
@@ -12,8 +12,7 @@ export function useCurrentSession(slots: SessionSlot[]) {
 
     return useMemo(() => {
         void tick; // re-runs on each minute tick
-        const now = new Date();
-        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const currentMinutes = minutesOfDay(new Date());
 
         const currentSession = slots.find((s) => {
             const start = timeToMinutes(s.startTime);

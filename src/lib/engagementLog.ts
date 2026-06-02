@@ -1,5 +1,6 @@
 import type { DayPlan, EngagementSegment } from '../types';
 import type { TodoistTask } from '../hooks/useTodoist';
+import { formatTimeOfDay } from './time';
 
 /**
  * v6.4: flattened rows for the dashboard engagement log — a time-ordered record of
@@ -95,8 +96,5 @@ export function buildEngagementLog(
 
 /** Format an ISO timestamp's local time-of-day as "HH:mm". */
 export function formatLocalTimeOfDay(iso: string): string {
-    const d = new Date(iso);
-    const h = d.getHours();
-    const m = d.getMinutes();
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    return formatTimeOfDay(new Date(iso));
 }

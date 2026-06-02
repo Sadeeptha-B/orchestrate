@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { timeToMinutes } from '../../lib/time';
+import { formatTimeOfDay, minutesOfDay, timeToMinutes } from '../../lib/time';
 import { getTaskTitle } from '../../lib/tasks';
 import { openSegment, segmentSeconds, totalEngagedSeconds } from '../../lib/engagement';
 import type { EngagementSegment, LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
@@ -13,19 +13,16 @@ function engagedMinutes(i: TodaysHabitInstance): number {
 
 /** Local time-of-day (minutes since midnight) of an ISO timestamp. */
 function isoLocalMinutes(iso: string): number {
-    const d = new Date(iso);
-    return d.getHours() * 60 + d.getMinutes();
+    return minutesOfDay(new Date(iso));
 }
 
 /** Local "HH:MM" of an ISO timestamp. */
 function isoLocalHHMM(iso: string): string {
-    const d = new Date(iso);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return formatTimeOfDay(new Date(iso));
 }
 
 function nowInMinutes(): number {
-    const d = new Date();
-    return d.getHours() * 60 + d.getMinutes();
+    return minutesOfDay(new Date());
 }
 
 /**
