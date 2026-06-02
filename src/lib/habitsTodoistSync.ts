@@ -8,8 +8,8 @@ import type {
 } from '../types';
 import type { TodoistActionsValue } from '../context/TodoistContext';
 import type { TodoistProject, TodoistTask } from '../hooks/useTodoist';
-import { habitMatchesDate } from './habits';
-import { timeToMinutes } from './time';
+import { habitMatchesDate, habitInSeasonScope } from './habits';
+import { minutesOfDay, timeToMinutes } from './time';
 
 const HABITS_PROJECT_NAME = 'Habits';
 const DOW_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -41,7 +41,7 @@ export function buildDueString(habit: Habit): string {
 }
 
 /**
- * Resolve (or lazily create) the user's default Todoist project for stabilizer habit-tasks.
+ * Resolve (or lazily create) the user's default Todoist project for habit-tasks.
  *
  * Priority: cached `AppSettings.habitsTodoistProjectId` (if it still exists in `projects`) →
  * existing project literally named "Habits" → newly created "Habits" project.
@@ -181,8 +181,9 @@ function dueDateLocal(due: { date: string; timezone: string | null }): string {
  *  - linked Todoist task exists, is due today, and is unchecked
  *  - (timed habits only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
  *
- * Idempotent against habits already present in `plan.todaysHabits` (caller passes the full plan;
- * the reducer's `REFRESH_TODAYS_HABITS` further dedupes by `habitId`).
+ * Re-emits every matching habit on each call (including ones already in `plan.todaysHabits`) so
+ * habit-form edits propagate — the reducer's `REFRESH_TODAYS_HABITS` dedupes by `habitId` and
+ * value-stably merges the refreshed fields into the existing planned instance.
  *
  * Each emitted instance gets a fresh uuid, `status: 'planned'`, and a `targetTime` derived from the
  * Todoist `due` time-of-day if set, else the habit's `targetTime` (absent → "anytime"). No session assignment.
@@ -197,17 +198,15 @@ export function computeTodaysHabitInstances(args: {
     const { life, plan, taskMap, now, taskCaps } = args;
     const dateISO = plan.date;
     const activeSeasonId = life.activeSeasonId;
-    const existingHabitIds = new Set(plan.todaysHabits.map((i) => i.habitId));
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowMinutes = minutesOfDay(now);
     const out: TodaysHabitInstance[] = [];
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
         if (habit.kind !== 'habit') continue; // v6.7: micro-gaps use computeTodaysMicroGapInstances (no Todoist).
         if (!habit.todoistTaskId) continue;
-        if (existingHabitIds.has(habit.id)) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
-        if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;
+        if (!habitInSeasonScope(habit, activeSeasonId)) continue;
 
         const task = taskMap.get(habit.todoistTaskId);
         if (!task || task.checked) continue;
@@ -311,7 +310,7 @@ export function findOverdueHabits(args: {
         if (habit.kind !== 'habit') continue; // v6.7: micro-gaps have no Todoist task to bump.
         if (!habit.todoistTaskId) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
-        if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;
+        if (!habitInSeasonScope(habit, activeSeasonId)) continue;
 
         const task = taskMap.get(habit.todoistTaskId);
         if (!task || task.checked) continue;

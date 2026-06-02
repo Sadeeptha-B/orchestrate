@@ -1,5 +1,5 @@
 import type { AppSettings, LinkedTask, SessionSlot, TaskCapDefaults } from '../types';
-import { timeToMinutes } from './time';
+import { minutesOfDay, timeToMinutes } from './time';
 
 /** Default session buffer (subtracted from a session's wall-clock length) when AppSettings doesn't set one. */
 export const DEFAULT_SESSION_BUFFER_MINUTES = 60;
@@ -33,10 +33,6 @@ export interface SessionCapacity {
     isCurrent: boolean;
 }
 
-function minutesIntoDay(now: Date): number {
-    return now.getHours() * 60 + now.getMinutes();
-}
-
 /**
  * Compute capacity for a single session.
  *
@@ -62,7 +58,7 @@ export function computeSessionCapacity(
         sessionLengthMinutes,
     );
 
-    const nowMin = minutesIntoDay(now);
+    const nowMin = minutesOfDay(now);
     const isCurrent = nowMin >= startMin && nowMin < endMin;
 
     let totalMinutes: number;

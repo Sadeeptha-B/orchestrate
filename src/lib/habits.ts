@@ -77,12 +77,24 @@ export function habitMatchesDate(habit: Habit, dateISO: string): boolean {
 }
 
 /**
+ * True if a habit is in scope for the currently active season. Season-agnostic habits
+ * (empty `seasonIds`) are always in scope; season-scoped habits require the active season
+ * to be one of theirs. Shared by every today-instance / reconcile compute path.
+ */
+export function habitInSeasonScope(habit: Habit, activeSeasonId: string | null): boolean {
+    if (habit.seasonIds.length === 0) return true;
+    return activeSeasonId !== null && habit.seasonIds.includes(activeSeasonId);
+}
+
+/**
  * v6.7: compute today's micro-gap instances — the no-Todoist counterpart to
  * `computeTodaysHabitInstances`. Filters active 'micro-gap' habits whose recurrence + season
- * scope match today and that aren't already represented in `plan.todaysHabits`. Emits untimed,
- * non-Todoist instances; the repeatable lifecycle (planned↔engaged) is driven by the existing
- * START/STOP reducer actions. Idempotent against `plan.todaysHabits` (caller passes the full plan;
- * `REFRESH_TODAYS_HABITS` further dedupes by `habitId`).
+ * scope match today. Emits untimed, non-Todoist instances; the repeatable lifecycle
+ * (planned↔engaged) is driven by the existing START/STOP reducer actions.
+ *
+ * Re-emits every matching habit on each call (including ones already in `plan.todaysHabits`) so
+ * habit-form edits propagate — `REFRESH_TODAYS_HABITS` dedupes by `habitId` and value-stably
+ * merges the refreshed fields into the existing planned instance.
  */
 export function computeTodaysMicroGapInstances(args: {
     life: LifeContext;
@@ -92,15 +104,13 @@ export function computeTodaysMicroGapInstances(args: {
     const { life, plan, taskCaps } = args;
     const dateISO = plan.date;
     const activeSeasonId = life.activeSeasonId;
-    const existingHabitIds = new Set(plan.todaysHabits.map((i) => i.habitId));
     const out: TodaysHabitInstance[] = [];
 
     for (const habit of life.habits) {
         if (!habit.active) continue;
         if (habit.kind !== 'micro-gap') continue;
-        if (existingHabitIds.has(habit.id)) continue;
         if (!habitMatchesDate(habit, dateISO)) continue;
-        if (habit.seasonIds.length > 0 && (!activeSeasonId || !habit.seasonIds.includes(activeSeasonId))) continue;
+        if (!habitInSeasonScope(habit, activeSeasonId)) continue;
 
         out.push({
             id: crypto.randomUUID(),

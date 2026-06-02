@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, useEffect, type KeyboardEvent } from 'react';
+import { useState, useRef, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
@@ -13,32 +13,17 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
-import { computeTodaysHabitInstances } from '../../lib/habitsTodoistSync';
-import { computeTodaysMicroGapInstances, habitKindOf } from '../../lib/habits';
-import { DEFAULT_TASK_CAPS } from '../../lib/capacity';
+import { habitKindOf } from '../../lib/habits';
+import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import type { LinkedTask } from '../../types';
 
 export function Step1Intentions() {
     const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
 
-    // v6.3: surface today's habits as TodaysHabitInstance entries on the timeline.
-    // v6.7: also surface today's micro-gaps (no Todoist; their own dashboard surface). Both feed
-    // the same REFRESH_TODAYS_HABITS, which dedupes by habitId so redundant dispatches are no-ops.
-    //
-    // v6.5: the overdue-reconcile half (bumping yesterday's missed habits forward to today)
-    // is owned by `ReconciliationProvider` — Step 1 only computes & dispatches due-today instances.
-    useEffect(() => {
-        const taskCaps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
-        const instances = [
-            ...computeTodaysHabitInstances({ life, plan, taskMap, now: new Date(), taskCaps }),
-            ...computeTodaysMicroGapInstances({ life, plan, taskCaps }),
-        ];
-        if (instances.length > 0) {
-            dispatch({ type: 'REFRESH_TODAYS_HABITS', instances });
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [taskMap.size, life.habits, life.activeSeasonId, plan.todaysHabits, settings.taskCapDefaults, dispatch]);
+    // v6.3/v6.7: surface today's habit + micro-gap instances on the timeline / dashboard. Shared
+    // with the dashboard so the two surfaces can't drift.
+    useTodaysHabitsSync();
 
     const [input, setInput] = useState('');
     const [showSetup, setShowSetup] = useState(false);

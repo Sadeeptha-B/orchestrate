@@ -164,8 +164,8 @@ export function LifeView() {
                     </div>
                     {activeHabits.length === 0 ? (
                         <p className="text-sm text-text-light italic">
-                            None active. Stabilizers surface on your timeline at their set time;
-                            light-coherent habits surface as anytime rows — both in Today's Habits.
+                            None active. Habits surface in Today's Habits (timed on the timeline, or
+                            anytime); micro-gaps are repeatable fillers pulled from their own panel.
                         </p>
                     ) : (
                         <div className="space-y-5">

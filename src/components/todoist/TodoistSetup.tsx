@@ -229,7 +229,7 @@ export function TodoistSetup() {
                         </button>
                     </div>
                     <p className="text-xs text-text-light mb-2">
-                        Where new stabilizer habits get synced as recurring tasks. Each habit can override
+                        Where new habits get synced as recurring tasks. Each habit can override
                         this from its own form. Leave on auto-create to use a project named "Habits"
                         (created lazily on first habit save).
                     </p>

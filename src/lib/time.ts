@@ -6,6 +6,16 @@ export function timeToMinutes(time: string): number {
     return h * 60 + m;
 }
 
+/** Local time-of-day of a Date as minutes since midnight. */
+export function minutesOfDay(d: Date): number {
+    return d.getHours() * 60 + d.getMinutes();
+}
+
+/** Local time-of-day of a Date formatted as "HH:mm" (24h). */
+export function formatTimeOfDay(d: Date): string {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** Today's date as a "YYYY-MM-DD" string in local time. */
 export function todayISO(): string {
     return format(new Date(), 'yyyy-MM-dd');

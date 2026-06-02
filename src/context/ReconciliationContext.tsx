@@ -58,7 +58,7 @@ const ReconciliationContext = createContext<ReconciliationStatus | null>(null);
 export { ReconciliationContext };
 
 /**
- * v6.5: central reconciliation provider for habits (v6.6: both kinds — stabilizer + light-coherent).
+ * v6.5: central reconciliation provider for habits (v6.7: 'habit' kind only — micro-gaps never sync).
  * Replaces the per-surface reconciles that lived in Step1Intentions (overdue bump) and HabitsLibrary
  * (manual migrate). Detection is read-only and recomputed every render; the action runs:
  *

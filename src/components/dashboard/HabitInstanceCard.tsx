@@ -2,6 +2,7 @@ import { Card } from '../ui/Card';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
+import { useToggleHabitInstance } from '../../hooks/useToggleHabitInstance';
 import { compareHabitInstancesByTime, habitKindOf } from '../../lib/habits';
 import {
     buildEngagementLog,
@@ -31,6 +32,7 @@ export function HabitInstanceCard() {
     const { plan, life, dispatch } = useDayPlan();
     const { completeTask, createTaskComment } = useTodoistActions();
     const reschedule = useHabitReschedule();
+    const handleStartStop = useToggleHabitInstance();
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
     // v6.7: this card is 'habit'-kind only; micro-gaps render in MicroGapCard.
@@ -38,15 +40,6 @@ export function HabitInstanceCard() {
         .filter((i) => habitKindOf(life, i) === 'habit')
         .sort(compareHabitInstancesByTime);
     if (instances.length === 0) return null;
-
-    const handleStartStop = (instance: TodaysHabitInstance) => {
-        const nowISO = new Date().toISOString();
-        dispatch({
-            type: instance.status === 'engaged' ? 'STOP_HABIT_INSTANCE' : 'START_HABIT_INSTANCE',
-            instanceId: instance.id,
-            now: nowISO,
-        });
-    };
 
     const handleComplete = (instance: TodaysHabitInstance) => {
         const nowISO = new Date().toISOString();
@@ -221,20 +214,13 @@ export function HabitInstanceCard() {
  * Segments still flow into the Engagement Log. Hidden when empty.
  */
 export function MicroGapCard() {
-    const { plan, life, dispatch } = useDayPlan();
+    const { plan, life } = useDayPlan();
+    const toggle = useToggleHabitInstance();
 
     const instances = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'micro-gap');
     if (instances.length === 0) return null;
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
-
-    const toggle = (i: TodaysHabitInstance) => {
-        dispatch({
-            type: i.status === 'engaged' ? 'STOP_HABIT_INSTANCE' : 'START_HABIT_INSTANCE',
-            instanceId: i.id,
-            now: new Date().toISOString(),
-        });
-    };
 
     return (
         <section className="space-y-2">

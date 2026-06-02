@@ -128,7 +128,7 @@ A first-class recurring entity. **v6.7** discriminates `kind` by *lifecycle*:
 **Today's instances:** two compute paths feed the same `REFRESH_TODAYS_HABITS`:
 - `computeTodaysHabitInstances` (`habitsTodoistSync.ts`) — **'habit' kind only**: active habits with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; timed habits get a `targetTime` + the `windowBehavior === 'strict'` past-window drop.
 - `computeTodaysMicroGapInstances` (`lib/habits.ts`, v6.7) — **'micro-gap' kind only**: pure, no Todoist; active micro-gaps whose recurrence + season match today, emitted untimed with `durationMinutes` from `targetDurationMinutes ?? taskCaps.microGap`.
-Both are idempotent — any habit already in `plan.todaysHabits` is skipped. Step 1 mount dispatches both.
+Both re-emit every matching habit on each call (including ones already in `plan.todaysHabits`); idempotency lives in `REFRESH_TODAYS_HABITS`, whose value-stable merge dedupes by `habitId` and refreshes the existing planned instance's time/duration/title (so habit-form edits propagate same-day) without allocating when nothing changed. Step 1 mount and the dashboard (`useTodaysHabitsSync`) dispatch both.
 
 **Overdue reconcile** (v6.4 helpers, v6.5 driver, **'habit' kind only** — `findOverdueHabits` + `reconcileOverdueHabits`): Todoist's recurrence engine only advances on completion, so a habit missed yesterday sits at yesterday's due date and never surfaces. Overdue habits whose recurrence + season still match today get their Todoist `due_datetime` (or `due_date`) bumped forward to today; `due_string` is preserved so the rule continues to drive future occurrences. The helper returns an optimistic patch map so `computeTodaysHabitInstances` runs against the bumped state in the same tick. The central `ReconciliationProvider` runs it (preceded by a needs-sync repair via `findNeedsSyncHabits`) on first hydration and on window focus; see [synthesis.md](./synthesis.md) "Habit-Task Sync → Central reconciliation". Skip is handled in the UI by also calling Todoist `completeTask` so the recurrence engine advances cleanly — see `SKIP_HABIT_INSTANCE`. (Micro-gaps never participate in reconcile — no Todoist.)
 
@@ -162,8 +162,8 @@ Persistent state slice holding multi-day entities: `seasons`, `habits`, `activeS
 Intention  1 --> N  LinkedTask       (via intentionId / linkedTaskIds)
 LinkedTask N --> M  SessionSlot      (via taskSessions / assignedSessions; main=1:1, bg=1:N)
 LinkedTask       -->  TodoistTask    (via todoistId; TodoistTask is ephemeral API data)
-Habit      1 --> N  TodaysHabitInstance per day  (via habitId; N>1 when rescheduled)
-TodaysHabitInstance  -->  TodoistTask  (via todoistTaskId; stable recurring task)
+Habit      1 --> 1  TodaysHabitInstance per day  (via habitId; reschedule is in-place, no clone)
+TodaysHabitInstance  -->  TodoistTask  (via todoistTaskId; stable recurring task, 'habit' kind only)
 Habit      N --> M  Season           (via seasonIds; [] = always-on)
 BacklogEntry     -->  Intention      (snapshot, pending-only linkedTaskIds)
 DayPlan          -->  SessionSlot[]  (via AppSettings.sessionSlots)

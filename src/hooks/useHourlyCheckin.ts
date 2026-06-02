@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { SessionSlot, NotificationPreference } from '../types';
 import { useNotifications } from './useNotifications';
-import { timeToMinutes } from '../lib/time';
+import { minutesOfDay, timeToMinutes } from '../lib/time';
 
 function isWithinAnySession(slots: SessionSlot[]): boolean {
-    const now = new Date();
-    const mins = now.getHours() * 60 + now.getMinutes();
+    const mins = minutesOfDay(new Date());
     return slots.some(
         (s) => mins >= timeToMinutes(s.startTime) && mins < timeToMinutes(s.endTime),
     );

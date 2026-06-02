@@ -277,7 +277,7 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
             >
                 <p className="text-sm text-text-light mb-4">
                     Today's intentions, linked tasks, session assignments, habit instances,
-                    check-ins, and Light Pool log will be cleared. Saved sessions, seasons,
+                    and check-ins will be cleared. Saved sessions, seasons,
                     habits, the backlog, and settings will be untouched. Todoist tasks are
                     not modified.
                 </p>
