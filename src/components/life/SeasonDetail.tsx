@@ -184,7 +184,7 @@ export function SeasonDetail() {
                         <h4 className="text-xs font-medium uppercase tracking-wider text-text-light">
                             Member habits
                         </h4>
-                        <Button variant="ghost" size="sm" onClick={() => navigate('/habits')}>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/habits', { state: { seasonFilter: season.id } })}>
                             Manage habits
                         </Button>
                     </div>

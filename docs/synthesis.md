@@ -67,7 +67,6 @@ Nine routes, all defined in `AppRoutes` inside `App.tsx`:
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits; deleting an active anchor prompts a confirm |
-| `/rest-cues` | `RestCuesManager` | Always reachable. CRUD True Rest cues |
 | `/settings` | `SettingsPage` | Always reachable. Vertical-tab layout: Integrations, Capacity, Data |
 | `/guide` | `UserGuide` | Always reachable. In-app user guide. Linked from the About modal. |
 | `*` | Redirect to `/` | Catch-all |
@@ -91,7 +90,7 @@ Life routes are always reachable (no `setupComplete` gate) — `setupComplete` i
 | **Stabilizer** | `kind: 'stabilizer'` habit. Scheduled ritual — **requires** a `targetTime`. Synced to Todoist as a recurring task; surfaces as a `TodaysHabitInstance` positioned on the timeline by `targetTime`, independent of session assignment. Start/Stop/Complete/Skip/**Reschedule** lifecycle. |
 | **Light-coherent** | `kind: 'light-coherent'` habit. "Anytime" filler — never has a `targetTime`. Synced to Todoist and tracked exactly like a stabilizer, but surfaces as an untimed ("Anytime today") `TodaysHabitInstance` pulled opportunistically. Start/Stop/Complete/Skip — **no reschedule**. |
 | **TodaysHabitInstance** | A habit's manifestation for today (either kind). Lives on `DayPlan.todaysHabits[]`. Owns `status` (planned/engaged/completed/skipped), `segments` (engagement), and (stabilizers only) `rescheduledAt` + `rescheduleHistory`. Stabilizer reschedules are always in-place. Never enters session capacity. |
-| **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via `/rest-cues`. Surfaced on Dashboard `InsightCard`, in the check-in modal for low-energy states, and as a between-session banner. |
+| **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via the `/life` page True Rest card. Surfaced on Dashboard `InsightCard`, in the check-in modal for low-energy states, and as a between-session banner. |
 | **Anchor habit** | `isAnchor: true` -- a load-bearing habit (sleep, meditation, gym, shutdown, review). Pure importance tag, orthogonal to `kind`: sorts first in habit lists and prompts a confirm before deleting an active one. Reserved for recovery-mode / Minimum Viable Day. |
 | **Session** | A configurable time block (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
 | **Session capacity** | Advisory arithmetic: `(session length - buffer) - total estimatedMinutes`. Status `over` at >150% -- non-blocking banner, wizard always advances. |
@@ -286,7 +285,7 @@ v6.6 retired the standalone Light Pool. Light-coherent habits are now ordinary h
 
 ### True Rest
 
-8 built-in cues across physical/breath/sensory categories. Editing lives in the shared `RestCuesEditor` (auto-seeds from defaults on first edit) — full-page on `/rest-cues` via `RestCuesManager`, and embedded `compact` in the `/life` True Rest card. `InsightCard` cycles between Transition Tips and a cue every 2 min. `TrueRestCard` variants: `inline` (check-in modal) and `banner` (between-session). Not a Habit -- no logging, no streak, no completion.
+8 built-in cues across physical/breath/sensory categories. Editing lives in `RestCuesEditor` (auto-seeds from defaults on first edit), embedded in the `/life` True Rest card. "Manage →" links in `InsightCard` and `TrueRestCard` navigate to `/life`. `InsightCard` cycles between Transition Tips and a cue every 2 min. `TrueRestCard` variants: `inline` (check-in modal) and `banner` (between-session). Not a Habit -- no logging, no streak, no completion.
 
 ### Session Capacity
 

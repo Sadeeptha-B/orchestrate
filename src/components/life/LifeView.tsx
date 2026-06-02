@@ -9,14 +9,23 @@ import { findActiveSeason } from '../../lib/seasons';
 import { getActiveHabits, partitionByKind } from '../../lib/habits';
 import type { Habit } from '../../types';
 
+function PencilIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+        </svg>
+    );
+}
+
 const anchorFirst = (a: Habit, b: Habit) => {
     if (a.isAnchor !== b.isAnchor) return a.isAnchor ? -1 : 1;
     return a.name.localeCompare(b.name);
 };
 
 function HabitPill({ habit }: { habit: Habit }) {
+    const navigate = useNavigate();
     return (
-        <div className="px-3 py-2 rounded-lg border border-border text-sm flex items-center justify-between gap-2">
+        <div className="group px-3 py-2 rounded-lg border border-border text-sm flex items-center justify-between gap-2">
             <span className="truncate">{habit.name}</span>
             <span className="flex items-center gap-1.5 flex-shrink-0">
                 {habit.kind === 'stabilizer' && habit.targetTime && (
@@ -25,6 +34,13 @@ function HabitPill({ habit }: { habit: Habit }) {
                 {habit.isAnchor && (
                     <span className="text-[10px] uppercase tracking-wider text-accent">anchor</span>
                 )}
+                <button
+                    onClick={() => navigate('/habits', { state: { editHabitId: habit.id } })}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded text-text-light hover:text-accent"
+                    title="Edit habit"
+                >
+                    <PencilIcon />
+                </button>
             </span>
         </div>
     );
@@ -95,9 +111,12 @@ export function LifeView() {
                         <div>
                             <Link
                                 to={`/season/${activeSeason.id}`}
-                                className="text-lg text-accent hover:underline"
+                                className="text-lg text-accent hover:underline inline-flex items-center gap-1 group/link"
                             >
                                 {activeSeason.name}
+                                <svg className="w-4 h-4 opacity-50 group-hover/link:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                </svg>
                             </Link>
                             {activeSeason.primaryTheme && (
                                 <p className="text-sm text-text mt-1">{activeSeason.primaryTheme}</p>
@@ -106,8 +125,8 @@ export function LifeView() {
                                 {activeSeason.startDate} → {activeSeason.endDate ?? 'open-ended'}
                             </p>
                             {activeSeason.supportingGoals.length > 0 && (
-                                <ul className="mt-3 text-sm space-y-1">
-                                    {activeSeason.supportingGoals.slice(0, 3).map((g, i) => (
+                                <ul className="mt-3 text-sm space-y-1 max-h-40 overflow-y-auto scrollbar-subtle">
+                                    {activeSeason.supportingGoals.map((g, i) => (
                                         <li key={i} className="flex gap-2">
                                             <span className="text-text-light">·</span>
                                             <span>{g}</span>
@@ -133,7 +152,7 @@ export function LifeView() {
                     <p className="text-xs text-text-light mb-3">
                         Recovery prompts surfaced on the dashboard and during low-energy check-ins.
                     </p>
-                    <RestCuesEditor compact />
+                    <RestCuesEditor />
                 </Card>
 
                 <Card className="md:col-span-2">
