@@ -172,14 +172,36 @@ function dueDateLocal(due: { date: string; timezone: string | null }): string {
 }
 
 /**
+ * v6.8: "surface anyway" rescue predicate. A *timed*, *lenient* habit whose target time has
+ * already elapsed for `nowMinutes`. When such a habit is created (or edited) after its time has
+ * passed, Todoist anchors its recurring task's *next* occurrence to tomorrow — today's slot is
+ * gone — so the "due today" gate would silently drop it. `windowBehavior: 'lenient'` ("surface
+ * anyway") means the user still wants to see it today, so this is the single source of truth for
+ * that rescue: shared by `computeTodaysHabitInstances` (to emit the instance against a tomorrow-
+ * dated task) and `findStaleTodaysHabitInstances` (to NOT prune that instance back out). Keeping
+ * one predicate stops the read + prune paths from disagreeing and flickering the row.
+ *
+ * Only meaningful for a future-dated task: an *overdue* (past-dated) task is bumped to today by
+ * the reconcile pass, and a *today*-dated task surfaces through the normal gate.
+ */
+function isLenientPastWindow(habit: Habit, targetTime: string | undefined, nowMinutes: number): boolean {
+    return habit.windowBehavior !== 'strict'
+        && targetTime !== undefined
+        && timeToMinutes(targetTime) <= nowMinutes;
+}
+
+/**
  * v6.3: compute today's habit instances. v6.7: **'habit' kind only** — micro-gaps go through
  * `computeTodaysMicroGapInstances` (no Todoist).
  *
  * Filters active 'habit'-kind entries to those whose:
  *  - recurrence matches `plan.date`
  *  - season scope matches the active season (or is season-agnostic)
- *  - linked Todoist task exists, is due today, and is unchecked
- *  - (timed habits only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
+ *  - linked Todoist task exists and is unchecked
+ *  - is due today — OR (v6.8) is a timed, lenient ("surface anyway") habit whose target time has
+ *    elapsed, which Todoist rolled to tomorrow but the user still wants surfaced today (skipped if
+ *    already completed/skipped today, so an in-app check-off isn't resurrected)
+ *  - (timed, due-today habits only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
  *
  * Re-emits every matching habit on each call (including ones already in `plan.todaysHabits`) so
  * habit-form edits propagate — the reducer's `REFRESH_TODAYS_HABITS` dedupes by `habitId` and
@@ -211,16 +233,29 @@ export function computeTodaysHabitInstances(args: {
         const task = taskMap.get(habit.todoistTaskId);
         if (!task || task.checked) continue;
         if (!task.due) continue;
-        // Todoist's recurring task carries the *next* due date — check it's today.
-        const taskDueDate = dueDateLocal(task.due);
-        if (taskDueDate !== dateISO) continue;
 
         const durationMinutes = habit.targetDurationMinutes ?? taskCaps.habit;
         // Timed habits carry a target time (from the Todoist due, else the habit). Untimed habits
-        // ("anytime") have no target time. Window-behavior gate only applies to timed habits.
+        // ("anytime") have no target time. Window-behavior gates only apply to timed habits.
         const dueTime = dueTimeOfDay(task.due.date);
         const targetTime = dueTime ?? habit.targetTime;
-        if (habit.windowBehavior === 'strict' && targetTime) {
+
+        // Todoist's recurring task carries the *next* due date.
+        const taskDueDate = dueDateLocal(task.due);
+        if (taskDueDate !== dateISO) {
+            // Not due today. Normally "not for today" — EXCEPT a timed, lenient habit whose target
+            // time already elapsed: Todoist rolled the next occurrence to tomorrow, but the user
+            // asked to still see it today (see `isLenientPastWindow`). Surface it unless it was
+            // already completed/skipped today — a habit checked off in the Todoist app *also* rolls
+            // to tomorrow, and we must not resurrect it as a fresh `planned` row.
+            const rescuable =
+                taskDueDate > dateISO && isLenientPastWindow(habit, targetTime, nowMinutes);
+            const settledToday = plan.todaysHabits.some(
+                (i) => i.habitId === habit.id && (i.status === 'completed' || i.status === 'skipped'),
+            );
+            if (!rescuable || settledToday) continue;
+        } else if (habit.windowBehavior === 'strict' && targetTime) {
+            // Due today, but strict + past the window end → hide for today.
             const windowEnd = timeToMinutes(targetTime) + durationMinutes;
             if (nowMinutes > windowEnd) continue;
         }
@@ -234,6 +269,53 @@ export function computeTodaysHabitInstances(args: {
             ...(targetTime ? { targetTime } : {}),
             status: 'planned',
         });
+    }
+    return out;
+}
+
+/**
+ * Find `planned` 'habit'-kind instances on `plan.todaysHabits` that have gone **stale** — their
+ * backing Todoist task was completed (or moved off today) out-of-band (e.g. checked off directly
+ * in the Todoist app). `computeTodaysHabitInstances` stops *emitting* such a habit, but
+ * `REFRESH_TODAYS_HABITS` never *removes* an already-surfaced instance, so without this the row
+ * would linger as `planned` in the Habits card / timeline for the rest of the day.
+ *
+ * Returns the instance ids to drop. Deliberately narrow so we only prune what's genuinely gone:
+ *  - `status === 'planned'` only — engaged/completed/skipped are user-meaningful and preserved.
+ *  - `todoistTaskId` present — micro-gaps (no Todoist) are never touched here.
+ *  - task **missing** from `taskMap` → left alone (cold cache or deleted-in-Todoist, which the
+ *    reconcile pass recreates; not our concern).
+ *  - stale ⇔ the task is `checked` OR its due date is no longer today. An unchecked task still
+ *    due today (e.g. a strict habit past its window) is **not** stale — its instance absence is a
+ *    windowing decision owned by `computeTodaysHabitInstances`, not a completion.
+ *  - v6.8: a timed, lenient ("surface anyway") habit past its window is deliberately surfaced
+ *    today against a *tomorrow*-dated task (see `isLenientPastWindow`). That instance is **not**
+ *    stale — mirror the compute-side predicate so the read + prune paths agree, otherwise the row
+ *    would be surfaced and immediately pruned each tick.
+ */
+export function findStaleTodaysHabitInstances(args: {
+    plan: DayPlan;
+    life: LifeContext;
+    taskMap: Map<string, TodoistTask>;
+    now: Date;
+}): string[] {
+    const { plan, life, taskMap, now } = args;
+    const dateISO = plan.date;
+    const nowMinutes = minutesOfDay(now);
+    const out: string[] = [];
+    for (const inst of plan.todaysHabits) {
+        if (inst.status !== 'planned') continue;
+        if (!inst.todoistTaskId) continue;
+        const task = taskMap.get(inst.todoistTaskId);
+        if (!task) continue;
+        if (task.checked) { out.push(inst.id); continue; }
+        if (!task.due) continue;
+        if (dueDateLocal(task.due) === dateISO) continue; // still due today → not stale
+        // Due date has moved off today — usually completed/advanced out-of-band (stale). But don't
+        // prune a lenient past-window habit we deliberately surface against a tomorrow-dated task.
+        const habit = life.habits.find((h) => h.id === inst.habitId);
+        if (habit && isLenientPastWindow(habit, inst.targetTime, nowMinutes)) continue;
+        out.push(inst.id);
     }
     return out;
 }

@@ -67,6 +67,8 @@ The dashboard renders this in a dedicated **`EngagementLogCard`** (a self-headed
 - If existing is `planned` and `rescheduledAt` is set → only update `durationMinutes` and `titleSnapshot`; preserve the user's chosen time.
 - If existing is in any other status → leave alone.
 
+`REFRESH_TODAYS_HABITS` only ever appends/refreshes — it never *removes*. So when a habit's Todoist task is completed (or moved off today) directly in the Todoist app, the compute path simply stops emitting it while the already-surfaced `planned` instance would linger. `useTodaysHabitsSync` closes that gap with a separate `PRUNE_STALE_HABIT_INSTANCES` pass (driven by `findStaleTodaysHabitInstances`, gated on `tasksHydrated`): it drops `planned` 'habit'-kind instances whose backing task is now `checked` or no longer due today. Engaged/completed/skipped instances and unchecked-still-due-today tasks (e.g. a strict habit past its window) are left untouched — as is (v6.8) a timed **lenient** instance deliberately surfaced today against a *tomorrow*-dated task; `findStaleTodaysHabitInstances` shares the `isLenientPastWindow` predicate with `computeTodaysHabitInstances` so the surface + prune paths agree instead of flickering the row.
+
 **Capacity exclusion:** Habits do not consume session capacity. The timeline visualization makes overlap obvious without folding habit duration into capacity arithmetic.
 
 ### DayPlan
@@ -126,7 +128,7 @@ A first-class recurring entity. **v6.7** discriminates `kind` by *lifecycle*:
 **Todoist sync** (`src/lib/habitsTodoistSync.ts`, **'habit' kind only** — v6.7): saving a habit calls `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates or updates the recurring task with `due_string` from `buildDueString(habit)` (timed → "every day at HH:mm", untimed → "every day") and `duration` from `targetDurationMinutes`. Project changes trigger a Sync API `item_move`. Sync failures are non-blocking. `syncHabitToTodoist`, `findNeedsSyncHabits`, and `findOverdueHabits` all early-skip `micro-gap` habits.
 
 **Today's instances:** two compute paths feed the same `REFRESH_TODAYS_HABITS`:
-- `computeTodaysHabitInstances` (`habitsTodoistSync.ts`) — **'habit' kind only**: active habits with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; timed habits get a `targetTime` + the `windowBehavior === 'strict'` past-window drop.
+- `computeTodaysHabitInstances` (`habitsTodoistSync.ts`) — **'habit' kind only**: active habits with `todoistTaskId` whose Todoist task is due today + unchecked; honors season scope; timed habits get a `targetTime` + the `windowBehavior === 'strict'` past-window drop. v6.8 "surface anyway" rescue: a timed, **lenient** habit created/edited after its time has passed is anchored by Todoist to *tomorrow* (today's slot is gone) — `computeTodaysHabitInstances` still surfaces it today (predicate `isLenientPastWindow`), unless it already has a `completed`/`skipped` instance today (so an in-app check-off, which also rolls the task to tomorrow, isn't resurrected). `findStaleTodaysHabitInstances` mirrors the predicate so the surfaced row isn't pruned each tick.
 - `computeTodaysMicroGapInstances` (`lib/habits.ts`, v6.7) — **'micro-gap' kind only**: pure, no Todoist; active micro-gaps whose recurrence + season match today, emitted untimed with `durationMinutes` from `targetDurationMinutes ?? taskCaps.microGap`.
 Both re-emit every matching habit on each call (including ones already in `plan.todaysHabits`); idempotency lives in `REFRESH_TODAYS_HABITS`, whose value-stable merge dedupes by `habitId` and refreshes the existing planned instance's time/duration/title (so habit-form edits propagate same-day) without allocating when nothing changed. Step 1 mount and the dashboard (`useTodaysHabitsSync`) dispatch both.
 
@@ -209,7 +211,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 
 | Action | Payload | Effect |
 |---|---|---|
-| `REFRESH_TODAYS_HABITS` | `instances` | Appends precomputed instances to `todaysHabits`. Idempotent — skips any `habitId` already present. |
+| `REFRESH_TODAYS_HABITS` | `instances` | **Value-stable merge by `habitId`** (not a blind append): new habits are appended; an existing `planned` instance has its `targetTime`/`durationMinutes`/`titleSnapshot` refreshed from the compute helper (preserving a user-chosen time when `rescheduledAt` is set); engaged/completed/skipped instances are left alone. Returns the same state object when nothing changed, so re-firing is a true no-op (no render loop). See §1 *Refresh merge*. |
 | `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`. Pushes a new open segment `{ startedAt: now }` (no-op if one is open). |
 | `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes the open segment, returns `status` to `'planned'`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
 | `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes any open segment. Caller completes Todoist task. |
@@ -217,6 +219,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | **v6.4: always in-place.** Updates `targetTime`, stamps `rescheduledAt`, appends a `RescheduleEventEntry` to `rescheduleHistory`. Keeps `id`/`status`/`segments` (engaged instances keep their open segment running). Logged regardless of engagement. No clone, no Todoist write. |
 | `DELETE_HABIT_ENGAGEMENT_SEGMENT` | `instanceId, segmentStartedAt` | Removes the matching segment from a `TodaysHabitInstance` (deletes one Engagement Log row). If it was the open segment and none remain open, returns `status` to `'planned'`. |
 | `DELETE_HABIT_RESCHEDULE_ENTRY` | `instanceId, rescheduleAt` | Removes the matching `RescheduleEventEntry` from `rescheduleHistory` (deletes one reschedule row from the Engagement Log). Does not restore `targetTime`. |
+| `PRUNE_STALE_HABIT_INSTANCES` | `instanceIds` | Drops the listed instances from `todaysHabits`. Caller (`useTodaysHabitsSync`, via `findStaleTodaysHabitInstances`) supplies `planned` 'habit'-kind instances whose backing Todoist task was completed / moved off today out-of-band (e.g. checked off in the Todoist app). Gated on `tasksHydrated`. Value-stable. |
 
 ### 3.4 Backlog Actions
 
@@ -259,7 +262,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `ACTIVATE_SEASON` | `seasonId | null` | Sets exactly one active (or none) |
 | `ADD_HABIT` | `habit` | Appends (caller generates id + createdAt so it can sync to Todoist with the same id) |
 | `UPDATE_HABIT` | `habit` | Replaces in-place |
-| `DELETE_HABIT` | `habitId` | Removes the habit; also drops matching `TodaysHabitInstance` rows. (No anchor guard — `isAnchor` is a UI-only confirm prompt now.) |
+| `DELETE_HABIT` | `habitId` | Removes the habit; also drops matching `TodaysHabitInstance` rows. (No anchor guard — `isAnchor` is a UI-only confirm prompt now.) The reducer is Todoist-agnostic; the **caller** (`useHabitMutations`, shared by HabitsLibrary + LifeView) also deletes the backing recurring Todoist task, best-effort. |
 | `TOGGLE_HABIT_ACTIVE` | `habitId` | Flips `active` flag |
 
 (v6.6 removed the §3.8 Light Pool actions — `LOG_HABIT_START` / `LOG_HABIT_COMPLETE` / `DELETE_HABIT_LOG_ENTRY` — along with `HabitLogEntry`. Light-coherent habits now use the habit-instance lifecycle actions in §3.3.)
@@ -383,7 +386,7 @@ All mutations are optimistic — local state updates immediately. API failures s
 | Mutation | Local effect |
 |---|---|
 | `createTask` | Appends API response to `tasks` |
-| `completeTask` | Filters task from `tasks` (Sync API `item_complete`) |
+| `completeTask` | Sync API `item_close` (advances recurring tasks to their next due date; ends regular ones). Recurring → keep in cache + `refreshTasks({ force: true })`; non-recurring → filter from `tasks` |
 | `reopenTask` | Full `refreshTasks({ force: true })` after Sync API call |
 | `updateTask` | Replaces task with API response |
 | `deleteTask` | Recursively removes task and descendants |

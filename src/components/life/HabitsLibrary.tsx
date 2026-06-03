@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
-import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useHabitReconciliation } from '../../hooks/useHabitReconciliation';
+import { useHabitForms } from '../../hooks/useHabitForms';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
 import { LifeShell } from './LifeShell';
-import { HabitForm, type HabitDraft } from './HabitForm';
 import { getActiveHabits, partitionByKind } from '../../lib/habits';
-import { ensureHabitsProject } from '../../lib/habitsTodoistSync';
-import { useSyncHabit } from '../../hooks/useSyncHabit';
+import type { HabitDraft } from './HabitForm';
 import type { Habit } from '../../types';
 
 interface HabitsLocationState {
@@ -41,12 +39,33 @@ const GROUP_HEADING = 'text-xs font-medium uppercase tracking-wider text-text-li
 const CHEVRON_CLS = 'w-3 h-3 text-text-light transition-transform';
 
 export function HabitsLibrary() {
-    const { life, settings, dispatch } = useDayPlan();
-    const todoistActions = useTodoistActions();
-    const { projects, isConfigured: isTodoistConfigured } = useTodoistData();
-    const syncHabit = useSyncHabit();
+    const { life, dispatch } = useDayPlan();
+    const location = useLocation();
+    const navigate = useNavigate();
+    const locationState = location.state as HabitsLocationState | null;
+    const createHabitKindFromState = locationState?.createHabitKind;
+    const editHabitIdFromState = locationState?.editHabitId;
+
+    const {
+        isTodoistConfigured,
+        defaultProjectName,
+        syncError,
+        setSyncError,
+        deleteHabit,
+        openCreate,
+        openEdit,
+        requestDelete,
+        modals,
+    } = useHabitForms({
+        initialShowCreate: Boolean(createHabitKindFromState),
+        initialCreateDraft: createHabitKindFromState ? { kind: createHabitKindFromState } : undefined,
+        initialEditing: editHabitIdFromState
+            ? (life.habits.find((h) => h.id === editHabitIdFromState) ?? null)
+            : null,
+    });
     const {
         needsSyncCount,
+        needsSyncHabits,
         neverSyncedCount,
         missingTaskCount,
         isReconciling,
@@ -54,22 +73,8 @@ export function HabitsLibrary() {
         clearError,
         triggerReconcile,
     } = useHabitReconciliation();
-    const location = useLocation();
-    const navigate = useNavigate();
-    const locationState = location.state as HabitsLocationState | null;
-    const createHabitKindFromState = locationState?.createHabitKind;
-    const editHabitIdFromState = locationState?.editHabitId;
 
-    const [showCreate, setShowCreate] = useState(() => Boolean(createHabitKindFromState));
-    const [createInitial, setCreateInitial] = useState<Partial<HabitDraft> | undefined>(() =>
-        createHabitKindFromState ? { kind: createHabitKindFromState } : undefined,
-    );
-    const [editing, setEditing] = useState<Habit | null>(() =>
-        editHabitIdFromState ? (life.habits.find((h) => h.id === editHabitIdFromState) ?? null) : null,
-    );
-    const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
-    const [syncError, setSyncError] = useState<string | null>(null);
-    const [refreshingProjects, setRefreshingProjects] = useState(false);
+    const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
     const [inactiveOpen, setInactiveOpen] = useState(false);
 
     // Season filter — initialized from navigation state so arriving from a season page
@@ -86,12 +91,6 @@ export function HabitsLibrary() {
 
     const activeHabitCount = getActiveHabits(life).length;
 
-    const defaultProjectName = useMemo(() => {
-        const id = settings.habitsTodoistProjectId;
-        if (!id) return undefined;
-        return projects.find((p) => p.id === id)?.name;
-    }, [settings.habitsTodoistProjectId, projects]);
-
     // Filtered + grouped derivation — stable identity helps avoid render cascades.
     const { habitList, microGapList, inactive } = useMemo(() => {
         const base = seasonFilter
@@ -107,77 +106,19 @@ export function HabitsLibrary() {
         return { habitList, microGapList, inactive: sorted.filter((h) => !h.active) };
     }, [life.habits, seasonFilter]);
 
-    const handleRefreshProjects = async () => {
-        setRefreshingProjects(true);
-        try {
-            await todoistActions.refreshProjects({ force: true });
-        } finally {
-            setRefreshingProjects(false);
-        }
-    };
-
-    const tryDelete = (habit: Habit) => {
-        if (habit.isAnchor && habit.active) {
-            setConfirmDelete(habit);
-            return;
-        }
-        dispatch({ type: 'DELETE_HABIT', habitId: habit.id });
-    };
-
-    const openCreate = (initial?: Partial<HabitDraft>) => {
-        setCreateInitial(initial);
-        setShowCreate(true);
-    };
-
-    const closeCreate = () => {
-        setShowCreate(false);
-        setCreateInitial(undefined);
-    };
-
-    const onUpdateSettings = (updates: Partial<typeof settings>) =>
-        dispatch({ type: 'UPDATE_SETTINGS', settings: updates });
-
-    const resolveDefaultProject = async (): Promise<string | null> =>
-        ensureHabitsProject({ actions: todoistActions, settings, projects, onUpdateSettings });
-
-    const handleCreate = async (draft: HabitDraft) => {
-        const newHabit: Habit = { ...draft, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
-        dispatch({ type: 'ADD_HABIT', habit: newHabit });
-        closeCreate();
-        // v6.7: only 'habit' kind syncs to Todoist — micro-gaps are local-only.
-        if (newHabit.kind === 'habit' && isTodoistConfigured) {
-            const defaultProjectId = await resolveDefaultProject();
-            if (!defaultProjectId) {
-                setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
-                return;
-            }
-            const taskId = await syncHabit(newHabit, defaultProjectId);
-            if (!taskId) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
-        }
-    };
-
-    const handleEdit = async (target: Habit, draft: HabitDraft) => {
-        const updated: Habit = { ...draft, id: target.id, createdAt: target.createdAt };
-        dispatch({ type: 'UPDATE_HABIT', habit: updated });
-        setEditing(null);
-        // v6.7: only 'habit' kind syncs to Todoist — micro-gaps are local-only.
-        if (updated.kind === 'habit' && isTodoistConfigured) {
-            const defaultProjectId = await resolveDefaultProject();
-            if (!defaultProjectId) {
-                setSyncError("Couldn't reach the Habits project in Todoist — the habit is saved locally. Try again later.");
-                return;
-            }
-            const taskId = await syncHabit(updated, defaultProjectId);
-            if (!taskId) setSyncError("Couldn't sync to Todoist — the habit is saved locally. Try again later.");
-        }
-    };
-
     const handleMigrate = () => {
         setSyncError(null);
         void triggerReconcile();
     };
 
-    // Render one habit card — inlined so it can close over dispatch/setEditing/tryDelete
+    // Delete every habit currently flagged as needing sync — the escape hatch for habits the
+    // user doesn't actually want pushed to Todoist. Removes each locally (and its task, if any).
+    const handleBulkDeleteNeedsSync = () => {
+        for (const { habit } of needsSyncHabits) deleteHabit(habit);
+        setConfirmBulkDelete(false);
+    };
+
+    // Render one habit card — inlined so it can close over dispatch/openEdit/requestDelete
     // without prop-drilling. Called as a function (not a component) to avoid React rules issues.
     const renderCard = (h: Habit) => (
         <Card key={h.id} className="hover:border-accent/40 transition-colors">
@@ -221,14 +162,14 @@ export function HabitsLibrary() {
                     >
                         {h.active ? 'Pause' : 'Activate'}
                     </Button>
-                    <Button variant="ghost" size="sm" disabled={isReconciling} onClick={() => setEditing(h)}>
+                    <Button variant="ghost" size="sm" disabled={isReconciling} onClick={() => openEdit(h)}>
                         Edit
                     </Button>
                     <Button
                         variant="ghost"
                         size="sm"
                         disabled={isReconciling}
-                        onClick={() => tryDelete(h)}
+                        onClick={() => requestDelete(h)}
                         className="text-red-500 hover:text-red-600"
                     >
                         Delete
@@ -247,7 +188,7 @@ export function HabitsLibrary() {
         >
             {/* ── Sync banner ── */}
             {needsSyncCount > 0 && (
-                <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 flex items-center justify-between gap-3">
+                <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 space-y-2.5">
                     <div className="text-sm">
                         <strong>{needsSyncCount} habit{needsSyncCount === 1 ? '' : 's'}</strong>{' '}
                         {missingTaskCount === 0
@@ -264,21 +205,51 @@ export function HabitsLibrary() {
                             <span className="text-text-light"> Connect Todoist in Settings first.</span>
                         )}
                     </div>
-                    {isTodoistConfigured && (
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => navigate('/settings?tab=integrations')}
-                                disabled={isReconciling}
+
+                    {/* Name the habits so it's clear exactly what will be synced or deleted. */}
+                    <div className="flex flex-wrap gap-1.5">
+                        {needsSyncHabits.map(({ habit, reason }) => (
+                            <span
+                                key={habit.id}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-card border border-border text-xs text-text-light"
+                                title={reason === 'missing-in-todoist'
+                                    ? 'Its Todoist task has gone missing'
+                                    : 'Not yet synced to Todoist'}
                             >
-                                Choose project
-                            </Button>
-                            <Button size="sm" disabled={isReconciling} onClick={handleMigrate}>
-                                {isReconciling ? 'Syncing…' : missingTaskCount === 0 ? 'Migrate' : 'Re-sync'}
-                            </Button>
-                        </div>
-                    )}
+                                <span className="truncate max-w-[12rem]">{habit.name}</span>
+                                {reason === 'missing-in-todoist' && (
+                                    <span aria-hidden className="text-amber-600 dark:text-amber-400">⚠</span>
+                                )}
+                            </span>
+                        ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {isTodoistConfigured && (
+                            <>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => navigate('/settings?tab=integrations')}
+                                    disabled={isReconciling}
+                                >
+                                    Choose project
+                                </Button>
+                                <Button size="sm" disabled={isReconciling} onClick={handleMigrate}>
+                                    {isReconciling ? 'Syncing…' : missingTaskCount === 0 ? 'Migrate' : 'Re-sync'}
+                                </Button>
+                            </>
+                        )}
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500 hover:text-red-600"
+                            disabled={isReconciling}
+                            onClick={() => setConfirmBulkDelete(true)}
+                        >
+                            Delete habit{needsSyncCount === 1 ? '' : 's'}
+                        </Button>
+                    </div>
                 </div>
             )}
 
@@ -416,69 +387,49 @@ export function HabitsLibrary() {
             </div>
 
             {/* ── Modals ── */}
-            <Modal open={showCreate} onClose={closeCreate} title="New habit">
-                <HabitForm
-                    initial={createInitial}
-                    seasons={life.seasons}
-                    todoistProjects={isTodoistConfigured ? projects : []}
-                    defaultProjectName={defaultProjectName}
-                    onRefreshProjects={isTodoistConfigured ? handleRefreshProjects : undefined}
-                    refreshingProjects={refreshingProjects}
-                    submitLabel="Create"
-                    onCancel={closeCreate}
-                    onSubmit={handleCreate}
-                />
-            </Modal>
+            {/* Create / edit / anchor-delete confirm are shared with LifeView via useHabitForms. */}
+            {modals}
 
+            {/* Bulk needs-sync delete is library-only (driven by the sync banner above). */}
             <Modal
-                open={editing !== null}
-                onClose={() => setEditing(null)}
-                title={editing ? `Edit ${editing.name}` : ''}
+                open={confirmBulkDelete}
+                onClose={() => setConfirmBulkDelete(false)}
+                title={`Delete ${needsSyncCount} habit${needsSyncCount === 1 ? '' : 's'}?`}
             >
-                {editing && (
-                    <HabitForm
-                        seasons={life.seasons}
-                        todoistProjects={isTodoistConfigured ? projects : []}
-                        defaultProjectName={defaultProjectName}
-                        onRefreshProjects={isTodoistConfigured ? handleRefreshProjects : undefined}
-                        refreshingProjects={refreshingProjects}
-                        initial={editing}
-                        submitLabel="Save"
-                        onCancel={() => setEditing(null)}
-                        onSubmit={(draft) => handleEdit(editing, draft)}
-                    />
-                )}
-            </Modal>
-
-            <Modal
-                open={confirmDelete !== null}
-                onClose={() => setConfirmDelete(null)}
-                title="Delete anchor habit?"
-            >
-                {confirmDelete && (
-                    <div>
-                        <p className="text-sm text-text-light mb-4">
-                            <strong>{confirmDelete.name}</strong> is an anchor — one of your
-                            load-bearing habits. Delete it anyway?
-                        </p>
-                        <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(null)}>
-                                Cancel
-                            </Button>
-                            <Button
-                                variant="secondary"
-                                size="sm"
-                                className="text-red-500 hover:text-red-600"
-                                onClick={() => {
-                                    dispatch({ type: 'DELETE_HABIT', habitId: confirmDelete.id });
-                                    setConfirmDelete(null);
-                                }}
-                            >
-                                Delete
-                            </Button>
-                        </div>
+                <div>
+                    <p className="text-sm text-text-light mb-3">
+                        {needsSyncCount === 1 ? 'This habit hasn’t' : 'These habits haven’t'} been synced
+                        to Todoist. Deleting removes {needsSyncCount === 1 ? 'it' : 'them'} from Orchestrate
+                        entirely — use this if you don’t want {needsSyncCount === 1 ? 'it' : 'them'} pushed
+                        over. This can’t be undone.
+                    </p>
+                    <ul className="mb-4 space-y-1 max-h-40 overflow-y-auto scrollbar-subtle">
+                        {needsSyncHabits.map(({ habit }) => (
+                            <li key={habit.id} className="text-sm flex items-center gap-2">
+                                <span className="w-1 h-1 rounded-full bg-border flex-shrink-0" />
+                                <span className="truncate">{habit.name}</span>
+                                {habit.isAnchor && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent text-white flex-shrink-0">
+                                        ANCHOR
+                                    </span>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmBulkDelete(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            className="text-red-500 hover:text-red-600"
+                            onClick={handleBulkDeleteNeedsSync}
+                        >
+                            Delete {needsSyncCount === 1 ? 'habit' : 'all'}
+                        </Button>
                     </div>
-                )}
+                </div>
             </Modal>
         </LifeShell>
     );

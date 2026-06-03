@@ -32,6 +32,8 @@ interface ReconciliationStatus {
     overdueCount: number;
     /** Active habits whose Todoist task is missing — either never synced or deleted upstream. */
     needsSyncCount: number;
+    /** The actual habits behind `needsSyncCount`, so surfaces can list them by name. */
+    needsSyncHabits: NeedsSyncHabitInfo[];
     /** Of `needsSyncCount`, how many never had a `todoistTaskId`. */
     neverSyncedCount: number;
     /** Of `needsSyncCount`, how many were synced but the task is gone. */
@@ -223,6 +225,7 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
     const value = useMemo<ReconciliationStatus>(() => ({
         overdueCount: overdue.length,
         needsSyncCount: needsSync.length,
+        needsSyncHabits: needsSync,
         neverSyncedCount,
         missingTaskCount: needsSync.length - neverSyncedCount,
         isReconciling,
@@ -232,7 +235,7 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
         clearError,
         triggerReconcile,
     }), [
-        overdue.length, needsSync.length, neverSyncedCount,
+        overdue.length, needsSync, neverSyncedCount,
         isReconciling, lastReconciledAt, lastError, isConfigured, clearError, triggerReconcile,
     ]);
 
