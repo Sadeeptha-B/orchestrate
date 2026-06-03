@@ -522,6 +522,7 @@ type Action =
     | { type: 'DELETE_HABIT'; habitId: string }
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
     | { type: 'PRUNE_TODAYS_HABITS' }
+    | { type: 'PRUNE_STALE_HABIT_INSTANCES'; instanceIds: string[] }
     | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
     // ---- True Rest cue customization ----
     | { type: 'ADD_REST_CUE'; cue: Omit<RestCue, 'id'> }
@@ -925,6 +926,17 @@ function reducer(state: State, action: Action): State {
             // should never linger in Today's Habits / the timeline / the Micro-gaps panel).
             const ids = new Set(state.life.habits.map((h) => h.id));
             const todaysHabits = plan.todaysHabits.filter((i) => ids.has(i.habitId));
+            if (todaysHabits.length === plan.todaysHabits.length) return state;
+            return { ...state, plan: { ...plan, todaysHabits } };
+        }
+
+        case 'PRUNE_STALE_HABIT_INSTANCES': {
+            // Drop `planned` habit instances whose backing Todoist task was completed / moved off
+            // today out-of-band (see `findStaleTodaysHabitInstances`). The caller passes the exact
+            // instance ids to remove; value-stable so a no-op pass doesn't churn renders.
+            if (action.instanceIds.length === 0) return state;
+            const drop = new Set(action.instanceIds);
+            const todaysHabits = plan.todaysHabits.filter((i) => !drop.has(i.id));
             if (todaysHabits.length === plan.todaysHabits.length) return state;
             return { ...state, plan: { ...plan, todaysHabits } };
         }

@@ -101,10 +101,10 @@ export function Step1Intentions() {
         [plan.intentions],
     );
 
-    // v6.3: count today's timeline-habit instances for an informational chip in Phase 1.
+    // v6.3: today's timeline-habit instances, surfaced by name inside the season card in Phase 1.
     // v6.7: exclude micro-gaps — they're not "on the timeline".
-    const habitTaskCount = useMemo(
-        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && habitKindOf(life, i) === 'habit').length,
+    const todaysHabitInstances = useMemo(
+        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && habitKindOf(life, i) === 'habit'),
         [plan.todaysHabits, life],
     );
 
@@ -200,16 +200,7 @@ export function Step1Intentions() {
                                 </p>
                             </div>
 
-                            <SeasonFocusBanner />
-
-                            {habitTaskCount > 0 && (
-                                <div className="rounded-md border border-accent/20 bg-accent-subtle/40 px-3 py-2 text-xs text-text-light flex items-center gap-2">
-                                    <span aria-hidden>🔁</span>
-                                    <span>
-                                        <strong className="text-accent">{habitTaskCount}</strong> habit{habitTaskCount === 1 ? '' : 's'} will fire today — already on your timeline.
-                                    </span>
-                                </div>
-                            )}
+                            <SeasonFocusBanner todaysHabits={todaysHabitInstances} />
 
                             <div className="flex gap-2">
                                 <input
@@ -568,11 +559,6 @@ export function Step1Intentions() {
                                 linkedTaskIds: currentMappingIntention.linkedTaskIds,
                                 allLinkedTasks: plan.linkedTasks,
                                 intentionTitles: intentionTitleMap,
-                                habitTodoistIds: new Set(
-                                    plan.todaysHabits
-                                        .map((i) => i.todoistTaskId)
-                                        .filter((id): id is string => Boolean(id)),
-                                ),
                                 onLinkTask: (todoistId) => dispatch({ type: 'LINK_TASK', intentionId: currentMappingIntention.id, todoistId }),
                                 onUnlinkTask: (todoistId) => dispatch({ type: 'UNLINK_TASK', todoistId }),
                             } : undefined}

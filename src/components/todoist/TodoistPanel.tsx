@@ -80,8 +80,6 @@ interface LinkingProps {
     linkedTaskIds: string[];                  // IDs linked to the current intention (pre-checked)
     allLinkedTasks: LinkedTask[];             // all linked tasks across intentions (for "(linked to: X)" labels)
     intentionTitles: Record<string, string>;  // intentionId → title lookup
-    /** v6.3: Todoist task ids that back today's stabilizer habit instances — surface a 🔁 Habit label instead of Link. */
-    habitTodoistIds?: Set<string>;
     onLinkTask: (todoistId: string) => void;
     onUnlinkTask: (todoistId: string) => void;
 }
@@ -139,7 +137,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
         refreshSections,
     } = useTodoistActions();
 
-    const { plan, dispatch } = useDayPlan();
+    const { plan, life, dispatch } = useDayPlan();
 
     // Persistent map: todoistId → intention title (always available, not just in linking mode).
     // v6.1: orphan habit-tasks (intentionId === undefined) are skipped — they have no intention to label.
@@ -164,6 +162,30 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
         }
         return map;
     }, [plan.linkedTasks]);
+
+    // Todoist task ids backed by an active 'habit'-kind habit. Source of truth for the 🔁 Habit
+    // label (shown on every mount, not just linking mode). Derived from `life.habits` rather than
+    // `plan.todaysHabits` so the label still shows when no instance fired today — e.g. a habit
+    // scheduled to an already-passed time with a strict window, which (correctly) never produces a
+    // today-instance but is still a habit-managed task in the panel.
+    const habitTodoistIds = useMemo(
+        () => new Set(
+            life.habits
+                .filter((h) => h.active && h.kind === 'habit' && h.todoistTaskId)
+                .map((h) => h.todoistTaskId as string),
+        ),
+        [life.habits],
+    );
+    // Lookup: todoistId → non-terminal habit instance id (for COMPLETE_HABIT_INSTANCE on panel complete).
+    const habitInstanceByTodoistId = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const i of plan.todaysHabits) {
+            if (i.todoistTaskId && i.status !== 'completed' && i.status !== 'skipped') {
+                map.set(i.todoistTaskId, i.id);
+            }
+        }
+        return map;
+    }, [plan.todaysHabits]);
 
     // Internal filter toggle state
     const [filterToggleActive, setFilterToggleActive] = useState(defaultFiltered);
@@ -229,9 +251,15 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
                 const title = tasks.find((t) => t.id === taskId)?.content;
                 dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: taskId, titleSnapshot: title });
             }
+            // If this task backs a habit instance, keep the Habits surface in sync — mirror
+            // HabitInstanceCard.handleComplete so completing here flips the instance to 🎉.
+            const instanceId = habitInstanceByTodoistId.get(taskId);
+            if (instanceId) {
+                dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId, now: new Date().toISOString() });
+            }
             completeTask(taskId);
         },
-        [completeTask, plan.linkedTasks, tasks, dispatch],
+        [completeTask, plan.linkedTasks, tasks, dispatch, habitInstanceByTodoistId],
     );
 
     const handleDeleteTask = useCallback(
@@ -383,6 +411,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
                         linking={linking}
                         persistentLinks={persistentLinks}
                         estimateMap={estimateMap}
+                        habitTodoistIds={habitTodoistIds}
                     />
                 ))}
             </div>
@@ -463,6 +492,7 @@ function ProjectTreeNode({
     linking,
     persistentLinks,
     estimateMap,
+    habitTodoistIds,
 }: {
     node: ProjectNode;
     depth: number;
@@ -478,6 +508,7 @@ function ProjectTreeNode({
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
     estimateMap: Map<string, number>;
+    habitTodoistIds: Set<string>;
 }) {
     const [collapsed, setCollapsed] = useState(depth > 0);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -636,6 +667,7 @@ function ProjectTreeNode({
                             linking={linking}
                             persistentLinks={persistentLinks}
                             estimateMap={estimateMap}
+                            habitTodoistIds={habitTodoistIds}
                         />
                     ))}
 
@@ -659,6 +691,7 @@ function ProjectTreeNode({
                                 compact={compact}
                                 persistentLinks={persistentLinks}
                                 estimateMap={estimateMap}
+                                habitTodoistIds={habitTodoistIds}
                             />
                         );
                     })}
@@ -681,6 +714,7 @@ function ProjectTreeNode({
                             linking={linking}
                             persistentLinks={persistentLinks}
                             estimateMap={estimateMap}
+                            habitTodoistIds={habitTodoistIds}
                         />
                     ))}
                 </div>
@@ -705,6 +739,7 @@ function SectionGroup({
     linking,
     persistentLinks,
     estimateMap,
+    habitTodoistIds,
 }: {
     section: TodoistSection;
     tasks: TodoistTask[];
@@ -719,6 +754,7 @@ function SectionGroup({
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
     estimateMap: Map<string, number>;
+    habitTodoistIds: Set<string>;
 }) {
     const [collapsed, setCollapsed] = useState(false);
 
@@ -758,6 +794,7 @@ function SectionGroup({
                         linking={linking}
                         persistentLinks={persistentLinks}
                         estimateMap={estimateMap}
+                        habitTodoistIds={habitTodoistIds}
                     />
                 ))}
         </div>
@@ -779,6 +816,7 @@ function TaskRow({
     linking,
     persistentLinks,
     estimateMap,
+    habitTodoistIds,
 }: {
     task: TodoistTask;
     depth: number;
@@ -792,6 +830,7 @@ function TaskRow({
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
     estimateMap: Map<string, number>;
+    habitTodoistIds: Set<string>;
 }) {
     const children = subTaskMap.get(task.id);
     const [childrenCollapsed, setChildrenCollapsed] = useState(false);
@@ -859,9 +898,9 @@ function TaskRow({
 
     // Linking mode state
     const isLinkedToCurrentIntention = linking?.linkedTaskIds.includes(task.id) ?? false;
-    // v6.3: detect habit-backed Todoist tasks so the Link affordance hides in favor of a 🔁 Habit label.
-    const isHabitBacked = linking?.habitTodoistIds?.has(task.id) ?? false;
-    const habitRecord = isHabitBacked ? { todoistId: task.id } : undefined;
+    // Detect habit-backed Todoist tasks. Shown on every mount (not just linking) as a 🔁 Habit
+    // label; the Link affordance + Delete action are suppressed for these rows.
+    const isHabitBacked = habitTodoistIds.has(task.id);
     const linkedToOther = linking && !isHabitBacked
         ? linking.allLinkedTasks.find(
             (lt) => lt.todoistId === task.id
@@ -965,34 +1004,33 @@ function TaskRow({
                         </span>
                     )}
                 </div>
-                {/* Link/Unlink button (when in linking mode); habit-tasks render a non-actionable 🔁 Habit label instead. */}
-                {linking && (
-                    habitRecord ? (
-                        <span
-                            className="text-[10px] flex-shrink-0 mt-0.5 px-1.5 py-0.5 rounded-full bg-accent-subtle text-accent font-medium"
-                            title="Habit-derived task — managed via the Habits library"
-                        >
-                            🔁 Habit
-                        </span>
-                    ) : (
-                        <button
-                            onClick={() => {
-                                if (isLinkedToCurrentIntention) {
-                                    linking.onUnlinkTask(task.id);
-                                } else {
-                                    linking.onLinkTask(task.id);
-                                }
-                            }}
-                            className={`text-xs flex-shrink-0 mt-0.5 cursor-pointer transition-colors font-medium ${isLinkedToCurrentIntention
-                                ? 'text-accent hover:text-red-500'
-                                : 'text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent'
-                                }`}
-                            title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
-                        >
-                            {isLinkedToCurrentIntention ? 'Unlink' : 'Link'}
-                        </button>
-                    )
-                )}
+                {/* Habit-backed tasks render a non-actionable 🔁 Habit label on every mount.
+                    Otherwise, in linking mode, the Link/Unlink button. */}
+                {isHabitBacked ? (
+                    <span
+                        className="text-[10px] flex-shrink-0 mt-0.5 px-1.5 py-0.5 rounded-full bg-accent-subtle text-accent font-medium"
+                        title="Habit-derived task — managed via the Habits library"
+                    >
+                        🔁 Habit
+                    </span>
+                ) : linking ? (
+                    <button
+                        onClick={() => {
+                            if (isLinkedToCurrentIntention) {
+                                linking.onUnlinkTask(task.id);
+                            } else {
+                                linking.onLinkTask(task.id);
+                            }
+                        }}
+                        className={`text-xs flex-shrink-0 mt-0.5 cursor-pointer transition-colors font-medium ${isLinkedToCurrentIntention
+                            ? 'text-accent hover:text-red-500'
+                            : 'text-text-light opacity-0 group-hover:opacity-100 hover:!text-accent'
+                            }`}
+                        title={isLinkedToCurrentIntention ? 'Unlink from intention' : 'Link to intention'}
+                    >
+                        {isLinkedToCurrentIntention ? 'Unlink' : 'Link'}
+                    </button>
+                ) : null}
                 {/* Schedule button (hover) */}
                 <button
                     onClick={handleOpenPicker}
@@ -1004,14 +1042,17 @@ function TaskRow({
                 >
                     ⏱
                 </button>
-                {/* Delete task button (hover) */}
-                <button
-                    onClick={() => onDelete(task.id)}
-                    className="text-xs text-text-light opacity-0 group-hover:opacity-100 hover:!text-red-500 transition-opacity flex-shrink-0 mt-0.5 cursor-pointer"
-                    title="Delete task"
-                >
-                    ✕
-                </button>
+                {/* Delete task button (hover) — hidden for habit-backed rows (deleting the
+                    Todoist task would dangle the habit's sync link; manage via the Habits library). */}
+                {!isHabitBacked && (
+                    <button
+                        onClick={() => onDelete(task.id)}
+                        className="text-xs text-text-light opacity-0 group-hover:opacity-100 hover:!text-red-500 transition-opacity flex-shrink-0 mt-0.5 cursor-pointer"
+                        title="Delete task"
+                    >
+                        ✕
+                    </button>
+                )}
             </div>
             {/* Inline time range picker */}
             {showTimePicker && (
@@ -1084,6 +1125,7 @@ function TaskRow({
                         linking={linking}
                         persistentLinks={persistentLinks}
                         estimateMap={estimateMap}
+                        habitTodoistIds={habitTodoistIds}
                     />
                 ))}
         </div>

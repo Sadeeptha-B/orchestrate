@@ -400,12 +400,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const completeTask = useCallback(async (taskId: string) => {
         const token = await resolveToken();
         if (!token) return;
-        // v6.4: capture recurrence-ness *before* the await so we know whether to drop the
-        // cache entry. Todoist's `item_complete` on a recurring task advances the rule
-        // server-side and keeps the task alive with a new due date — filtering it out of
-        // the local cache (the old behavior) blinded `computeTodaysHabitInstances` and
-        // `findOverdueHabits` until the next 5-min staleness window expired, causing
-        // habits to silently disappear post-completion / post-skip until refresh.
+        // Capture recurrence-ness *before* the await so we know whether to drop the cache
+        // entry. We use `item_close` (not `item_complete`): it does exactly what the official
+        // Todoist clients do when you check a task off — regular tasks are completed, and
+        // *recurring* tasks are advanced to their next occurrence rather than ended. The old
+        // `item_complete` command terminated the whole recurrence, so completing a recurring
+        // habit silently killed its cycle instead of rolling it forward.
         const existing = tasksRef.current.find((t) => t.id === taskId);
         const isRecurring = Boolean(existing?.due?.is_recurring);
         try {
@@ -413,12 +413,14 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `commands=${encodeURIComponent(JSON.stringify([
-                    { type: 'item_complete', uuid: crypto.randomUUID(), args: { id: taskId } },
+                    { type: 'item_close', uuid: crypto.randomUUID(), args: { id: taskId } },
                 ]))}`,
             });
             if (isRecurring) {
-                // Keep the (now-stale-due-date) entry in cache so it stays visible to the
-                // habit filters, and force-refresh so the new due date lands ASAP.
+                // The task is still alive with an advanced due date. Keep the (now-stale-due-date)
+                // entry in cache so it stays visible to the habit filters, and force-refresh so
+                // the new due date lands ASAP — otherwise `computeTodaysHabitInstances` /
+                // `findOverdueHabits` would be blinded until the 5-min staleness window expires.
                 void refreshTasks({ force: true });
             } else {
                 setTasks((prev) => prev.filter((t) => t.id !== taskId));

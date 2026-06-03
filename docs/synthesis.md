@@ -63,7 +63,7 @@ Nine routes, all defined in `AppRoutes` inside `App.tsx`:
 |---|---|---|
 | `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` (hub) |
 | `/setup` | `Wizard` | Accessible when `setupComplete` is true (editing) or navigated from Welcome |
-| `/life` | `LifeView` | Always reachable. Hub: active season + all active habits grouped by scope (always-on, then per-season with collapsible headers) and split by kind (habits / micro-gaps), plus an inline compact True Rest editor |
+| `/life` | `LifeView` | Always reachable. Hub: active season + all active habits grouped by scope (always-on, then per-season with collapsible headers) and split by kind (habits / micro-gaps), plus an inline compact True Rest editor. Habit pills carry inline edit/pause/delete; an "Add habit" button opens the same `HabitForm` modal as the library (Todoist sync banners stay in the library) |
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits; deleting an active anchor prompts a confirm |
@@ -269,7 +269,7 @@ Users can override any playlist with a custom Spotify URL. Check-in suggests a p
 
 **File:** `src/components/todoist/TodoistPanel.tsx`
 
-Used in four places: Step 1 (linking mode, full tree), Step 2 (linking mode, filter toggle), Step 3 Phase 2 (compact, filtered), Dashboard (full, default filtered). Renders a project -> section -> task tree. Features: Link/Unlink buttons in linking mode (with "Habit" label for habit-backed rows), inline title editing, completion with confetti, All/Linked filter toggle, estimate auto-fill from Todoist `duration`.
+Used in four places: Step 1 (linking mode, full tree), Step 2 (linking mode, filter toggle), Step 3 Phase 2 (compact, filtered), Dashboard (full, default filtered). Renders a project -> section -> task tree. Features: Link/Unlink buttons in linking mode, inline title editing, completion with confetti, All/Linked filter toggle, estimate auto-fill from Todoist `duration`. Habit-backed rows (Todoist tasks behind a `TodaysHabitInstance`) carry a non-actionable "🔁 Habit" label on **every** mount — the panel computes the backing-id set itself from `plan.todaysHabits`, so the cue is no longer linking-only. Their Delete (✕) action is hidden (deleting would dangle the habit's sync link), and completing one from the panel also dispatches `COMPLETE_HABIT_INSTANCE` so the dashboard Habits card stays in sync (Skip/Reschedule remain Habits-card-only).
 
 ### SessionTimelineBar
 
@@ -303,7 +303,9 @@ Season-scoped recurring *work-threads* on `Season.recurringFocuses[]` (`{ id, ti
 
 **Sync layer** (on 'habit'-kind save — v6.7): `buildDueString(habit)` -> `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates/updates/moves the recurring Todoist task (timed → "every day at HH:mm", untimed → "every day"). Self-heals stale project references and recreates deleted tasks. Sync failures are non-blocking. **Micro-gaps never sync** — `syncHabitToTodoist`/`findNeedsSyncHabits`/`findOverdueHabits` early-skip them.
 
-**Day-of layer** (on Step 1 mount): `computeTodaysHabitInstances(...)` ('habit' kind, Todoist-gated) + `computeTodaysMicroGapInstances(...)` ('micro-gap' kind, no Todoist) both feed `REFRESH_TODAYS_HABITS`. Honors season scope; timed habits get `targetTime` + the `windowBehavior === 'strict'` gate. No session auto-assignment -- `targetTime` drives timeline positioning only.
+**Delete propagation** (`useHabitMutations`, not the reducer — shared by HabitsLibrary + LifeView): deleting a habit also removes its backing recurring Todoist task (`todoistActions.deleteTask`), and editing a habit's kind from `habit` → `micro-gap` deletes the now-orphaned task (HabitForm drops `todoistTaskId` for non-habit kinds). Both are best-effort / non-blocking — a failure leaves an orphan task (logged), never blocking the local change. Pausing a habit (`TOGGLE_HABIT_ACTIVE`) deliberately leaves the Todoist task intact, since deactivation is reversible.
+
+**Day-of layer** (`useTodaysHabitsSync`, on Step 1 + dashboard mount): `computeTodaysHabitInstances(...)` ('habit' kind, Todoist-gated) + `computeTodaysMicroGapInstances(...)` ('micro-gap' kind, no Todoist) both feed `REFRESH_TODAYS_HABITS`. Honors season scope; timed habits get `targetTime` + the `windowBehavior === 'strict'` gate. v6.8 also *rescues* a timed **lenient** ("surface anyway") habit whose time has passed but whose recurring task Todoist rolled forward to tomorrow (today's slot is gone) — so a habit created/edited after its target time still surfaces today (unless already completed/skipped). No session auto-assignment -- `targetTime` drives timeline positioning only. Because `REFRESH_TODAYS_HABITS` only appends/refreshes (never removes), the hook also runs `findStaleTodaysHabitInstances(...)` → `PRUNE_STALE_HABIT_INSTANCES` (gated on `tasksHydrated`) to drop `planned` instances whose Todoist task was completed / moved off today out-of-band — sharing the `isLenientPastWindow` predicate with the compute path so a rescued row isn't pruned right back out.
 
 **Central reconciliation** (v6.5; **'habit' kind only** since v6.7 — micro-gaps never sync, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueHabits(...)` and `findNeedsSyncHabits(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for 'habit'-kind entries without a live link) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `tasksHydrated` — so a legitimately empty task list still triggers needs-sync) and on window focus (gated by 5-min staleness); `useHabitReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
 
@@ -315,7 +317,7 @@ Season-scoped recurring *work-threads* on `Season.recurringFocuses[]` (`{ id, ti
 
 **Reschedule semantics** (v6.4; **'habit'-kind only** — micro-gaps are untimed and not reschedulable): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the `'unfinished'` status it produced is gone, and `migratePlan` coerces any persisted `'unfinished'` to `'skipped'`.)
 
-**Habits Library** (`/habits`): groups active habits into **Habits** and **Micro-gaps** sections (+ collapsible Inactive). Shows a "needs sync" banner for **'habit'-kind** entries that are unsynced or whose Todoist task is missing (micro-gaps never sync, so they're excluded). Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races.
+**Habits Library** (`/habits`): groups active habits into **Habits** and **Micro-gaps** sections (+ collapsible Inactive). Shows a "needs sync" banner for **'habit'-kind** entries that are unsynced or whose Todoist task is missing (micro-gaps never sync, so they're excluded); the banner **names each affected habit** as a chip (a ⚠ marks a task that's gone missing in Todoist) and offers — alongside Migrate / Re-sync — a confirm-gated **bulk "Delete habits"** escape hatch for habits the user would rather drop than push to Todoist. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races. CRUD (create / edit / pause / delete) and the create/edit/anchor-delete **modal stack** run through the shared `useHabitForms` hook (over `useHabitMutations`), also used by `LifeView`, so the two surfaces share one mutation + form path; the needs-sync banner and bulk-delete modal stay library-only.
 
 ### Intentions Backlog
 
@@ -392,9 +394,13 @@ All via `localStorage`. No backend — this is the current implementation, not a
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
 | `useConfirmModal` | `hooks/useConfirmModal.ts` | Reusable confirm-dialog state |
-| `useHabitReconciliation` | `hooks/useHabitReconciliation.ts` | v6.5: read central reconcile status (counts, error, in-flight) + manual trigger |
+| `useHabitReconciliation` | `hooks/useHabitReconciliation.ts` | v6.5: read central reconcile status — counts, the **named needs-sync habit list**, error, in-flight — + manual trigger |
 | `useSyncHabit` | `hooks/useSyncHabit.ts` | Per-habit →Todoist sync + habit-patch write-back (**'habit' kind only** — micro-gaps early-return). Shared by HabitsLibrary save flow and `ReconciliationProvider`. |
+| `useHabitMutations` | `hooks/useHabitMutations.ts` | Shared habit create/edit/delete with best-effort Todoist sync (project resolution + `useSyncHabit`), plus the `HabitForm` Todoist props and `syncError`. Used (via `useHabitForms`) by `HabitsLibrary` and `LifeView` so both surfaces share one CRUD path. |
+| `useHabitForms` | `hooks/useHabitForms.tsx` | Wraps `useHabitMutations` and owns the shared create/edit/anchor-delete **modal stack** + open/edit/`requestDelete` triggers. Returns a ready-to-render `modals` node so `HabitsLibrary` and `LifeView` render the same form/confirm plumbing instead of duplicating the JSX. |
 | `useHabitReschedule` | `hooks/useHabitReschedule.ts` | Shared inline-reschedule state for `TodaysHabitInstance` rows (HabitInstanceCard + Step3HabitsPanel); pairs with `HabitTimeEditor`. |
+| `useToggleHabitInstance` | `hooks/useToggleHabitInstance.ts` | Start/Stop a `TodaysHabitInstance` (both kinds): dispatches `START_/STOP_HABIT_INSTANCE`. Shared by `HabitInstanceCard` + `MicroGapCard`. |
+| `useTodaysHabitsSync` | `hooks/useTodaysHabitsSync.ts` | Day-of sync effect: feeds `computeTodaysHabitInstances` + `computeTodaysMicroGapInstances` into `REFRESH_TODAYS_HABITS`, then prunes deleted-habit and stale instances. Mounted by Step 1 + dashboard. |
 
 ---
 
@@ -423,13 +429,15 @@ src/
 |   +-- useTheme.ts
 |   +-- useTodoist.ts
 |   +-- useIntentionRemoval.ts
-|   `-- useConfirmModal.ts
+|   +-- useConfirmModal.ts
+|   +-- useHabitReconciliation.ts, useSyncHabit.ts, useHabitMutations.ts, useHabitForms.tsx
+|   `-- useHabitReschedule.ts, useToggleHabitInstance.ts, useTodaysHabitsSync.ts
 |
 +-- lib/
 |   +-- crypto.ts               # AES-256-GCM encryption/decryption
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)
 |   +-- habits.ts               # habitMatchesDate/recurrenceMatchesDate, habitKindOf, partitionByKind, computeTodaysMicroGapInstances, getActiveHabits, getAnchorHabits
-|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findOverdueHabits, reconcileOverdueHabits, findNeedsSyncHabits
+|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findStaleTodaysHabitInstances, findOverdueHabits, reconcileOverdueHabits, findNeedsSyncHabits
 |   +-- backlog.ts              # hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry
 |   +-- intentionUnschedule.ts  # unscheduleIntentionTasks pure helper
 |   +-- seasons.ts              # findActiveSeason, getSeasonProgress
@@ -464,7 +472,8 @@ src/
     |   `-- UserGuide.tsx       # Single source for user guide content
     +-- life/
     |   +-- LifeShell.tsx, LifeView.tsx, SeasonsManager.tsx, SeasonDetail.tsx, SeasonForm.tsx
-    |   +-- HabitsLibrary.tsx, HabitForm.tsx, RestCuesManager.tsx, RestCuesEditor.tsx
+    |   +-- HabitsLibrary.tsx, HabitForm.tsx, RestCuesEditor.tsx
+    |   +-- SeasonFocusBanner.tsx, SeasonContextCard.tsx
     |   `-- ActiveSeasonBadge.tsx
     `-- ui/
         +-- Button.tsx, Card.tsx, Modal.tsx, ConfirmModal.tsx, ProgressBar.tsx
