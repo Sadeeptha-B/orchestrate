@@ -9,7 +9,7 @@ import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
 import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
-import { habitKindOf } from '../../lib/habits';
+import { getMissedInstanceIds, habitKindOf } from '../../lib/habits';
 import { EngagementTimer } from './EngagementTimer';
 import { openSegment } from '../../lib/engagement';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
@@ -478,6 +478,8 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
 
     // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps live in their own panel.
     const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
+    // v6.8: grey out strict habits whose window has elapsed (still actionable, just "missed").
+    const missedInstanceIds = getMissedInstanceIds(life, timelineHabits, new Date());
 
     return (
         <SessionTimelineBar
@@ -489,6 +491,7 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
             selectedSessionId={pinnedSessionId}
             onSelectSession={onSelectSession}
             todaysHabits={timelineHabits}
+            missedInstanceIds={missedInstanceIds}
         />
     );
 }

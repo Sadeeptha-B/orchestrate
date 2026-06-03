@@ -191,8 +191,8 @@ export function UserGuide() {
                             <li><strong>Todoist project</strong> — pick which project this habit's recurring task lives in. Leave on "Use default" to use the workspace default in <strong>Settings → Integrations → Default Habits Project</strong> (which itself defaults to a lazily-created project named "Habits"). Changing the project on an already-synced habit moves the recurring task.</li>
                             <li><strong>Window behavior</strong>:
                                 <ul className="list-disc pl-5 space-y-1 mt-1">
-                                    <li><em>Surface anyway</em> (lenient, default) — show it whenever the Todoist task is due + unchecked, even if you're planning late. You can reschedule it to a later time today.</li>
-                                    <li><em>Hide for today</em> (strict) — if your planning time is already past <Code>targetTime + duration</Code>, drop it from today's plan. Streaks are preserved.</li>
+                                    <li><em>Keep as to-do</em> (lenient, default) — stays an active to-do all day whenever the Todoist task is due + unchecked, even if you're planning late. You can reschedule it to a later time today.</li>
+                                    <li><em>Mark as missed</em> (strict) — once you're past <Code>targetTime + duration</Code> it's no longer prompted as a live to-do: the row greys out and is tagged <em>"missed"</em>. It still appears on the timeline and in the habits card as a record, and stays completable (handy if you did it before planning) — rescheduling it to a later time clears the "missed" tag.</li>
                                 </ul>
                             </li>
                         </ul>
@@ -591,7 +591,7 @@ Is X today-only?
                         <SubHeading>Step 3 — Schedule</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
                             <li>Phase 1 (Assign): you assign manual tasks to sessions. Habits already render in the dedicated habit lane above the session blocks, positioned at their target time. They are <em>not</em> assignable to sessions.</li>
-                            <li>Phase 2 (Time): side-by-side Todoist + Calendar plus a <em>"Today's habits"</em> panel listing each instance. Any lenient habit past its target window gets a ⤴ Reschedule affordance with a time-picker.</li>
+                            <li>Phase 2 (Time): side-by-side Todoist + Calendar plus a <em>"Today's habits"</em> panel listing each instance. Any habit past its target window gets a ⤴ Reschedule affordance with a time-picker; strict ones are tagged <em>"missed"</em> but still listed and reschedulable.</li>
                         </ul>
                         <p className="text-text-light text-sm">
                             Capacity badge shows the morning session is <em>tight</em> at 110%. You proceed — it's advisory. Habits do not count toward session capacity.

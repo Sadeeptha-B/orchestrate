@@ -219,11 +219,11 @@ export function HabitForm({
                         </p>
                     </div>
                     <div>
-                        <label className={labelClass}>If I'm planning past the target window</label>
+                        <label className={labelClass}>Once the target window has passed</label>
                         <div className="flex gap-1 flex-wrap">
                             {([
-                                ['lenient', 'Surface anyway'],
-                                ['strict', 'Hide for today'],
+                                ['lenient', 'Keep as to-do'],
+                                ['strict', 'Mark as missed'],
                             ] as Array<[HabitWindowBehavior, string]>).map(([value, label]) => (
                                 <button
                                     key={value}
@@ -241,8 +241,8 @@ export function HabitForm({
                         </div>
                         <p className="text-[11px] text-text-light mt-1">
                             {windowBehavior === 'strict'
-                                ? 'Hidden from today if the current time is past the target window.'
-                                : 'Always surfaced as long as the Todoist task is due today and unchecked.'}
+                                ? 'Still shown today (and completable), but greyed out as “missed” once the window passes — no longer prompted as an active to-do.'
+                                : 'Stays an active to-do all day, as long as the Todoist task is due today and unchecked.'}
                         </p>
                     </div>
                 </div>

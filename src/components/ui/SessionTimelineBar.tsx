@@ -26,11 +26,17 @@ function nowInMinutes(): number {
 }
 
 /**
+ * v6.8: status used for *display* — the real instance status plus a derived `'missed'` for a
+ * strict, timed habit whose window has elapsed (see `isHabitInstanceMissed`). Not a persisted status.
+ */
+type DisplayStatus = TodaysHabitInstance['status'] | 'missed';
+
+/**
  * v6.3 / v6.4: status → pill styling for habit instances rendered in the lane / anytime cluster.
  * Combines border style (solid/dashed) + bg fill + text color to make each state
  * distinguishable at a glance, even when the pill is too narrow for the title.
  */
-function habitPillClass(status: TodaysHabitInstance['status']): string {
+function habitPillClass(status: DisplayStatus): string {
     switch (status) {
         case 'engaged':
             return 'border-2 border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse';
@@ -38,6 +44,9 @@ function habitPillClass(status: TodaysHabitInstance['status']): string {
             return 'border border-success/40 bg-success/15 text-success-foreground/80 dark:text-success';
         case 'skipped':
             return 'border border-dashed border-text-light/40 bg-surface-dark/30 text-text-light/50 line-through';
+        case 'missed':
+            // v6.8: greyed + dashed (no strike-through — it's still actionable), distinct from skipped.
+            return 'border border-dashed border-text-light/40 bg-surface-dark/20 text-text-light/60';
         case 'planned':
         default:
             return 'border border-accent/40 bg-accent-subtle text-accent';
@@ -48,22 +57,24 @@ function habitPillClass(status: TodaysHabitInstance['status']): string {
  * v6.4: state icon prefix. Distinct icons make the pill readable when the title is
  * truncated — the user can tell what state a habit is in from the icon alone.
  */
-function habitPillIcon(status: TodaysHabitInstance['status']): string {
+function habitPillIcon(status: DisplayStatus): string {
     switch (status) {
         case 'engaged':    return '⏵';   // playing
         case 'completed':  return '🎉';
         case 'skipped':    return '⤼';
+        case 'missed':     return '⏰';   // v6.8: window elapsed
         case 'planned':
         default:           return '🔁';
     }
 }
 
 /** v6.4: human-readable status word for the pill tooltip. */
-function habitStatusLabel(status: TodaysHabitInstance['status']): string {
+function habitStatusLabel(status: DisplayStatus): string {
     switch (status) {
         case 'engaged':    return 'engaged';
         case 'completed':  return 'completed';
         case 'skipped':    return 'skipped';
+        case 'missed':     return 'missed';
         case 'planned':
         default:           return 'planned';
     }
@@ -72,13 +83,14 @@ function habitStatusLabel(status: TodaysHabitInstance['status']): string {
 /**
  * v6.4: full tooltip line for a habit pill. Includes title, target time, planned duration,
  * status, and (when applicable) engaged minutes — covers the "I can't read the truncated
- * pill" case without growing the pill itself.
+ * pill" case without growing the pill itself. `displayStatus` defaults to the real status but
+ * lets a caller pass the derived `'missed'` (v6.8).
  */
-function habitPillTooltip(i: TodaysHabitInstance): string {
+function habitPillTooltip(i: TodaysHabitInstance, displayStatus: DisplayStatus = i.status): string {
     const parts = [i.titleSnapshot];
     if (i.targetTime) parts.push(i.targetTime);
     parts.push(`${i.durationMinutes}m`);
-    parts.push(habitStatusLabel(i.status));
+    parts.push(habitStatusLabel(displayStatus));
     const engaged = engagedMinutes(i);
     if (engaged > 0) parts.push(`${engaged}m engaged`);
     return parts.join(' · ');
@@ -109,8 +121,9 @@ interface LaneMarker {
  * scheduled slot reads as `planned` (the live state is carried by a separate engagement marker);
  * an on-schedule open segment makes the scheduled slot itself read `engaged`.
  */
-function scheduledDisplayStatus(i: TodaysHabitInstance): TodaysHabitInstance['status'] {
+function scheduledDisplayStatus(i: TodaysHabitInstance, isMissed: boolean): DisplayStatus {
     if (i.status === 'completed' || i.status === 'skipped') return i.status;
+    if (isMissed) return 'missed'; // v6.8: strict, timed, past-window planned instance
     if (i.status === 'engaged' && i.targetTime) {
         const open = openSegment(i.segments);
         if (open) {
@@ -145,13 +158,13 @@ function buildLaneMarkers(habits: TodaysHabitInstance[]): LaneMarker[] {
     return out;
 }
 
-function markerIcon(m: LaneMarker): string {
+function markerIcon(m: LaneMarker, isMissed: boolean): string {
     if (m.kind === 'ghost') return '🔁';
     if (m.kind === 'engagement') return m.live ? '⏵' : '⏺';
-    return habitPillIcon(scheduledDisplayStatus(m.instance));
+    return habitPillIcon(scheduledDisplayStatus(m.instance, isMissed));
 }
 
-function markerClass(m: LaneMarker): string {
+function markerClass(m: LaneMarker, isMissed: boolean): string {
     if (m.kind === 'ghost') {
         return 'border border-dashed border-text-light/30 bg-card text-text-light/40';
     }
@@ -160,10 +173,10 @@ function markerClass(m: LaneMarker): string {
             ? 'border-2 border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse'
             : 'border border-amber-400/50 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300';
     }
-    return habitPillClass(scheduledDisplayStatus(m.instance));
+    return habitPillClass(scheduledDisplayStatus(m.instance, isMissed));
 }
 
-function markerTooltip(m: LaneMarker): string {
+function markerTooltip(m: LaneMarker, isMissed: boolean): string {
     const i = m.instance;
     if (m.kind === 'ghost') return `${i.titleSnapshot} · was scheduled ${m.fromTime} (moved)`;
     if (m.kind === 'engagement' && m.segment) {
@@ -172,7 +185,7 @@ function markerTooltip(m: LaneMarker): string {
         const mins = Math.round(segmentSeconds(m.segment, Date.now()) / 60);
         return `${i.titleSnapshot} · engaged ${start}–${end} · ${mins}m${m.live ? ' (running)' : ''}`;
     }
-    return habitPillTooltip(i);
+    return habitPillTooltip(i, scheduledDisplayStatus(i, isMissed));
 }
 
 /** Min horizontal spacing (% of the lane) before two markers stack onto separate rows. */
@@ -250,6 +263,9 @@ interface SessionTimelineBarProps {
     /** v6.3: stabilizer habit instances for today. Timed ones render in the habit lane above
      * the session blocks; untimed ones cluster as "Anytime today" chips above the timeline. */
     todaysHabits?: TodaysHabitInstance[];
+    /** v6.8: ids of instances presenting as "missed" (strict + past window). Their scheduled
+     * lane markers render greyed. Computed by the caller (which holds the parent habits). */
+    missedInstanceIds?: Set<string>;
 }
 
 export function SessionTimelineBar({
@@ -262,6 +278,7 @@ export function SessionTimelineBar({
     currentSessionId,
     capacities,
     todaysHabits,
+    missedInstanceIds,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -380,17 +397,21 @@ export function SessionTimelineBar({
                 gap to the next marker in its row) and is always available on hover. */}
             {laneMarkers.length > 0 && totalMinutes > 0 && (
                 <div className="relative" style={{ minHeight: laneRowCount * LANE_ROW_H }}>
-                    {laneMarkers.map(({ marker, left, row, maxWidthPct }) => (
-                        <div
-                            key={marker.key}
-                            className={`absolute h-5 px-1 rounded-full text-[9px] leading-none inline-flex items-center gap-1 overflow-hidden ${markerClass(marker)}`}
-                            style={{ left: `${left}%`, top: row * LANE_ROW_H, maxWidth: `${maxWidthPct}%` }}
-                            title={markerTooltip(marker)}
-                        >
-                            <span aria-hidden className="flex-shrink-0 w-3 text-center">{markerIcon(marker)}</span>
-                            <span className="truncate">{marker.instance.titleSnapshot}</span>
-                        </div>
-                    ))}
+                    {laneMarkers.map(({ marker, left, row, maxWidthPct }) => {
+                        const isMissed = marker.kind === 'scheduled'
+                            && (missedInstanceIds?.has(marker.instance.id) ?? false);
+                        return (
+                            <div
+                                key={marker.key}
+                                className={`absolute h-5 px-1 rounded-full text-[9px] leading-none inline-flex items-center gap-1 overflow-hidden ${markerClass(marker, isMissed)}`}
+                                style={{ left: `${left}%`, top: row * LANE_ROW_H, maxWidth: `${maxWidthPct}%` }}
+                                title={markerTooltip(marker, isMissed)}
+                            >
+                                <span aria-hidden className="flex-shrink-0 w-3 text-center">{markerIcon(marker, isMissed)}</span>
+                                <span className="truncate">{marker.instance.titleSnapshot}</span>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
 

@@ -13,7 +13,7 @@ import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { formatDuration } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
-import { compareHabitInstancesByTime, habitKindOf } from '../../lib/habits';
+import { compareHabitInstancesByTime, getMissedInstanceIds, habitKindOf, isHabitInstanceMissed } from '../../lib/habits';
 import { getTaskTitle } from '../../lib/tasks';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
@@ -24,6 +24,8 @@ export function Step3Schedule() {
     const { plan, life, settings, dispatch } = useDayPlan();
     // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps are off-timeline.
     const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
+    // v6.8: strict habits whose window has elapsed render greyed ("missed") but stay actionable.
+    const missedInstanceIds = getMissedInstanceIds(life, timelineHabits, new Date());
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
     const { taskMap } = useTodoistData();
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
@@ -183,6 +185,7 @@ export function Step3Schedule() {
                         onSelectSession={setSelectedSessionId}
                         capacities={capacities}
                         todaysHabits={timelineHabits}
+                        missedInstanceIds={missedInstanceIds}
                     />
 
                     {/* v6.3: Habit instances panel — reschedule is available from planning. */}
@@ -459,17 +462,20 @@ export function Step3Schedule() {
  * v6.3: Step 3 habits panel — lists today's active habit instances (planned + engaged).
  * Each row exposes a Reschedule affordance unconditionally (Step 3 IS the planning step,
  * so the user should be able to set/change times here without waiting for the target
- * window to elapse). Strict habits past their window were already filtered out by
- * `computeTodaysHabitInstances` and never appear. Rendered in both Phase 1 and Phase 2.
+ * window to elapse). v6.8: strict habits past their window now appear here too (tagged
+ * "missed") instead of being filtered out — rescheduling one to a future time un-misses it.
+ * Rendered in both Phase 1 and Phase 2.
  */
 function Step3HabitsPanel() {
     const { plan, life } = useDayPlan();
     const reschedule = useHabitReschedule();
+    const now = new Date();
 
     // v6.7: timeline-habits only; micro-gaps aren't scheduled.
     const active = plan.todaysHabits
         .filter((i) => habitKindOf(life, i) === 'habit' && (i.status === 'planned' || i.status === 'engaged'))
         .sort(compareHabitInstancesByTime);
+    const habitById = new Map(life.habits.map((h) => [h.id, h]));
 
     if (active.length === 0) return null;
 
@@ -483,9 +489,15 @@ function Step3HabitsPanel() {
             <ul className="space-y-1.5">
                 {active.map((i) => {
                     const isRescheduling = reschedule.reschedulingId === i.id;
+                    const isMissed = isHabitInstanceMissed(habitById.get(i.habitId), i, now);
                     return (
-                        <li key={i.id} className="flex items-center gap-2 text-sm">
+                        <li key={i.id} className={`flex items-center gap-2 text-sm ${isMissed ? 'opacity-60' : ''}`}>
                             <span className="flex-1 truncate">{i.titleSnapshot}</span>
+                            {isMissed && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light/70 inline-flex items-center gap-1">
+                                    <span aria-hidden>⏰</span>missed
+                                </span>
+                            )}
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent tabular-nums">
                                 {i.targetTime ?? 'anytime'}
                             </span>

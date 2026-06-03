@@ -3,7 +3,7 @@ import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
 import { useToggleHabitInstance } from '../../hooks/useToggleHabitInstance';
-import { compareHabitInstancesByTime, habitKindOf } from '../../lib/habits';
+import { compareHabitInstancesByTime, habitKindOf, isHabitInstanceMissed } from '../../lib/habits';
 import {
     buildEngagementLog,
     formatLocalTimeOfDay,
@@ -35,6 +35,7 @@ export function HabitInstanceCard() {
     const handleStartStop = useToggleHabitInstance();
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
+    const now = new Date(); // v6.8: for the derived "missed" presentation (past-window strict habits)
     // v6.7: this card is 'habit'-kind only; micro-gaps render in MicroGapCard.
     const instances = plan.todaysHabits
         .filter((i) => habitKindOf(life, i) === 'habit')
@@ -75,15 +76,18 @@ export function HabitInstanceCard() {
         const isCompleted = i.status === 'completed';
         const isSkipped = i.status === 'skipped';
         const isTerminal = isCompleted || isSkipped;
+        // v6.8: a strict, timed, past-window planned habit reads as "missed" — greyed, but still
+        // fully actionable (Complete/Skip/Start/Reschedule stay available below).
+        const isMissed = isHabitInstanceMissed(habit, i, now);
         const isRescheduling = reschedule.reschedulingId === i.id;
         const liveSegment = isEngaged ? openSegment(i.segments) : undefined;
-        const icon = isCompleted ? '🎉' : '🔁';
+        const icon = isCompleted ? '🎉' : isMissed ? '⏰' : '🔁';
         return (
             <li
                 key={i.id}
                 className={`px-1.5 py-1 rounded transition-colors ${
                     isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
-                    : isTerminal ? 'opacity-60'
+                    : isTerminal || isMissed ? 'opacity-60'
                     : ''
                 }`}
             >
@@ -117,6 +121,11 @@ export function HabitInstanceCard() {
                     {isSkipped && (
                         <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light/70 capitalize flex-shrink-0">
                             skipped
+                        </span>
+                    )}
+                    {isMissed && (
+                        <span className="text-[10px] px-1 py-px rounded-full bg-surface-dark text-text-light/70 flex-shrink-0">
+                            missed
                         </span>
                     )}
                 </div>

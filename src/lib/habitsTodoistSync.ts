@@ -201,7 +201,11 @@ function isLenientPastWindow(habit: Habit, targetTime: string | undefined, nowMi
  *  - is due today — OR (v6.8) is a timed, lenient ("surface anyway") habit whose target time has
  *    elapsed, which Todoist rolled to tomorrow but the user still wants surfaced today (skipped if
  *    already completed/skipped today, so an in-app check-off isn't resurrected)
- *  - (timed, due-today habits only) `windowBehavior !== 'strict'` OR the current time is still inside the target window
+ *
+ * v6.8: a due-today timed habit is **always** emitted regardless of `windowBehavior` — `strict` no
+ * longer drops it once past the window. Instead the row stays a `planned`, actionable instance and
+ * the surfaces present it as "missed" (greyed) via `isHabitInstanceMissed`, so the day's record is
+ * preserved and the habit remains completable even if done before planning.
  *
  * Re-emits every matching habit on each call (including ones already in `plan.todaysHabits`) so
  * habit-form edits propagate — the reducer's `REFRESH_TODAYS_HABITS` dedupes by `habitId` and
@@ -254,11 +258,10 @@ export function computeTodaysHabitInstances(args: {
                 (i) => i.habitId === habit.id && (i.status === 'completed' || i.status === 'skipped'),
             );
             if (!rescuable || settledToday) continue;
-        } else if (habit.windowBehavior === 'strict' && targetTime) {
-            // Due today, but strict + past the window end → hide for today.
-            const windowEnd = timeToMinutes(targetTime) + durationMinutes;
-            if (nowMinutes > windowEnd) continue;
         }
+        // v6.8: due-today habits are always emitted. A strict habit past its window is no longer
+        // hidden — it surfaces as a `planned` row that the UI greys out as "missed"
+        // (see `isHabitInstanceMissed`), keeping it on the record and still completable.
 
         out.push({
             id: crypto.randomUUID(),
@@ -286,8 +289,8 @@ export function computeTodaysHabitInstances(args: {
  *  - task **missing** from `taskMap` → left alone (cold cache or deleted-in-Todoist, which the
  *    reconcile pass recreates; not our concern).
  *  - stale ⇔ the task is `checked` OR its due date is no longer today. An unchecked task still
- *    due today (e.g. a strict habit past its window) is **not** stale — its instance absence is a
- *    windowing decision owned by `computeTodaysHabitInstances`, not a completion.
+ *    due today is **not** stale — including a strict habit past its window, which v6.8 keeps
+ *    surfaced as a (greyed) "missed" `planned` row rather than dropping it.
  *  - v6.8: a timed, lenient ("surface anyway") habit past its window is deliberately surfaced
  *    today against a *tomorrow*-dated task (see `isLenientPastWindow`). That instance is **not**
  *    stale — mirror the compute-side predicate so the read + prune paths agree, otherwise the row

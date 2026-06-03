@@ -7,7 +7,7 @@ import type {
     TaskCapDefaults,
     TodaysHabitInstance,
 } from '../types';
-import { timeToMinutes } from './time';
+import { minutesOfDay, timeToMinutes } from './time';
 
 export function getActiveHabits(life: LifeContext): Habit[] {
     return life.habits.filter((habit) => habit.active);
@@ -50,6 +50,50 @@ export function compareHabitInstancesByTime(a: TodaysHabitInstance, b: TodaysHab
     if (a.targetTime) return -1;
     if (b.targetTime) return 1;
     return 0;
+}
+
+/**
+ * v6.8: derived "missed" presentation for a timed 'habit'-kind instance.
+ *
+ * Replaces the old v6.1 "strict hides the row" behavior: a `windowBehavior: 'strict'` habit whose
+ * target window has elapsed is no longer dropped by `computeTodaysHabitInstances` — it stays
+ * surfaced as a `planned`, fully-actionable instance (you can still Start/Complete/Skip/Reschedule
+ * it), but every surface presents it as **missed** (greyed, no longer prompted as a live to-do).
+ * `'lenient'` habits never read as missed — they stay ordinary `planned` rows all day.
+ *
+ * This is purely derived from `now` (no persisted status, no migration), so a habit flips to
+ * "missed" live as the clock crosses its window end. "Missed" only applies to a *timed*,
+ * *strict* instance still in `planned` state — once the user engages/completes/skips it, the real
+ * status takes over.
+ */
+export function isHabitInstanceMissed(
+    habit: Habit | undefined,
+    instance: TodaysHabitInstance,
+    now: Date,
+): boolean {
+    if (!habit || habit.kind !== 'habit') return false;
+    if (habit.windowBehavior !== 'strict') return false; // default 'lenient' never reads as missed
+    if (instance.status !== 'planned') return false;
+    if (!instance.targetTime) return false;              // untimed ("anytime") has no window
+    const windowEnd = timeToMinutes(instance.targetTime) + instance.durationMinutes;
+    return minutesOfDay(now) > windowEnd;
+}
+
+/**
+ * v6.8: ids of today's instances currently presenting as "missed" (see {@link isHabitInstanceMissed}).
+ * Used by surfaces that only hold instances, not the parent habits (e.g. `SessionTimelineBar`).
+ */
+export function getMissedInstanceIds(
+    life: LifeContext,
+    instances: TodaysHabitInstance[],
+    now: Date,
+): Set<string> {
+    const byId = new Map(life.habits.map((h) => [h.id, h]));
+    const out = new Set<string>();
+    for (const i of instances) {
+        if (isHabitInstanceMissed(byId.get(i.habitId), i, now)) out.add(i.id);
+    }
+    return out;
 }
 
 /**

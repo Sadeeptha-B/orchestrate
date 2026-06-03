@@ -243,7 +243,7 @@ export interface Habit {
     todoistProjectId?: string;           // v6.1: explicit Todoist project for this habit's task; falls back to AppSettings.habitsTodoistProjectId
     targetTime?: string;                 // "HH:mm" target time-of-day. v6.7: optional for 'habit' (timed → timeline; absent → anytime); always absent for 'micro-gap'.
     targetDurationMinutes?: number;      // v6.1: minutes; pushed to Todoist `duration` and used as the LinkedTask estimate
-    windowBehavior?: HabitWindowBehavior;// v6.1: 'strict' hides the habit-task if past targetTime + duration; 'lenient' surfaces while still due in Todoist (default 'lenient')
+    windowBehavior?: HabitWindowBehavior;// v6.1/v6.8: timed-habit window policy. 'strict' = still surfaced + completable past targetTime+duration but presented as "missed" (greyed); 'lenient' = stays an active to-do. v6.8: no longer hides the row. Default 'lenient'.
     /** @deprecated v6.1: replaced by `todoistTaskId`. Retained for migration only. */
     autoLinkTodoistId?: string;
     /** @deprecated v6.1: replaced by `targetDurationMinutes`. Retained for migration only. */
