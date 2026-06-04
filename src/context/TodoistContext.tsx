@@ -159,7 +159,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const [authFailed, setAuthFailed] = useState(false);
 
     const tokenRef = useRef<string | null>(null);
-    const hasDataRef = useRef((cache.current?.tasks.length ?? 0) > 0);
+    const hasDataRef = useRef((cache.current?.tasks?.length ?? 0) > 0);
     // v6.4: `completeTask` needs to inspect the task's `due.is_recurring` to decide whether
     // to filter the cache or refetch. A ref avoids stale-closure and avoids dragging `tasks`
     // into `completeTask`'s deps (which would churn the actionsValue useMemo on every task

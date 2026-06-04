@@ -234,9 +234,12 @@ function packLaneMarkers(markers: LaneMarker[], dayStart: number, totalMinutes: 
     return { placed, rowCount: rowsLastLeft.length };
 }
 
-/** Format minutes since midnight to a short label like "6am", "2:30pm". */
+export const DEFAULT_TIMELINE_START_MINUTES = 4 * 60 + 30; // 4:30 am
+export const DEFAULT_TIMELINE_END_MINUTES = 24 * 60;        // midnight (end of day)
+
+/** Format minutes since midnight to a short label like "6am", "2:30pm". Handles 1440 (midnight) as "12am". */
 function formatHour(minutes: number): string {
-    const h = Math.floor(minutes / 60);
+    const h = Math.floor(minutes / 60) % 24;
     const m = minutes % 60;
     const suffix = h >= 12 ? 'pm' : 'am';
     const display = h > 12 ? h - 12 : h === 0 ? 12 : h;
@@ -266,6 +269,10 @@ interface SessionTimelineBarProps {
     /** v6.8: ids of instances presenting as "missed" (strict + past window). Their scheduled
      * lane markers render greyed. Computed by the caller (which holds the parent habits). */
     missedInstanceIds?: Set<string>;
+    /** Minutes since midnight for the left edge of the timeline. Defaults to DEFAULT_TIMELINE_START_MINUTES. */
+    timelineStartMinutes?: number;
+    /** Minutes since midnight for the right edge of the timeline. Defaults to DEFAULT_TIMELINE_END_MINUTES. */
+    timelineEndMinutes?: number;
 }
 
 export function SessionTimelineBar({
@@ -279,6 +286,8 @@ export function SessionTimelineBar({
     capacities,
     todaysHabits,
     missedInstanceIds,
+    timelineStartMinutes,
+    timelineEndMinutes,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -289,18 +298,15 @@ export function SessionTimelineBar({
         [linkedTasks],
     );
 
-    // Timeline bounds
+    // Timeline bounds — caller-configured or default (4:30 am – midnight).
     const { dayStart, dayEnd, hourMarks } = useMemo(() => {
-        if (sessions.length === 0) return { dayStart: 0, dayEnd: 1, hourMarks: [] };
-        const start = Math.min(...sessions.map((s) => timeToMinutes(s.startTime)));
-        const end = Math.max(...sessions.map((s) => timeToMinutes(s.endTime)));
+        const start = timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES;
+        const end = timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
         const marks: number[] = [];
-        const firstHour = Math.floor(start / 60) * 60;
-        for (let m = firstHour; m <= end; m += 60) {
-            if (m >= start) marks.push(m);
-        }
+        const firstHour = Math.ceil(start / 60) * 60;
+        for (let m = firstHour; m <= end; m += 60) marks.push(m);
         return { dayStart: start, dayEnd: end, hourMarks: marks };
-    }, [sessions]);
+    }, [timelineStartMinutes, timelineEndMinutes]);
 
     const totalMinutes = dayEnd - dayStart;
 
