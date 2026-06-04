@@ -166,6 +166,8 @@ export interface AppSettings {
     taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
     sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)
     habitsTodoistProjectId?: string;    // v6.1: Todoist project all habit-tasks live under; lazily created on first habit save
+    timelineStartMinutes?: number;      // minutes since midnight; default 270 (4:30 am)
+    timelineEndMinutes?: number;        // minutes since midnight; default 1440 (midnight)
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────

@@ -492,6 +492,8 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
             onSelectSession={onSelectSession}
             todaysHabits={timelineHabits}
             missedInstanceIds={missedInstanceIds}
+            timelineStartMinutes={settings.timelineStartMinutes}
+            timelineEndMinutes={settings.timelineEndMinutes}
         />
     );
 }

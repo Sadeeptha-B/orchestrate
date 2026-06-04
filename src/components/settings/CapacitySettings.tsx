@@ -1,15 +1,29 @@
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { inputClass, labelClass } from '../ui/formStyles';
 import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../../lib/capacity';
+import { DEFAULT_TIMELINE_START_MINUTES, DEFAULT_TIMELINE_END_MINUTES } from '../ui/SessionTimelineBar';
 
-/**
- * v6: Session buffer + per-kind task-cap defaults. All advisory — values control
- * the soft caps in Step 2 and the capacity arithmetic surfaced on the timeline.
- */
+/** minutes (e.g. 270, or 1440 for midnight) → "HH:MM" for <input type="time"> */
+function minutesToTimeInput(minutes: number): string {
+    const m = minutes % (24 * 60); // 1440 → 0 (midnight shows as "00:00")
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** "HH:MM" → minutes; end-time "00:00" is treated as midnight (1440). */
+function timeInputToMinutes(value: string, isEnd: boolean): number {
+    const [h, m] = value.split(':').map(Number);
+    const total = h * 60 + m;
+    return isEnd && total === 0 ? 24 * 60 : total;
+}
+
 export function CapacitySettings() {
     const { settings, dispatch } = useDayPlan();
     const caps = settings.taskCapDefaults ?? DEFAULT_TASK_CAPS;
     const buffer = settings.sessionBufferMinutes ?? DEFAULT_SESSION_BUFFER_MINUTES;
+    const tlStart = settings.timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES;
+    const tlEnd = settings.timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
 
     const updateBuffer = (raw: string) => {
         const n = Math.max(0, Math.round(Number(raw) || 0));
@@ -19,6 +33,14 @@ export function CapacitySettings() {
     const updateCap = (key: 'habit' | 'microGap' | 'manualBackground', raw: string) => {
         const n = Math.max(1, Math.round(Number(raw) || 1));
         dispatch({ type: 'UPDATE_SETTINGS', settings: { taskCapDefaults: { ...caps, [key]: n } } });
+    };
+
+    const updateTimelineStart = (value: string) => {
+        dispatch({ type: 'UPDATE_SETTINGS', settings: { timelineStartMinutes: timeInputToMinutes(value, false) } });
+    };
+
+    const updateTimelineEnd = (value: string) => {
+        dispatch({ type: 'UPDATE_SETTINGS', settings: { timelineEndMinutes: timeInputToMinutes(value, true) } });
     };
 
     return (
@@ -35,6 +57,33 @@ export function CapacitySettings() {
                 <p className="text-[11px] text-text-light mt-1">
                     Subtracted from each session's wall-clock length when computing capacity.
                     Acts as a buffer for transitions, slip, and breaks.
+                </p>
+            </div>
+
+            <div>
+                <label className={labelClass}>Timeline hours</label>
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <span className="text-[11px] text-text-light block mb-1">Start</span>
+                        <input
+                            type="time"
+                            className={inputClass}
+                            value={minutesToTimeInput(tlStart)}
+                            onChange={(e) => updateTimelineStart(e.target.value)}
+                        />
+                    </div>
+                    <div>
+                        <span className="text-[11px] text-text-light block mb-1">End</span>
+                        <input
+                            type="time"
+                            className={inputClass}
+                            value={minutesToTimeInput(tlEnd)}
+                            onChange={(e) => updateTimelineEnd(e.target.value)}
+                        />
+                    </div>
+                </div>
+                <p className="text-[11px] text-text-light mt-1">
+                    Left and right edges of the day timeline. Set end to 12:00 AM (00:00) for midnight.
                 </p>
             </div>
 

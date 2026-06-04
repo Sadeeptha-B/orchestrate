@@ -186,6 +186,8 @@ export function Step3Schedule() {
                         capacities={capacities}
                         todaysHabits={timelineHabits}
                         missedInstanceIds={missedInstanceIds}
+                        timelineStartMinutes={settings.timelineStartMinutes}
+                        timelineEndMinutes={settings.timelineEndMinutes}
                     />
 
                     {/* v6.3: Habit instances panel — reschedule is available from planning. */}
