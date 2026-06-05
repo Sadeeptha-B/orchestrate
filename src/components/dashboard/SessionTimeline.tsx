@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '../ui/Card';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { SessionCapacityBadge } from './SessionCapacityBadge';
@@ -92,6 +93,7 @@ interface TaskRowProps {
 
 function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
     const { dispatch } = useDayPlan();
+    const navigate = useNavigate();
     const { completeTask, reopenTask } = useTodoistActions();
     const isDragging = drag.dragId === linkedTask.todoistId;
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
@@ -114,6 +116,10 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
             todoistId: linkedTask.todoistId,
             now: nowISO,
         });
+        // v7: starting engagement on a task drops into Focus Mode (one task, timer, optional pomodoro).
+        if (!isEngaged) {
+            navigate('/focus', { state: { todoistId: linkedTask.todoistId } });
+        }
     };
 
     return (
