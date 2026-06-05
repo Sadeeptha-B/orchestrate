@@ -116,6 +116,65 @@ function pruneTree(nodes: ProjectNode[], taskIds: Set<string>): ProjectNode[] {
     return result;
 }
 
+// --- Sibling reorder (drag-and-drop) ---
+
+interface RowDragProps {
+    draggable: boolean;
+    onDragStart: (e: React.DragEvent) => void;
+    onDragOver: (e: React.DragEvent) => void;
+    onDrop: (e: React.DragEvent) => void;
+    onDragEnd: () => void;
+}
+
+interface RowReorderState {
+    isDragging: boolean;
+    isDragOver: boolean;
+    dragHandleProps?: RowDragProps;
+}
+
+/**
+ * Drag-reorder state for one sibling group (tasks sharing a parent + section). `orderedIds`
+ * is the current visible order; `onCommit` receives the new order on drop. `rowPropsFor`
+ * yields the per-row drag handlers + styling flags — pass `enabled: false` to opt a row out
+ * (e.g. a singleton list, or while inline-editing).
+ */
+function useRowReorder(orderedIds: string[], onCommit: (ids: string[]) => void) {
+    const [dragId, setDragId] = useState<string | null>(null);
+    const [overId, setOverId] = useState<string | null>(null);
+    const reset = useCallback(() => { setDragId(null); setOverId(null); }, []);
+
+    const handleDrop = useCallback((targetId: string) => {
+        setDragId((dId) => {
+            if (dId && dId !== targetId) {
+                const ids = [...orderedIds];
+                const from = ids.indexOf(dId);
+                const to = ids.indexOf(targetId);
+                if (from !== -1 && to !== -1) {
+                    ids.splice(from, 1);
+                    ids.splice(to, 0, dId);
+                    onCommit(ids);
+                }
+            }
+            return null;
+        });
+        setOverId(null);
+    }, [orderedIds, onCommit]);
+
+    const rowPropsFor = useCallback((id: string, enabled: boolean): RowReorderState => ({
+        isDragging: dragId === id,
+        isDragOver: overId === id && dragId !== id,
+        dragHandleProps: enabled ? {
+            draggable: true,
+            onDragStart: (e) => { e.stopPropagation(); setDragId(id); e.dataTransfer.effectAllowed = 'move'; },
+            onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); setOverId(id === dragId ? null : id); },
+            onDrop: (e) => { e.preventDefault(); e.stopPropagation(); handleDrop(id); },
+            onDragEnd: reset,
+        } : undefined,
+    }), [dragId, overId, handleDrop, reset]);
+
+    return rowPropsFor;
+}
+
 export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds, showFilterToggle, defaultFiltered = false }: TodoistPanelProps) {
     const {
         tasks,
@@ -130,6 +189,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
         updateTask,
         completeTask,
         deleteTask,
+        reorderTasks,
         createProject,
         deleteProject,
         refreshTasks,
@@ -275,6 +335,24 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
         [deleteTask, tasks, plan.linkedTasks, dispatch],
     );
 
+    // Reorder a sibling group: permute the group's *existing* child_order values among the
+    // new id order. Reusing the existing values keeps the change local to the group and can't
+    // collide with sibling groups (sections / other parents) that we don't touch.
+    const childOrderById = useMemo(
+        () => new Map(tasks.map((t) => [t.id, t.child_order])),
+        [tasks],
+    );
+    const handleReorderSiblings = useCallback(
+        (orderedIds: string[]) => {
+            const orders = orderedIds
+                .map((id) => childOrderById.get(id) ?? 0)
+                .sort((a, b) => a - b);
+            const items = orderedIds.map((id, idx) => ({ id, child_order: orders[idx] }));
+            void reorderTasks(items);
+        },
+        [childOrderById, reorderTasks],
+    );
+
     if (!isConfigured) {
         return (
             <div className="flex flex-col items-center justify-center h-full py-8 text-center">
@@ -406,6 +484,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
                         onSchedule={handleSchedule}
                         onClearSchedule={handleClearSchedule}
                         onEditContent={(taskId, content) => updateTask(taskId, { content })}
+                        onReorderSiblings={handleReorderSiblings}
                         subTaskMap={subTaskMap}
                         compact={mode === 'compact'}
                         linking={linking}
@@ -487,6 +566,7 @@ function ProjectTreeNode({
     onSchedule,
     onClearSchedule,
     onEditContent,
+    onReorderSiblings,
     subTaskMap,
     compact,
     linking,
@@ -503,6 +583,7 @@ function ProjectTreeNode({
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
     onEditContent: (taskId: string, content: string) => void;
+    onReorderSiblings: (orderedIds: string[]) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
     linking?: LinkingProps;
@@ -520,6 +601,10 @@ function ProjectTreeNode({
 
     // Group tasks by section
     const unsectionedTasks = node.tasks.filter((t) => !t.section_id);
+    const unsectionedReorder = useRowReorder(
+        unsectionedTasks.map((t) => t.id),
+        onReorderSiblings,
+    );
     const tasksBySection = new Map<string, TodoistTask[]>();
     for (const t of node.tasks) {
         if (t.section_id) {
@@ -662,6 +747,8 @@ function ProjectTreeNode({
                             onSchedule={onSchedule}
                             onClearSchedule={onClearSchedule}
                             onEditContent={onEditContent}
+                            onReorderSiblings={onReorderSiblings}
+                            reorder={unsectionedReorder(task.id, unsectionedTasks.length > 1)}
                             subTaskMap={subTaskMap}
                             compact={compact}
                             linking={linking}
@@ -687,6 +774,7 @@ function ProjectTreeNode({
                                 onSchedule={onSchedule}
                                 onClearSchedule={onClearSchedule}
                                 onEditContent={onEditContent}
+                                onReorderSiblings={onReorderSiblings}
                                 subTaskMap={subTaskMap}
                                 compact={compact}
                                 persistentLinks={persistentLinks}
@@ -709,6 +797,7 @@ function ProjectTreeNode({
                             onSchedule={onSchedule}
                             onClearSchedule={onClearSchedule}
                             onEditContent={onEditContent}
+                            onReorderSiblings={onReorderSiblings}
                             subTaskMap={subTaskMap}
                             compact={compact}
                             linking={linking}
@@ -734,6 +823,7 @@ function SectionGroup({
     onSchedule,
     onClearSchedule,
     onEditContent,
+    onReorderSiblings,
     subTaskMap,
     compact,
     linking,
@@ -749,6 +839,7 @@ function SectionGroup({
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
     onEditContent: (taskId: string, content: string) => void;
+    onReorderSiblings: (orderedIds: string[]) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
     linking?: LinkingProps;
@@ -757,6 +848,7 @@ function SectionGroup({
     habitTodoistIds: Set<string>;
 }) {
     const [collapsed, setCollapsed] = useState(false);
+    const reorder = useRowReorder(tasks.map((t) => t.id), onReorderSiblings);
 
     return (
         <div>
@@ -789,6 +881,8 @@ function SectionGroup({
                         onSchedule={onSchedule}
                         onClearSchedule={onClearSchedule}
                         onEditContent={onEditContent}
+                        onReorderSiblings={onReorderSiblings}
+                        reorder={reorder(task.id, tasks.length > 1)}
                         subTaskMap={subTaskMap}
                         compact={compact}
                         linking={linking}
@@ -811,6 +905,8 @@ function TaskRow({
     onSchedule,
     onClearSchedule,
     onEditContent,
+    onReorderSiblings,
+    reorder,
     subTaskMap,
     compact,
     linking,
@@ -825,6 +921,9 @@ function TaskRow({
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
     onEditContent: (taskId: string, content: string) => void;
+    onReorderSiblings: (orderedIds: string[]) => void;
+    /** Drag state + handlers for this row within its sibling group. */
+    reorder?: RowReorderState;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
     linking?: LinkingProps;
@@ -833,6 +932,7 @@ function TaskRow({
     habitTodoistIds: Set<string>;
 }) {
     const children = subTaskMap.get(task.id);
+    const childReorder = useRowReorder((children ?? []).map((c) => c.id), onReorderSiblings);
     const [childrenCollapsed, setChildrenCollapsed] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [pickerStart, setPickerStart] = useState('');
@@ -915,12 +1015,34 @@ function TaskRow({
     // Persistent link label (when not in linking mode, or linked to current intention in linking mode)
     const persistentLinkTitle = !linking ? persistentLinks.get(task.id) : null;
 
+    // Drag-reorder: the whole row is the drag surface (a grip is shown for affordance).
+    // Disabled while inline-editing so text selection in the input still works.
+    const rowDrag = isEditing ? undefined : reorder?.dragHandleProps;
+
     return (
         <div>
             <div
-                className={`flex items-start gap-2 py-1 px-2 group ${(isLinkedToCurrentIntention || persistentLinkTitle) ? 'bg-accent/5 border-l-2 border-accent' : ''}`}
+                {...rowDrag}
+                className={`flex items-start gap-2 py-1 px-2 group ${(isLinkedToCurrentIntention || persistentLinkTitle) ? 'bg-accent/5 border-l-2 border-accent' : ''} ${reorder?.isDragging ? 'opacity-40' : ''} ${reorder?.isDragOver ? 'border-t-2 border-accent' : ''}`}
                 style={{ paddingLeft: `${8 + depth * 16}px` }}
             >
+                {/* Drag handle (affordance only — the whole row is draggable) */}
+                {rowDrag && (
+                    <span
+                        className="cursor-grab active:cursor-grabbing text-text-light/40 hover:text-text-light opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1 select-none"
+                        title="Drag to reorder"
+                        aria-hidden
+                    >
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
+                            <circle cx="3.5" cy="2" r="1.2" />
+                            <circle cx="8.5" cy="2" r="1.2" />
+                            <circle cx="3.5" cy="6" r="1.2" />
+                            <circle cx="8.5" cy="6" r="1.2" />
+                            <circle cx="3.5" cy="10" r="1.2" />
+                            <circle cx="8.5" cy="10" r="1.2" />
+                        </svg>
+                    </span>
+                )}
                 {/* Sub-task toggle */}
                 {children && children.length > 0 ? (
                     <button
@@ -1120,6 +1242,8 @@ function TaskRow({
                         onSchedule={onSchedule}
                         onClearSchedule={onClearSchedule}
                         onEditContent={onEditContent}
+                        onReorderSiblings={onReorderSiblings}
+                        reorder={childReorder(child.id, children.length > 1)}
                         subTaskMap={subTaskMap}
                         compact={compact}
                         linking={linking}

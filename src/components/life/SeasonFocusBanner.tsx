@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useCompleteHabitInstance } from '../../hooks/useCompleteHabitInstance';
 import { findActiveSeason } from '../../lib/seasons';
 import { recurrenceMatchesDate } from '../../lib/habits';
 import type { TodaysHabitInstance } from '../../types';
@@ -17,6 +18,7 @@ interface SeasonFocusBannerProps {
 export function SeasonFocusBanner({ todaysHabits = [] }: SeasonFocusBannerProps) {
     const { plan, life, dispatch } = useDayPlan();
     const navigate = useNavigate();
+    const completeHabit = useCompleteHabitInstance();
     const season = findActiveSeason(life);
     const [emptyDismissed, setEmptyDismissed] = useState(false);
 
@@ -44,17 +46,33 @@ export function SeasonFocusBanner({ todaysHabits = [] }: SeasonFocusBannerProps)
                 </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-                {sortedHabits.map((h) => (
-                    <span
-                        key={h.id}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-card border border-border text-text-light text-[11px]"
-                    >
-                        <span className="truncate max-w-[10rem]">{h.titleSnapshot}</span>
-                        {h.targetTime && (
-                            <span className="text-accent tabular-nums">{h.targetTime}</span>
-                        )}
-                    </span>
-                ))}
+                {sortedHabits.map((h) => {
+                    const isCompleted = h.status === 'completed';
+                    return (
+                        <span
+                            key={h.id}
+                            className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full border text-[11px] ${isCompleted ? 'bg-success/10 border-success/30 text-text-light' : 'bg-card border-border text-text-light'}`}
+                        >
+                            <span className={`truncate max-w-[10rem] ${isCompleted ? 'line-through' : ''}`}>
+                                {isCompleted && '🎉 '}{h.titleSnapshot}
+                            </span>
+                            {h.targetTime && (
+                                <span className="text-accent tabular-nums">{h.targetTime}</span>
+                            )}
+                            {!isCompleted && (
+                                <button
+                                    type="button"
+                                    onClick={() => completeHabit(h)}
+                                    className="w-4 h-4 flex items-center justify-center rounded-full text-text-light hover:bg-success/15 hover:text-success transition-colors cursor-pointer flex-shrink-0"
+                                    title="Mark done for today"
+                                    aria-label={`Mark ${h.titleSnapshot} done`}
+                                >
+                                    ✓
+                                </button>
+                            )}
+                        </span>
+                    );
+                })}
             </div>
         </div>
     );

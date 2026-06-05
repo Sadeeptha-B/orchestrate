@@ -32,7 +32,13 @@ export function Step1Intentions() {
     );
     const [collapsedIntentions, setCollapsedIntentions] = useState<Set<string>>(() => new Set());
     const [currentTasksCollapsed, setCurrentTasksCollapsed] = useState(false);
+    // When collapsed, the focused "Current" card folds away and all not-yet-mapped intentions
+    // (current included) drop into one reorderable list, so the user can resequence them.
+    const [currentCardCollapsed, setCurrentCardCollapsed] = useState(false);
     const [selectedIntentionId, setSelectedIntentionId] = useState<string | null>(null);
+    // Drag-reorder state for the current intention's linked task list.
+    const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+    const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
 
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const confirmDeleteCurrent = useConfirmModal<Intention>();
@@ -108,6 +114,33 @@ export function Step1Intentions() {
         [plan.todaysHabits, life],
     );
 
+    // Commit a drag-reorder of the current intention's linked tasks onto the dropped target.
+    const reorderCurrentLinked = useCallback(
+        (intentionId: string, orderedIds: string[], dragId: string, targetId: string) => {
+            if (dragId === targetId) return;
+            const next = [...orderedIds];
+            const from = next.indexOf(dragId);
+            const to = next.indexOf(targetId);
+            if (from === -1 || to === -1) return;
+            next.splice(from, 1);
+            next.splice(to, 0, dragId);
+            dispatch({ type: 'REORDER_INTENTION_TASKS', intentionId, todoistIds: next });
+        },
+        [dispatch],
+    );
+
+    // Reorder a subset of intentions (e.g. the not-yet-mapped ones) while leaving the rest
+    // pinned in place. Reused by the upcoming list and the collapsed full list.
+    const reorderIntentionSubset = useCallback(
+        (reorderedIds: string[]) => {
+            const subset = new Set(reorderedIds);
+            let idx = 0;
+            const full = plan.intentions.map((i) => (subset.has(i.id) ? reorderedIds[idx++] : i.id));
+            dispatch({ type: 'REORDER_INTENTIONS', intentionIds: full });
+        },
+        [plan.intentions, dispatch],
+    );
+
     const addIntention = () => {
         const title = input.trim();
         if (!title) return;
@@ -129,8 +162,10 @@ export function Step1Intentions() {
         : null;
     const brokenDownCount = plan.intentions.filter((i) => i.brokenDown).length;
     const allBrokenDown = plan.intentions.length > 0 && plan.intentions.every((i) => i.brokenDown);
+    // Every intention still awaiting mapping (the current one included).
+    const mappableIntentions = plan.intentions.filter((i) => !i.brokenDown);
     const upcomingIntentions = currentMappingIntention
-        ? plan.intentions.filter((i) => !i.brokenDown && i.id !== currentMappingIntention.id)
+        ? mappableIntentions.filter((i) => i.id !== currentMappingIntention.id)
         : [];
     const upcomingCount = upcomingIntentions.length;
 
@@ -265,6 +300,7 @@ export function Step1Intentions() {
                                     onClick={() => {
                                         restartMapping();
                                         setMappingStarted(false);
+                                        setCurrentCardCollapsed(false);
                                     }}
                                     className="text-xs text-text-light hover:text-accent transition-colors cursor-pointer"
                                 >
@@ -392,10 +428,22 @@ export function Step1Intentions() {
                             )}
 
                             {/* Current intention to map */}
-                            {currentMappingIntention && (
+                            {currentMappingIntention && !currentCardCollapsed && (
                                 <div className="bg-card rounded-lg border-2 border-accent/30 p-5 space-y-3">
                                     <div>
                                         <div className="flex items-center gap-2">
+                                            {mappableIntentions.length > 1 && (
+                                                <button
+                                                    onClick={() => setCurrentCardCollapsed(true)}
+                                                    className="px-1 py-0.5 rounded text-text-light hover:bg-surface-dark hover:text-accent transition-colors cursor-pointer flex-shrink-0"
+                                                    title="Collapse to reorder intentions"
+                                                    aria-label="Collapse current intention to reorder"
+                                                >
+                                                    <svg className="w-3.5 h-3.5 rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                                    </svg>
+                                                </button>
+                                            )}
                                             <span className="text-xs font-medium text-accent uppercase tracking-wider flex-1">
                                                 Current
                                             </span>
@@ -434,63 +482,111 @@ export function Step1Intentions() {
                                             </h3>
                                         )}
                                         <p className="text-sm text-text-light mt-1">
-                                            Break this down into actionable tasks and link them to intentions in the todolist →
+                                            Break this down into actionable tasks and link them in the todolist →
+                                        </p>
+                                        <p className="text-xs text-text-light/80 mt-1">
+                                            Keep each intention to a <strong>single goal</strong> — not an epic. If it
+                                            spans several goals, split it into separate intentions.
                                         </p>
                                     </div>
 
-                                    {/* Linked tasks for current intention — collapsible */}
+                                    {/* Linked tasks for current intention — collapsible + drag-reorderable */}
                                     {currentMappingIntention.linkedTaskIds.length > 0 && (() => {
-                                        const currentLinked = plan.linkedTasks.filter(
-                                            (lt) => lt.intentionId === currentMappingIntention.id,
+                                        const byId = new Map(
+                                            plan.linkedTasks
+                                                .filter((lt) => lt.intentionId === currentMappingIntention.id)
+                                                .map((lt) => [lt.todoistId, lt]),
                                         );
+                                        // Render in the intention's own linkedTaskIds order (the reorderable order).
+                                        const orderedIds = currentMappingIntention.linkedTaskIds.filter((id) => byId.has(id));
+                                        const currentLinked = orderedIds.map((id) => byId.get(id)!);
                                         const completedCount = currentLinked.filter((lt) => lt.completed).length;
+                                        const overScope = currentLinked.length > 5;
 
                                         return (
-                                            <div className="rounded-lg border border-border overflow-hidden">
-                                                <button
-                                                    onClick={() => setCurrentTasksCollapsed(!currentTasksCollapsed)}
-                                                    className="flex items-center gap-2 w-full px-3 py-2 text-left cursor-pointer hover:bg-surface-dark/30 transition-colors"
-                                                >
-                                                    <svg
-                                                        className={`w-3 h-3 text-text-light transition-transform ${currentTasksCollapsed ? '' : 'rotate-90'}`}
-                                                        fill="none"
-                                                        viewBox="0 0 24 24"
-                                                        stroke="currentColor"
-                                                        strokeWidth={2}
+                                            <div className="space-y-2">
+                                                <div className="rounded-lg border border-border overflow-hidden">
+                                                    <button
+                                                        onClick={() => setCurrentTasksCollapsed(!currentTasksCollapsed)}
+                                                        className="flex items-center gap-2 w-full px-3 py-2 text-left cursor-pointer hover:bg-surface-dark/30 transition-colors"
                                                     >
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                                    </svg>
-                                                    <span className="text-xs text-accent font-medium">
-                                                        {currentLinked.length} task{currentLinked.length !== 1 ? 's' : ''} linked
-                                                    </span>
-                                                    {completedCount > 0 && (
-                                                        <span className="text-xs text-success">
-                                                            (🎉 {completedCount} completed)
+                                                        <svg
+                                                            className={`w-3 h-3 text-text-light transition-transform ${currentTasksCollapsed ? '' : 'rotate-90'}`}
+                                                            fill="none"
+                                                            viewBox="0 0 24 24"
+                                                            stroke="currentColor"
+                                                            strokeWidth={2}
+                                                        >
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                                        </svg>
+                                                        <span className="text-xs text-accent font-medium">
+                                                            {currentLinked.length} task{currentLinked.length !== 1 ? 's' : ''} linked
                                                         </span>
+                                                        {completedCount > 0 && (
+                                                            <span className="text-xs text-success">
+                                                                (🎉 {completedCount} completed)
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                    {!currentTasksCollapsed && (
+                                                        <div className="border-t border-border/50 px-3 py-2 space-y-1">
+                                                            {currentLinked.map((lt) => {
+                                                                const title = titleFor(lt.todoistId, plan.linkedTasks);
+                                                                const isDragging = dragTaskId === lt.todoistId;
+                                                                const isDragOver = dragOverTaskId === lt.todoistId && dragTaskId !== lt.todoistId;
+                                                                return (
+                                                                    <div
+                                                                        key={lt.todoistId}
+                                                                        draggable={!lt.completed}
+                                                                        onDragStart={() => setDragTaskId(lt.todoistId)}
+                                                                        onDragOver={(e) => { e.preventDefault(); if (lt.todoistId !== dragTaskId) setDragOverTaskId(lt.todoistId); }}
+                                                                        onDrop={(e) => {
+                                                                            e.preventDefault();
+                                                                            if (dragTaskId) reorderCurrentLinked(currentMappingIntention.id, orderedIds, dragTaskId, lt.todoistId);
+                                                                            setDragTaskId(null);
+                                                                            setDragOverTaskId(null);
+                                                                        }}
+                                                                        onDragEnd={() => { setDragTaskId(null); setDragOverTaskId(null); }}
+                                                                        className={`flex items-center gap-2 py-0.5 text-xs rounded transition-colors ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-accent' : ''}`}
+                                                                    >
+                                                                        {!lt.completed && (
+                                                                            <span
+                                                                                className="cursor-grab active:cursor-grabbing text-text-light/40 hover:text-text-light flex-shrink-0 select-none"
+                                                                                title="Drag to reorder"
+                                                                                aria-hidden
+                                                                            >
+                                                                                <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
+                                                                                    <circle cx="3.5" cy="2" r="1.2" />
+                                                                                    <circle cx="8.5" cy="2" r="1.2" />
+                                                                                    <circle cx="3.5" cy="6" r="1.2" />
+                                                                                    <circle cx="8.5" cy="6" r="1.2" />
+                                                                                    <circle cx="3.5" cy="10" r="1.2" />
+                                                                                    <circle cx="8.5" cy="10" r="1.2" />
+                                                                                </svg>
+                                                                            </span>
+                                                                        )}
+                                                                        {lt.completed ? (
+                                                                            <span className="line-through text-text-light flex-1 min-w-0 truncate">
+                                                                                🎉 {title}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="text-text flex-1 min-w-0 truncate">
+                                                                                {title}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     )}
-                                                </button>
-                                                {!currentTasksCollapsed && (
-                                                    <div className="border-t border-border/50 px-3 py-2 space-y-1">
-                                                        {currentLinked.map((lt) => {
-                                                            const title = titleFor(lt.todoistId, plan.linkedTasks);
-                                                            return (
-                                                                <div
-                                                                    key={lt.todoistId}
-                                                                    className="flex items-center gap-2 py-0.5 text-xs"
-                                                                >
-                                                                    <span className="w-1 h-1 rounded-full bg-border flex-shrink-0" />
-                                                                    {lt.completed ? (
-                                                                        <span className="line-through text-text-light flex-1 min-w-0 truncate">
-                                                                            🎉 {title}
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span className="text-text flex-1 min-w-0 truncate">
-                                                                            {title}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            );
-                                                        })}
+                                                </div>
+
+                                                {/* Scope-creep nudge: an intention with many tasks is probably an epic. */}
+                                                {overScope && (
+                                                    <div className="rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                                                        This intention has {currentLinked.length} tasks linked. That&apos;s a lot for a
+                                                        single goal — consider splitting it into a separate intention so scope doesn&apos;t
+                                                        creep. Add one above and move some tasks to it.
                                                     </div>
                                                 )}
                                             </div>
@@ -505,19 +601,38 @@ export function Step1Intentions() {
                                 </div>
                             )}
 
-                            {/* Upcoming intentions */}
-                            {upcomingCount > 0 && (
+                            {/* Collapsed: reorder ALL not-yet-mapped intentions (current included) in one list */}
+                            {currentCardCollapsed && mappableIntentions.length > 0 && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-medium text-text-light uppercase tracking-wider">
+                                            Reorder intentions
+                                        </span>
+                                        <button
+                                            onClick={() => setCurrentCardCollapsed(false)}
+                                            className="text-xs text-accent hover:underline cursor-pointer"
+                                        >
+                                            Done reordering →
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-text-light/80">
+                                        Drag to reorder. Click <strong>Map →</strong> on an intention to focus it and
+                                        keep breaking it down.
+                                    </p>
+                                    <EditableTaskList
+                                        tasks={mappableIntentions}
+                                        onReorder={reorderIntentionSubset}
+                                        onSelect={(id) => { setSelectedIntentionId(id); setCurrentCardCollapsed(false); }}
+                                    />
+                                </div>
+                            )}
+
+                            {/* Upcoming intentions (focused mapping mode) */}
+                            {!currentCardCollapsed && upcomingCount > 0 && (
                                 <div>
                                     <EditableTaskList
                                         tasks={upcomingIntentions}
-                                        onReorder={(reorderedUpcomingIds) => {
-                                            const upcomingSet = new Set(reorderedUpcomingIds);
-                                            let upcomingIdx = 0;
-                                            const fullReordered = plan.intentions.map((i) =>
-                                                upcomingSet.has(i.id) ? reorderedUpcomingIds[upcomingIdx++] : i.id,
-                                            );
-                                            dispatch({ type: 'REORDER_INTENTIONS', intentionIds: fullReordered });
-                                        }}
+                                        onReorder={reorderIntentionSubset}
                                         onSelect={(id) => setSelectedIntentionId(id)}
                                     />
                                 </div>
