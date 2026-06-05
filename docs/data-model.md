@@ -196,6 +196,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | Action | Payload | Effect |
 |---|---|---|
 | `LINK_TASK` | `intentionId, todoistId` | Creates a new LinkedTask (or moves existing to a different intention). Updates `linkedTasks` and `intentions[].linkedTaskIds`. |
+| `REORDER_INTENTION_TASKS` | `intentionId, todoistIds` | Reorders one intention's `linkedTaskIds` to the given sequence (ids not currently linked are ignored; any omitted linked ids are appended in prior order). Step 1 surfaces this list in `linkedTaskIds` order. |
 | `UNLINK_TASK` | `todoistId` | Removes the LinkedTask, cleans up `linkedTaskIds` and `taskSessions` |
 | `CATEGORIZE_TASK` | `todoistId, taskType` | Sets `type` to main / background / unclassified |
 | `SET_TASK_ESTIMATE` | `todoistId, minutes` | Sets `estimatedMinutes` |

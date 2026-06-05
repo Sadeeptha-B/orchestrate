@@ -263,6 +263,9 @@ interface SessionTimelineBarProps {
     currentSessionId?: string | null;
     /** v6: optional per-session capacity data. When provided, each block shows a capacity badge. */
     capacities?: Record<string, SessionCapacity>;
+    /** Optional sort index (todoistId → order) for tasks within a session block. Honours the
+     * intention + task ordering set in Step 1. Tasks absent from the map sort last (stable). */
+    taskOrder?: Map<string, number>;
     /** v6.3: stabilizer habit instances for today. Timed ones render in the habit lane above
      * the session blocks; untimed ones cluster as "Anytime today" chips above the timeline. */
     todaysHabits?: TodaysHabitInstance[];
@@ -284,6 +287,7 @@ export function SessionTimelineBar({
     onSelectSession,
     currentSessionId,
     capacities,
+    taskOrder,
     todaysHabits,
     missedInstanceIds,
     timelineStartMinutes,
@@ -298,17 +302,50 @@ export function SessionTimelineBar({
         [linkedTasks],
     );
 
-    // Timeline bounds — caller-configured or default (4:30 am – midnight).
-    const { dayStart, dayEnd, hourMarks } = useMemo(() => {
-        const start = timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES;
-        const end = timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
-        const marks: number[] = [];
-        const firstHour = Math.ceil(start / 60) * 60;
-        for (let m = firstHour; m <= end; m += 60) marks.push(m);
-        return { dayStart: start, dayEnd: end, hourMarks: marks };
-    }, [timelineStartMinutes, timelineEndMinutes]);
+    // Current-time indicator — re-render once per minute.
+    const [now, setNow] = useState(nowInMinutes);
+    useEffect(() => {
+        const id = setInterval(() => setNow(nowInMinutes()), 60_000);
+        return () => clearInterval(id);
+    }, []);
 
+    // View toggle: 'full' = the whole configured day; 'remaining' = zoom to what's left. The
+    // remaining view's left edge is the start of the in-progress session (so the current session
+    // is fully shown even though it began before now), or `now` when no session is active.
+    const [viewMode, setViewMode] = useState<'full' | 'remaining'>('full');
+
+    // Configured day bounds (caller-provided or default 4:30 am – midnight).
+    const fullStart = timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES;
+    const fullEnd = timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
+
+    const remainingStart = useMemo(() => {
+        const containingStarts = sessions
+            .map((s) => ({ start: timeToMinutes(s.startTime), end: timeToMinutes(s.endTime) }))
+            .filter((s) => s.start <= now && now < s.end)
+            .map((s) => s.start);
+        const raw = containingStarts.length > 0 ? Math.min(...containingStarts) : now;
+        return Math.max(fullStart, Math.min(raw, fullEnd));
+    }, [sessions, now, fullStart, fullEnd]);
+
+    // Only offer the remaining view while there's still day left to show.
+    const canShowRemaining = remainingStart < fullEnd;
+    const useRemaining = viewMode === 'remaining' && canShowRemaining;
+
+    const dayStart = useRemaining ? remainingStart : fullStart;
+    const dayEnd = fullEnd;
     const totalMinutes = dayEnd - dayStart;
+
+    const hourMarks = useMemo(() => {
+        const marks: number[] = [];
+        const firstHour = Math.ceil(dayStart / 60) * 60;
+        for (let m = firstHour; m <= dayEnd; m += 60) marks.push(m);
+        return marks;
+    }, [dayStart, dayEnd]);
+
+    // In the remaining view, drop sessions that have fully elapsed relative to the window edge.
+    const visibleSessions = useRemaining
+        ? sessions.filter((s) => timeToMinutes(s.endTime) > dayStart)
+        : sessions;
 
     const slotPosition = (slot: SessionSlot) => {
         const start = timeToMinutes(slot.startTime);
@@ -323,14 +360,8 @@ export function SessionTimelineBar({
 
     const isInteractive = onSelectSession !== undefined;
 
-    // Current-time indicator — re-render once per minute
-    const [now, setNow] = useState(nowInMinutes);
-    useEffect(() => {
-        const id = setInterval(() => setNow(nowInMinutes()), 60_000);
-        return () => clearInterval(id);
-    }, []);
     const nowPercent =
-        sessions.length > 0 && now >= dayStart && now <= dayEnd
+        visibleSessions.length > 0 && now >= dayStart && now <= dayEnd
             ? ((now - dayStart) / totalMinutes) * 100
             : null;
 
@@ -344,6 +375,19 @@ export function SessionTimelineBar({
 
     return (
         <div className="relative space-y-1 pt-5">
+            {/* View toggle: full day ⇆ remaining part of the day. */}
+            {canShowRemaining && (
+                <button
+                    type="button"
+                    onClick={() => setViewMode((m) => (m === 'remaining' ? 'full' : 'remaining'))}
+                    className="absolute top-0 right-0 z-20 text-[10px] px-2 py-0.5 rounded-full border border-border bg-card text-text-light hover:text-accent hover:border-accent transition-colors cursor-pointer inline-flex items-center gap-1"
+                    title={useRemaining ? 'Switch to the full-day view' : 'Switch to the remaining part of the day'}
+                >
+                    <span aria-hidden>⇆</span>
+                    {useRemaining ? 'Remaining' : 'Full day'}
+                </button>
+            )}
+
             {/* v6.3: "Anytime today" cluster — untimed habit instances surface above the time-axis. */}
             {anytimeHabits.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 mb-1">
@@ -424,13 +468,15 @@ export function SessionTimelineBar({
             {/* Session blocks — single-cell grid so the cell auto-sizes to the tallest block.
                 Each block layers in the same cell via grid-area, positioned horizontally by margin-left/width. */}
             <div className="grid items-start" style={{ gridTemplateColumns: '1fr', minHeight: 80 }}>
-                {sessions.map((session) => {
+                {visibleSessions.map((session) => {
                     const { left, width } = slotPosition(session);
                     const isSelected = selectedSessionId === session.id;
                     const isCurrent = currentSessionId === session.id;
                     const assignedIds = taskSessions[session.id] ?? [];
-                    const sessionMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));
-                    const sessionBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
+                    const orderOf = (lt: LinkedTask) => taskOrder?.get(lt.todoistId) ?? Number.MAX_SAFE_INTEGER;
+                    const byOrder = (a: LinkedTask, b: LinkedTask) => orderOf(a) - orderOf(b);
+                    const sessionMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId)).sort(byOrder);
+                    const sessionBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId)).sort(byOrder);
 
                     const blockClasses = [
                         'rounded-lg border p-2 text-left overflow-hidden transition-colors',

@@ -127,6 +127,8 @@ export interface TodoistActionsValue {
     /** v6.4: returns the server response on success, `null` on failure (with logged + UI error). */
     updateTask: (taskId: string, updates: UpdateTaskOpts) => Promise<TodoistTask | null>;
     moveTask: (taskId: string, projectId: string) => Promise<boolean>;
+    /** Reorder sibling tasks by writing new `child_order` values (1-based). Optimistic. */
+    reorderTasks: (items: { id: string; child_order: number }[]) => Promise<boolean>;
     completeTask: (taskId: string) => Promise<void>;
     reopenTask: (taskId: string) => Promise<void>;
     deleteTask: (taskId: string) => Promise<void>;
@@ -467,6 +469,30 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [resolveToken, handleApiError]);
 
+    const reorderTasks = useCallback(async (items: { id: string; child_order: number }[]): Promise<boolean> => {
+        if (items.length === 0) return true;
+        const token = await resolveToken();
+        if (!token) return false;
+        // Optimistic: patch local child_order so the tree re-sorts immediately.
+        const orderById = new Map(items.map((it) => [it.id, it.child_order]));
+        setTasks((prev) => prev.map((t) => (orderById.has(t.id) ? { ...t, child_order: orderById.get(t.id)! } : t)));
+        try {
+            await apiFetch(token, '/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `commands=${encodeURIComponent(JSON.stringify([
+                    { type: 'item_reorder', uuid: crypto.randomUUID(), args: { items } },
+                ]))}`,
+            });
+            return true;
+        } catch (e) {
+            handleApiError(e, 'Failed to reorder tasks');
+            // Re-fetch to recover the authoritative ordering after a failed optimistic write.
+            void refreshTasks({ force: true });
+            return false;
+        }
+    }, [resolveToken, handleApiError, refreshTasks]);
+
     const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts): Promise<TodoistTask | null> => {
         const token = await resolveToken();
         if (!token) return null;
@@ -560,9 +586,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     }), [tasks, projects, sections, taskMap, tasksHydrated, loading, error, isConfigured, authFailed]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
-        createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask, createTaskComment,
+        createTask, updateTask, moveTask, reorderTasks, completeTask, reopenTask, deleteTask, createTaskComment,
         createProject, deleteProject, refreshTasks, refreshProjects, refreshSections,
-    }), [createTask, updateTask, moveTask, completeTask, reopenTask, deleteTask, createTaskComment,
+    }), [createTask, updateTask, moveTask, reorderTasks, completeTask, reopenTask, deleteTask, createTaskComment,
         createProject, deleteProject, refreshTasks, refreshProjects, refreshSections]);
 
     return (

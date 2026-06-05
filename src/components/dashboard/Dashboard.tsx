@@ -263,6 +263,9 @@ export function Dashboard() {
                             <aside className="lg:w-96 lg:flex-shrink-0 space-y-6">
                                 <HabitInstanceCard />
                                 <MicroGapCard />
+                                {/* True Rest — collapsible so it sits with the habits surfaces
+                                    without cluttering the rail. Starts collapsed. */}
+                                <TrueRestCard variant="card" defaultCollapsed />
                                 <EngagementLogCard />
                             </aside>
                         </div>

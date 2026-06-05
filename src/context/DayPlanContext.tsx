@@ -500,6 +500,7 @@ type Action =
     | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string; titleSnapshot?: string }
     | { type: 'SYNC_TASK_SNAPSHOTS'; snapshots: Record<string, string> }
     | { type: 'REORDER_SESSION_TASKS'; sessionId: string; taskIds: string[] }
+    | { type: 'REORDER_INTENTION_TASKS'; intentionId: string; todoistIds: string[] }
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
@@ -758,6 +759,20 @@ function reducer(state: State, action: Action): State {
                 [action.sessionId]: action.taskIds,
             };
             return { ...state, plan: { ...plan, taskSessions } };
+        }
+
+        case 'REORDER_INTENTION_TASKS': {
+            // Reorder a single intention's linkedTaskIds. Only ids already linked to this
+            // intention are honoured (any stragglers are appended in their prior order),
+            // so a stale drag payload can't drop or duplicate a task.
+            const intentions = plan.intentions.map((i) => {
+                if (i.id !== action.intentionId) return i;
+                const current = new Set(i.linkedTaskIds);
+                const reordered = action.todoistIds.filter((id) => current.has(id));
+                const missing = i.linkedTaskIds.filter((id) => !reordered.includes(id));
+                return { ...i, linkedTaskIds: [...reordered, ...missing] };
+            });
+            return { ...state, plan: { ...plan, intentions } };
         }
 
         // ---- Wizard / global actions ----

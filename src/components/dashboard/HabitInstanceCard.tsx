@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
 import { useToggleHabitInstance } from '../../hooks/useToggleHabitInstance';
+import { useCompleteHabitInstance } from '../../hooks/useCompleteHabitInstance';
 import { compareHabitInstancesByTime, habitKindOf, isHabitInstanceMissed } from '../../lib/habits';
 import {
     buildEngagementLog,
@@ -33,6 +35,7 @@ export function HabitInstanceCard() {
     const { completeTask, createTaskComment } = useTodoistActions();
     const reschedule = useHabitReschedule();
     const handleStartStop = useToggleHabitInstance();
+    const completeInstance = useCompleteHabitInstance();
 
     const habitById = new Map(life.habits.map((h) => [h.id, h]));
     const now = new Date(); // v6.8: for the derived "missed" presentation (past-window strict habits)
@@ -42,17 +45,7 @@ export function HabitInstanceCard() {
         .sort(compareHabitInstancesByTime);
     if (instances.length === 0) return null;
 
-    const handleComplete = (instance: TodaysHabitInstance) => {
-        const nowISO = new Date().toISOString();
-        dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId: instance.id, now: nowISO });
-        // Push completion to the recurring Todoist task; failures don't block local state.
-        // v6.4: log to console.error (in addition to the UI error surfaced by handleApiError)
-        // so a habit failing to advance in Todoist leaves a debuggable trail.
-        if (!instance.todoistTaskId) return;
-        completeTask(instance.todoistTaskId).catch((err) => {
-            console.error(`[habits] complete: Todoist task ${instance.todoistTaskId} failed:`, err);
-        });
-    };
+    const handleComplete = completeInstance;
 
     const handleSkip = (instance: TodaysHabitInstance) => {
         const nowISO = new Date().toISOString();
@@ -296,6 +289,7 @@ export function MicroGapCard() {
 export function EngagementLogCard() {
     const { plan, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
+    const [open, setOpen] = useState(true);
 
     const rows = buildEngagementLog(plan, taskMap);
     if (rows.length === 0) return null;
@@ -312,8 +306,24 @@ export function EngagementLogCard() {
 
     return (
         <section className="space-y-2">
-            <h3 className={SECTION_HEADING}>Engagement Log</h3>
-            <Card className="py-2 px-2">
+            <button
+                type="button"
+                onClick={() => setOpen((o) => !o)}
+                className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
+                aria-expanded={open}
+            >
+                <svg
+                    className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                Engagement Log
+            </button>
+            {open && <Card className="py-2 px-2">
                 <div className="max-h-[24rem] overflow-y-auto scrollbar-subtle -mr-1 pr-1">
                     <ul className="space-y-0.5">
                         {rows.map((row) => {
@@ -372,7 +382,7 @@ export function EngagementLogCard() {
                         })}
                     </ul>
                 </div>
-            </Card>
+            </Card>}
         </section>
     );
 }

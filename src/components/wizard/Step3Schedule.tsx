@@ -11,14 +11,15 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
-import { formatDuration } from '../../lib/time';
+import { formatDuration, minutesOfDay, timeToMinutes } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { compareHabitInstancesByTime, getMissedInstanceIds, habitKindOf, isHabitInstanceMissed } from '../../lib/habits';
 import { getTaskTitle } from '../../lib/tasks';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
+import { useCompleteHabitInstance } from '../../hooks/useCompleteHabitInstance';
 import { HabitTimeEditor } from '../dashboard/HabitTimeEditor';
-import type { Intention, LinkedTask } from '../../types';
+import type { Intention, LinkedTask, SessionSlot } from '../../types';
 
 export function Step3Schedule() {
     const { plan, life, settings, dispatch } = useDayPlan();
@@ -27,6 +28,11 @@ export function Step3Schedule() {
     // v6.8: strict habits whose window has elapsed render greyed ("missed") but stay actionable.
     const missedInstanceIds = getMissedInstanceIds(life, timelineHabits, new Date());
     const { remainingSessions } = useCurrentSession(settings.sessionSlots);
+    // Whole-day session list so the timeline shows past sessions too (greyed, left of the
+    // now-line). Past sessions stay visible for reference and as a source to move tasks from.
+    const allSessions = settings.sessionSlots;
+    const nowMinutes = minutesOfDay(new Date());
+    const isPastSession = (s: SessionSlot) => timeToMinutes(s.endTime) <= nowMinutes;
     const { taskMap } = useTodoistData();
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [phase, setPhase] = useState<'assign' | 'time'>('assign');
@@ -45,16 +51,33 @@ export function Step3Schedule() {
         [plan.intentions],
     );
 
-    const mainTasksByIntention = useMemo(() => {
-        const groups = new Map<string, LinkedTask[]>();
-        for (const lt of mainTasks) {
-            if (lt.intentionId === undefined) continue;
-            const list = groups.get(lt.intentionId) ?? [];
-            list.push(lt);
-            groups.set(lt.intentionId, list);
+    // Global task sort index honouring Step 1's ordering: intentions in their plan order, and
+    // within each intention the `linkedTaskIds` order. Drives task placement inside timeline
+    // session cards so they read the same way they were arranged during mapping.
+    const taskOrder = useMemo(() => {
+        const order = new Map<string, number>();
+        let idx = 0;
+        for (const intention of plan.intentions) {
+            for (const todoistId of intention.linkedTaskIds) {
+                if (!order.has(todoistId)) order.set(todoistId, idx++);
+            }
         }
-        return groups;
-    }, [mainTasks]);
+        return order;
+    }, [plan.intentions]);
+
+    // Sort linked tasks by Step 1's sequencing (intention order, then `linkedTaskIds` order).
+    const compareByTaskOrder = (a: LinkedTask, b: LinkedTask) =>
+        (taskOrder.get(a.todoistId) ?? Number.MAX_SAFE_INTEGER) -
+        (taskOrder.get(b.todoistId) ?? Number.MAX_SAFE_INTEGER);
+
+    // Main tasks grouped by intention, with both the groups (plan order) and the tasks within
+    // each group (linkedTaskIds order) following Step 1's sequence.
+    const mainTasksByIntention = useMemo(() => {
+        const orderOf = (lt: LinkedTask) => taskOrder.get(lt.todoistId) ?? Number.MAX_SAFE_INTEGER;
+        return plan.intentions
+            .map((i) => [i.id, mainTasks.filter((lt) => lt.intentionId === i.id).sort((a, b) => orderOf(a) - orderOf(b))] as const)
+            .filter(([, list]) => list.length > 0);
+    }, [plan.intentions, mainTasks, taskOrder]);
 
     const titleFor = (todoistId: string) => getTaskTitle(todoistId, plan.linkedTasks, taskMap);
 
@@ -64,10 +87,18 @@ export function Step3Schedule() {
     };
 
     // v6: per-session capacity for the timeline (advisory; banner only triggers when over 150%).
+    // Computed across all sessions so past session blocks still show their load.
     const capacities = useMemo(
-        () => computeAllSessionCapacities(remainingSessions, plan.taskSessions, plan.linkedTasks, settings),
-        [remainingSessions, plan.taskSessions, plan.linkedTasks, settings],
+        () => computeAllSessionCapacities(allSessions, plan.taskSessions, plan.linkedTasks, settings),
+        [allSessions, plan.taskSessions, plan.linkedTasks, settings],
     );
+
+    // Move an assigned task from one session to another (used to pull tasks out of past
+    // sessions). UNASSIGN then ASSIGN handles both main (exclusive) and background tasks.
+    const moveTaskToSession = (todoistId: string, fromSessionId: string, toSessionId: string) => {
+        dispatch({ type: 'UNASSIGN_TASK', todoistId, sessionId: fromSessionId });
+        dispatch({ type: 'ASSIGN_TASK', todoistId, sessionId: toSessionId });
+    };
 
     const hasAnyAssignment = Object.values(plan.taskSessions).some((ids) => ids.length > 0);
     const allTasksCompleted = plan.linkedTasks.length > 0 && plan.linkedTasks.every((lt) => lt.completed);
@@ -76,7 +107,7 @@ export function Step3Schedule() {
         dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
     };
 
-    const selectedSession = remainingSessions.find((s) => s.id === selectedSessionId);
+    const selectedSession = allSessions.find((s) => s.id === selectedSessionId);
 
     return (
         <WizardLayout onNext={handleNext} wide hideNext={phase === 'assign' && !allTasksCompleted} canAdvance={phase === 'time' || allTasksCompleted}>
@@ -177,13 +208,14 @@ export function Step3Schedule() {
                     {/* ── Timeline ── */}
                     <SessionCapacityBanner sessions={remainingSessions} capacities={capacities} />
                     <SessionTimelineBar
-                        sessions={remainingSessions}
+                        sessions={allSessions}
                         taskSessions={plan.taskSessions}
                         linkedTasks={plan.linkedTasks}
                         taskMap={taskMap}
                         selectedSessionId={selectedSessionId}
                         onSelectSession={setSelectedSessionId}
                         capacities={capacities}
+                        taskOrder={taskOrder}
                         todaysHabits={timelineHabits}
                         missedInstanceIds={missedInstanceIds}
                         timelineStartMinutes={settings.timelineStartMinutes}
@@ -198,55 +230,101 @@ export function Step3Schedule() {
                         const assignedIds = plan.taskSessions[selectedSession.id] ?? [];
                         const assignedMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId));
                         const unassignedMain = mainTasks.filter((lt) => lt.assignedSessions.length === 0);
-                        const assignedBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId));
-                        const unassignedBg = backgroundTasks.filter((lt) => !assignedIds.includes(lt.todoistId));
+                        const assignedBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId)).sort(compareByTaskOrder);
+                        const unassignedBg = backgroundTasks.filter((lt) => !assignedIds.includes(lt.todoistId)).sort(compareByTaskOrder);
 
-                        const assignedByIntention = new Map<string, LinkedTask[]>();
-                        for (const lt of assignedMain) {
-                            if (lt.intentionId === undefined) continue;
-                            const list = assignedByIntention.get(lt.intentionId) ?? [];
-                            list.push(lt);
-                            assignedByIntention.set(lt.intentionId, list);
-                        }
+                        // Assigned main tasks grouped by intention, honouring Step 1's ordering for
+                        // both the groups (plan order) and the tasks within each (linkedTaskIds order).
+                        const assignedByIntention = plan.intentions
+                            .map((i) => [i.id, assignedMain.filter((lt) => lt.intentionId === i.id).sort(compareByTaskOrder)] as const)
+                            .filter(([, list]) => list.length > 0);
+
+                        // Past sessions are read-only for new assignments, but their tasks can be
+                        // moved forward to a current/upcoming session.
+                        const isPast = isPastSession(selectedSession);
+                        const moveTargets = remainingSessions.filter((s) => s.id !== selectedSession.id);
+
+                        // Move dropdown shown next to each assigned task in a past session.
+                        const renderMove = (lt: LinkedTask) =>
+                            moveTargets.length > 0 ? (
+                                <select
+                                    value=""
+                                    onChange={(e) => {
+                                        if (e.target.value) moveTaskToSession(lt.todoistId, selectedSession.id, e.target.value);
+                                    }}
+                                    className="text-[10px] rounded-full border border-border bg-card text-text-light px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent/30"
+                                    title="Move to a current or upcoming session"
+                                    aria-label={`Move ${titleFor(lt.todoistId)} to another session`}
+                                >
+                                    <option value="">Move to…</option>
+                                    {moveTargets.map((s) => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <span className="text-[10px] text-text-light/60">No upcoming session</span>
+                            );
 
                         return (
-                            <div className="rounded-lg border border-accent/30 bg-accent/[0.02] p-4 space-y-3">
+                            <div className={`rounded-lg border p-4 space-y-3 ${isPast ? 'border-border bg-surface-dark/20' : 'border-accent/30 bg-accent/[0.02]'}`}>
                                 <div className="flex items-baseline justify-between gap-3">
-                                    <h3 className="font-medium text-sm">
+                                    <h3 className="font-medium text-sm flex items-center gap-2">
                                         {selectedSession.name}
-                                        <span className="ml-2 text-xs font-normal text-text-light">
+                                        <span className="text-xs font-normal text-text-light">
                                             {selectedSession.startTime} – {selectedSession.endTime}
                                         </span>
+                                        {isPast && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-dark text-text-light/70 font-normal">
+                                                past
+                                            </span>
+                                        )}
                                     </h3>
                                     {capacities[selectedSession.id]?.assignedMinutes ? (
                                         <SessionCapacityBadge capacity={capacities[selectedSession.id]} />
                                     ) : null}
                                 </div>
 
+                                {isPast && (
+                                    <p className="text-xs text-text-light">
+                                        This session has passed — you can&apos;t assign new tasks to it, but you can move
+                                        its tasks to a current or upcoming session.
+                                    </p>
+                                )}
+
                                 {/* Assigned main tasks grouped by intention */}
-                                {assignedByIntention.size > 0 && (
+                                {assignedByIntention.length > 0 && (
                                     <div className="space-y-2">
-                                        {[...assignedByIntention.entries()].map(([intId, tasks]) => (
+                                        {assignedByIntention.map(([intId, tasks]) => (
                                             <div key={intId}>
                                                 <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
                                                     {intentionMap.get(intId)?.title ?? 'Unknown'}
                                                 </span>
-                                                <div className="flex flex-wrap gap-1.5 mt-1">
+                                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
                                                     {tasks.map((lt) => (
-                                                        <button
-                                                            key={lt.todoistId}
-                                                            onClick={() =>
-                                                                dispatch({
-                                                                    type: 'UNASSIGN_TASK',
-                                                                    todoistId: lt.todoistId,
-                                                                    sessionId: selectedSession.id,
-                                                                })
-                                                            }
-                                                            className="px-3 py-1.5 text-xs rounded-full bg-accent text-white cursor-pointer hover:bg-accent/80 transition-colors"
-                                                            title="Click to unassign"
-                                                        >
-                                                            {getTaskLabel(lt)} ×
-                                                        </button>
+                                                        isPast ? (
+                                                            <span
+                                                                key={lt.todoistId}
+                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full bg-accent/10 text-accent"
+                                                            >
+                                                                {getTaskLabel(lt)}
+                                                                {renderMove(lt)}
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                key={lt.todoistId}
+                                                                onClick={() =>
+                                                                    dispatch({
+                                                                        type: 'UNASSIGN_TASK',
+                                                                        todoistId: lt.todoistId,
+                                                                        sessionId: selectedSession.id,
+                                                                    })
+                                                                }
+                                                                className="px-3 py-1.5 text-xs rounded-full bg-accent text-white cursor-pointer hover:bg-accent/80 transition-colors"
+                                                                title="Click to unassign"
+                                                            >
+                                                                {getTaskLabel(lt)} ×
+                                                            </button>
+                                                        )
                                                     ))}
                                                 </div>
                                             </div>
@@ -256,33 +334,43 @@ export function Step3Schedule() {
 
                                 {/* Assigned background tasks */}
                                 {assignedBg.length > 0 && (
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                         {assignedBg.map((lt) => (
-                                            <button
-                                                key={lt.todoistId}
-                                                onClick={() =>
-                                                    dispatch({
-                                                        type: 'UNASSIGN_TASK',
-                                                        todoistId: lt.todoistId,
-                                                        sessionId: selectedSession.id,
-                                                    })
-                                                }
-                                                className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
-                                                title="Click to remove from this session"
-                                            >
-                                                {getTaskLabel(lt)} ×
-                                            </button>
+                                            isPast ? (
+                                                <span
+                                                    key={lt.todoistId}
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full bg-surface-dark text-text-light"
+                                                >
+                                                    {getTaskLabel(lt)}
+                                                    {renderMove(lt)}
+                                                </span>
+                                            ) : (
+                                                <button
+                                                    key={lt.todoistId}
+                                                    onClick={() =>
+                                                        dispatch({
+                                                            type: 'UNASSIGN_TASK',
+                                                            todoistId: lt.todoistId,
+                                                            sessionId: selectedSession.id,
+                                                        })
+                                                    }
+                                                    className="px-3 py-1.5 text-xs rounded-full bg-text-light text-white cursor-pointer hover:bg-muted/80 transition-colors"
+                                                    title="Click to remove from this session"
+                                                >
+                                                    {getTaskLabel(lt)} ×
+                                                </button>
+                                            )
                                         ))}
                                     </div>
                                 )}
 
-                                {/* Unassigned main tasks grouped by intention */}
-                                {unassignedMain.length > 0 && (
+                                {/* Unassigned main tasks grouped by intention — assignment only for non-past sessions */}
+                                {!isPast && unassignedMain.length > 0 && (
                                     <div className="space-y-2 border-t border-border/50 pt-3">
                                         <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
                                             Add main tasks
                                         </span>
-                                        {[...mainTasksByIntention.entries()]
+                                        {mainTasksByIntention
                                             .filter(([, tasks]) => tasks.some((lt) => lt.assignedSessions.length === 0))
                                             .map(([intId, tasks]) => {
                                                 const unassigned = tasks.filter((lt) => lt.assignedSessions.length === 0);
@@ -316,7 +404,7 @@ export function Step3Schedule() {
                                 )}
 
                                 {/* Unassigned background tasks */}
-                                {unassignedBg.length > 0 && (
+                                {!isPast && unassignedBg.length > 0 && (
                                     <div className="space-y-2 border-t border-border/50 pt-3">
                                         <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
                                             Add background tasks
@@ -341,10 +429,13 @@ export function Step3Schedule() {
                                     </div>
                                 )}
 
-                                {assignedMain.length === 0 && unassignedMain.length === 0 &&
-                                    assignedBg.length === 0 && unassignedBg.length === 0 && (
-                                        <p className="text-xs text-text-light">No tasks to assign</p>
-                                    )}
+                                {assignedMain.length === 0 && assignedBg.length === 0 && (
+                                    isPast
+                                        ? <p className="text-xs text-text-light">No tasks were assigned to this session.</p>
+                                        : unassignedMain.length === 0 && unassignedBg.length === 0
+                                            ? <p className="text-xs text-text-light">No tasks to assign</p>
+                                            : null
+                                )}
                             </div>
                         );
                     })()}
@@ -471,6 +562,7 @@ export function Step3Schedule() {
 function Step3HabitsPanel() {
     const { plan, life } = useDayPlan();
     const reschedule = useHabitReschedule();
+    const completeHabit = useCompleteHabitInstance();
     const now = new Date();
 
     // v6.7: timeline-habits only; micro-gaps aren't scheduled.
@@ -519,13 +611,22 @@ function Step3HabitsPanel() {
                                     onCancel={reschedule.cancel}
                                 />
                             ) : (
-                                <button
-                                    onClick={() => reschedule.open(i)}
-                                    className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 cursor-pointer"
-                                    title="Set or change time for this habit today"
-                                >
-                                    ⤴ Reschedule
-                                </button>
+                                <>
+                                    <button
+                                        onClick={() => completeHabit(i)}
+                                        className="text-[10px] px-2 py-0.5 rounded bg-success/10 text-success hover:bg-success/20 cursor-pointer"
+                                        title="Mark this habit done for today"
+                                    >
+                                        ✓ Done
+                                    </button>
+                                    <button
+                                        onClick={() => reschedule.open(i)}
+                                        className="text-[10px] px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 cursor-pointer"
+                                        title="Set or change time for this habit today"
+                                    >
+                                        ⤴ Reschedule
+                                    </button>
+                                </>
                             )}
                         </li>
                     );
