@@ -57,12 +57,13 @@ StrictMode                         (main.tsx)
 
 ### 3.2 Routing
 
-Nine routes, all defined in `AppRoutes` inside `App.tsx`:
+Ten routes, all defined in `AppRoutes` inside `App.tsx`:
 
 | Path | Component | Guard |
 |---|---|---|
 | `/` | `Dashboard` or `Welcome` | Shows `Dashboard` when `plan.setupComplete === true`, otherwise `Welcome` (hub) |
 | `/setup` | `Wizard` | Accessible when `setupComplete` is true (editing) or navigated from Welcome |
+| `/focus` | `FocusMode` | Gated on `setupComplete` (else redirect to `/`). v7 distraction-free focus page (see §3.3 Focus Mode) |
 | `/life` | `LifeView` | Always reachable. Hub: active season + all active habits grouped by scope (always-on, then per-season with collapsible headers) and split by kind (habits / micro-gaps), plus an inline compact True Rest editor. Habit pills carry inline edit/pause/delete; an "Add habit" button opens the same `HabitForm` modal as the library (Todoist sync banners stay in the library) |
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
@@ -72,6 +73,25 @@ Nine routes, all defined in `AppRoutes` inside `App.tsx`:
 | `*` | Redirect to `/` | Catch-all |
 
 Life routes are always reachable (no `setupComplete` gate) — `setupComplete` is a daily flag while seasons/habits are durable.
+
+### 3.3 Focus Mode (v7)
+
+Pressing **▶ Start** on a task in the Current Session card opens an engagement segment *and* navigates
+to `/focus` — a distraction-free page showing only the day timeline (reused `SessionTimeline`), the one
+engaged task, and a large count-up timer. The page derives its target via `findActiveFocusTask(plan)`
+(the engaged `LinkedTask` with an open segment), so it reflects Stop/Complete instantly and survives a
+reload. **Stop** closes the segment; **Complete** ticks the task in Todoist and returns to `/`.
+
+An optional **Pomodoro** engine (toggle persisted in `localStorage`) turns the task's estimate into a
+slot schedule via `computeFocusPlan(estimate)`: ≥45 min → 20-min work blocks with 5-min breaks; 30–44
+min → 10-min blocks; <30 min or unestimated → a single session. The blocks render as a vertical
+`FocusSlotPlan`, and when the engine runs (`resolveBlockAt`) it highlights the live block, counts it
+down, and fires a chime (`lib/sound.ts`) + notification at each work↔break boundary.
+
+A separate **focus nudge** (`useFocusNudge`, wired in the Dashboard) notifies the user — browser
+notification + in-app banner — if they've been in an active session ≥10 min without engaging anything
+(and the session still has incomplete work), repeating every 30 min while idle. No new entities,
+reducer actions, or schema migration — Focus Mode is a view over the existing engagement-segment model.
 
 ---
 

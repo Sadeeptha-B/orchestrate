@@ -12,6 +12,7 @@ import { CheckInModal } from '../checkin/CheckInModal';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
+import { useFocusNudge } from '../../hooks/useFocusNudge';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -32,6 +33,7 @@ export function Dashboard() {
         settings.notificationPreference,
     );
     const { nextSessionStartsWithin } = useCurrentSession(settings.sessionSlots);
+    const { nudge: focusNudge, dismiss: dismissFocusNudge } = useFocusNudge(plan, settings);
 
     // v6.7: keep `plan.todaysHabits` in sync with the library while on the dashboard, so a habit
     // created/edited/deleted in /habits is reflected without re-running the wizard.
@@ -144,6 +146,22 @@ export function Dashboard() {
 
                 <main className="flex-1 px-6 py-6 min-w-0">
                     <div className="max-w-6xl mx-auto space-y-6">
+                        {focusNudge && (
+                            <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-accent/10 border border-accent/30 text-sm text-accent">
+                                <span>
+                                    You're {focusNudge.minutes} min into{' '}
+                                    <span className="font-medium">{focusNudge.sessionName}</span> without a focus
+                                    block. Press ▶ on a task to start one.
+                                </span>
+                                <button
+                                    onClick={dismissFocusNudge}
+                                    className="flex-shrink-0 text-accent/70 hover:text-accent transition-colors text-lg leading-none cursor-pointer"
+                                    title="Dismiss"
+                                >
+                                    &times;
+                                </button>
+                            </div>
+                        )}
                         <MusicProvider>
                             {/* Row 1: playlist buttons + clock */}
                             <div className="flex flex-col lg:flex-row gap-4 lg:items-start">

@@ -41,6 +41,7 @@ const SeasonDetail = lazyWithReload(() => import('./components/life/SeasonDetail
 const HabitsLibrary = lazyWithReload(() => import('./components/life/HabitsLibrary').then((mod) => ({ default: mod.HabitsLibrary })));
 const UserGuide = lazyWithReload(() => import('./components/guide/UserGuide').then((mod) => ({ default: mod.UserGuide })));
 const SettingsPage = lazyWithReload(() => import('./components/settings/SettingsPage').then((mod) => ({ default: mod.SettingsPage })));
+const FocusMode = lazyWithReload(() => import('./components/focus/FocusMode').then((mod) => ({ default: mod.FocusMode })));
 
 function RouteFallback() {
     return (
@@ -78,6 +79,10 @@ function AppRoutes() {
                 <Route path="/habits" element={<HabitsLibrary />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/guide" element={<UserGuide />} />
+                <Route
+                    path="/focus"
+                    element={plan.setupComplete ? <FocusMode /> : <Navigate to="/" replace />}
+                />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
         </Suspense>

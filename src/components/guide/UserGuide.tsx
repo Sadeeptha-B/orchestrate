@@ -463,6 +463,31 @@ export function UserGuide() {
                         </p>
                     </Section>
 
+                    <Section id="focus-mode" title="9b. Focus Mode — one task, one timer">
+                        <p>
+                            When you press <strong>▶ Start</strong> on a task in the Current Session, Orchestrate drops
+                            into <strong>Focus Mode</strong> — a stripped-down page with just the day timeline, the one
+                            task you're working on, and a large timer counting your time on it. It's the antidote to the
+                            busy dashboard: one thing, in front of you, with the clock running. <strong>Stop</strong>{' '}
+                            pauses; <strong>Complete</strong> ticks the task off and returns you home. <strong>Exit</strong>{' '}
+                            leaves the timer running and goes back to the dashboard.
+                        </p>
+                        <SubHeading>Pomodoro pacing</SubHeading>
+                        <p>
+                            Toggle <strong>Pomodoro mode</strong> to work in slots instead of one long stretch. Orchestrate
+                            sizes the slots from the task's estimate: <strong>45 min or more</strong> → 20-minute work
+                            blocks with 5-minute breaks; <strong>around 30 min</strong> → 10-minute blocks; anything
+                            shorter is a single session. The slots show as a vertical plan on the right; while the engine
+                            runs it highlights the current block, counts it down, and chimes (plus a notification) each
+                            time you switch between work and break.
+                        </p>
+                        <Callout tone="info">
+                            If you're in an active session for 10 minutes without starting a focus block, Orchestrate
+                            nudges you (banner + notification) and keeps reminding you every 30 minutes until you begin —
+                            but only while the session still has unfinished work.
+                        </Callout>
+                    </Section>
+
                     <Section id="backlog" title="9a. Intentions Backlog — parking work for later">
                         <p>
                             Not every intention you write down on Monday belongs on Monday. You overcommit, plans shift,
@@ -682,6 +707,7 @@ const TOC_ENTRIES: { id: string; label: string }[] = [
     { id: 'anchor-stabilizer-seasons', label: '7. Habits, Seasons, Anchors' },
     { id: 'capacity', label: '8. Session capacity' },
     { id: 'check-in', label: '9. The hourly check-in' },
+    { id: 'focus-mode', label: '9b. Focus Mode' },
     { id: 'backlog', label: '9a. Intentions Backlog' },
     { id: 'decision-tree', label: '10. Decision tree' },
     { id: 'typical-day', label: '11. A typical day' },
