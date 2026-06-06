@@ -49,18 +49,18 @@ export function GoogleCalendarEmbed({
                 style={{ height }}
             >
                 <p className="text-sm text-text-light mb-2">
-                    No Google Calendar configured.
+                    No calendars selected yet.
                 </p>
                 {onSetup ? (
                     <button
                         onClick={onSetup}
                         className="text-sm text-accent hover:underline cursor-pointer"
                     >
-                        Open Settings →
+                        Connect Google Calendar →
                     </button>
                 ) : (
                     <p className="text-xs text-text-light">
-                        Go to Settings → Integrations to add your calendars.
+                        Connect Google Calendar in Settings → Integrations to choose calendars.
                     </p>
                 )}
             </div>

@@ -106,6 +106,8 @@ Persistent user preferences. Survives daily plan resets.
 
 **`taskCapDefaults`** (v6.7 keys): `{ habit, microGap, manualBackground }` (renamed from `stabilizer`/`lightCoherent`; `migrateTaskCaps` maps the old keys forward).
 
+**Google Calendar (v7.2):** `googleCalendarIds` is now the **selected subset** of calendars to overlay in the embed, sourced from the Calendar API list (each `GoogleCalendarEntry` carries `id`/`name`/`color`/`primary`) — no longer hand-entered. `googleCalendarConnected: boolean` records that the user authorized Google Calendar via the GIS token client; on load the `GoogleCalendarProvider` uses it to attempt a **silent** token re-acquisition (`prompt: 'none'`). The OAuth **access token itself is held in memory only — never persisted, never encrypted** (it expires within ~1 hr and is silently re-acquired), unlike the Todoist token. `calendarViewMode` is unchanged (embed week/month/agenda).
+
 ### Season
 
 A medium-horizon focus period (4-12 weeks).

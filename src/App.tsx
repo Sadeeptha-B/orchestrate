@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { DayPlanProvider } from './context/DayPlanContext';
 import { useDayPlan } from './hooks/useDayPlan';
 import { TodoistProvider } from './context/TodoistContext';
+import { GoogleCalendarProvider } from './context/GoogleCalendarContext';
 import { ReconciliationProvider } from './context/ReconciliationContext';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
@@ -97,11 +98,13 @@ export default function App() {
     return (
         <ErrorBoundary>
             <DayPlanProvider>
-                <TodoistProvider>
-                    <ReconciliationProvider>
-                        <AppRoutes />
-                    </ReconciliationProvider>
-                </TodoistProvider>
+                <GoogleCalendarProvider>
+                    <TodoistProvider>
+                        <ReconciliationProvider>
+                            <AppRoutes />
+                        </ReconciliationProvider>
+                    </TodoistProvider>
+                </GoogleCalendarProvider>
             </DayPlanProvider>
         </ErrorBoundary>
     );
