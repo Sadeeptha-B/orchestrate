@@ -39,6 +39,7 @@ const LifeView = lazyWithReload(() => import('./components/life/LifeView').then(
 const SeasonsManager = lazyWithReload(() => import('./components/life/SeasonsManager').then((mod) => ({ default: mod.SeasonsManager })));
 const SeasonDetail = lazyWithReload(() => import('./components/life/SeasonDetail').then((mod) => ({ default: mod.SeasonDetail })));
 const HabitsLibrary = lazyWithReload(() => import('./components/life/HabitsLibrary').then((mod) => ({ default: mod.HabitsLibrary })));
+const SessionTemplatesManager = lazyWithReload(() => import('./components/life/SessionTemplatesManager').then((mod) => ({ default: mod.SessionTemplatesManager })));
 const UserGuide = lazyWithReload(() => import('./components/guide/UserGuide').then((mod) => ({ default: mod.UserGuide })));
 const SettingsPage = lazyWithReload(() => import('./components/settings/SettingsPage').then((mod) => ({ default: mod.SettingsPage })));
 const FocusMode = lazyWithReload(() => import('./components/focus/FocusMode').then((mod) => ({ default: mod.FocusMode })));
@@ -79,6 +80,7 @@ function AppRoutes() {
                 <Route path="/season" element={<SeasonsManager />} />
                 <Route path="/season/:id" element={<SeasonDetail />} />
                 <Route path="/habits" element={<HabitsLibrary />} />
+                <Route path="/session-templates" element={<SessionTemplatesManager />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/guide" element={<UserGuide />} />
                 <Route

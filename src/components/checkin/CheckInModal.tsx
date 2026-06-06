@@ -34,8 +34,8 @@ interface CheckInModalProps {
 }
 
 export function CheckInModal({ open, onClose, onRecontextualize }: CheckInModalProps) {
-    const { plan, life, settings, dispatch } = useDayPlan();
-    const { currentSession } = useCurrentSession(settings.sessionSlots);
+    const { plan, life, dispatch } = useDayPlan();
+    const { currentSession } = useCurrentSession(plan.sessionSlots);
     const { taskMap } = useTodoistData();
     const [feeling, setFeeling] = useState<CheckIn['feeling'] | null>(null);
     const [workType, setWorkType] = useState<WorkType | null>(null);

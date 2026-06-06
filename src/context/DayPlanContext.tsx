@@ -10,6 +10,8 @@ import type {
     LinkedTask,
     CheckIn,
     AppSettings,
+    SessionSlot,
+    SessionTemplate,
     SavedDayPlan,
     LifeContext,
     Season,
@@ -39,21 +41,41 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-const SCHEMA_VERSION = 6.3;
+const SCHEMA_VERSION = 7.1;
 /** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
-const WIZARD_STEPS_COUNT = 4;
+const WIZARD_STEPS_COUNT = 5;
 
-function freshPlan(): DayPlan {
+function freshPlan(seed?: SessionSlot[]): DayPlan {
     return {
         date: todayISO(),
         intentions: [],
         linkedTasks: [],
         todaysHabits: [],
+        sessionSlots: seed ?? [],
         taskSessions: {},
         wizardStep: 1,
         setupComplete: false,
         checkIns: [],
     };
+}
+
+/** Deep-copy session slots with fresh ids — keeps days independent (no shared object refs / ids). */
+function cloneSessionSlots(slots: SessionSlot[]): SessionSlot[] {
+    return slots.map((s) => ({ ...s, id: crypto.randomUUID() }));
+}
+
+/**
+ * v7.1: pick the session slots a new day should start from. Prefers the most-recent persisted
+ * plan's sessions (continuity), then the legacy global `settings.sessionSlots`, then built-in
+ * defaults. Returns fresh-id copies so the new day owns its own slot objects.
+ */
+function seedSessionSlots(prevPlan: DayPlan | null | undefined, settings: AppSettings): SessionSlot[] {
+    const source = prevPlan?.sessionSlots?.length
+        ? prevPlan.sessionSlots
+        : settings.sessionSlots?.length
+            ? settings.sessionSlots
+            : defaultSessionSlots;
+    return cloneSessionSlots(source);
 }
 
 /**
@@ -73,21 +95,30 @@ function legacyEngagementToSegments(raw: Record<string, unknown> | undefined): E
 
 /** Migrate a plan through the version chain: v1 (tasks) → v2 (intentions) → v4 (linkedTasks) → v6.1 (habit-as-task decoupling). */
 function migratePlan(raw: Record<string, unknown>): DayPlan {
-    // Wizard was reduced from 6 steps to 5 (old Step 1 & 2 merged).
-    // Old step 2+ maps to step N-1; step 1 stays 1.
-    // Only apply when plan was saved under the old 6-step layout.
+    // Wizard step-count has shifted over time; remap a persisted step into the current 5-step layout.
+    //   • v1 (6 steps) → step 2+ maps to step N-1.
+    //   • old 5-step layout (Intentions/Refine/Schedule/Music/… legacy) → 4-step.
+    //   • v7.1: a new "Sessions" step is inserted at position 3, so old Schedule(3)/Music(4) shift +1.
+    // NOTE the old layout was *also* 5 steps, so we cannot disambiguate on `_wizardSteps` alone —
+    // gate the legacy 5→4 and the new 4→5 rungs on `_schemaVersion` so they never fire on a
+    // current (7.1) plan that legitimately has 5 steps.
     const wizardSteps = raw._wizardSteps as number;
+    const schema = raw._schemaVersion as number | undefined;
     const migrateStep = (s: number) => {
         // v1 (6 steps) → v2 (5 steps): step 2+ maps to step N-1
         if (wizardSteps !== 5 && wizardSteps !== 4) {
             s = Math.max(s > 1 ? s - 1 : 1, 1);
         }
-        // v3/v4 (5 steps) → v4 (4 steps): old step 4 (nudges) merged into 3, step 5 → 4
-        if (wizardSteps === 5) {
+        // legacy 5-step → 4-step: old step 4 (nudges) merged into 3, step 5 → 4. Pre-7.1 only.
+        if (wizardSteps === 5 && (schema === undefined || schema < 7.1)) {
             if (s === 4) s = 3;
             else if (s === 5) s = 4;
         }
-        return Math.min(s, 4);
+        // v7.1: insert "Sessions" at position 3 — old Schedule(3)→4, Music(4)→5; steps 1,2 unchanged.
+        if (wizardSteps === 4 && (schema === undefined || schema < 7.1)) {
+            if (s >= 3) s += 1;
+        }
+        return Math.min(s, 5);
     };
 
     // v6 → v6.1: identify habit-derived intentions (to be dropped) and the habit ID per intention,
@@ -226,6 +257,9 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
             intentions,
             linkedTasks: migratedLinkedTasks,
             todaysHabits,
+            sessionSlots: Array.isArray(raw.sessionSlots) && (raw.sessionSlots as SessionSlot[]).length
+                ? (raw.sessionSlots as SessionSlot[])
+                : defaultSessionSlots,
             taskSessions,
             wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
             setupComplete: (raw.setupComplete as boolean) ?? false,
@@ -245,6 +279,9 @@ function migratePlan(raw: Record<string, unknown>): DayPlan {
         intentions,
         linkedTasks: [],
         todaysHabits: [],
+        sessionSlots: Array.isArray(raw.sessionSlots) && (raw.sessionSlots as SessionSlot[]).length
+            ? (raw.sessionSlots as SessionSlot[])
+            : defaultSessionSlots,
         taskSessions: {},
         wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
         setupComplete: (raw.setupComplete as boolean) ?? false,
@@ -306,7 +343,7 @@ function loadHistory(): SavedDayPlan[] {
 }
 
 function emptyLifeContext(): LifeContext {
-    return { seasons: [], habits: [], activeSeasonId: null, backlog: [] };
+    return { seasons: [], habits: [], activeSeasonId: null, backlog: [], sessionTemplates: [] };
 }
 
 /**
@@ -358,10 +395,26 @@ function loadLifeContext(): LifeContext {
             activeSeasonId: parsed.activeSeasonId ?? null,
             restCues: parsed.restCues,
             backlog: parsed.backlog ?? [],
+            sessionTemplates: parsed.sessionTemplates,
         };
     } catch {
         return emptyLifeContext();
     }
+}
+
+/**
+ * v7.1: one-time seed of `life.sessionTemplates`. If the user had customized the legacy global
+ * `settings.sessionSlots`, preserve it as a "My sessions" template so it isn't lost when sessions
+ * become per-day. Sets `[]` (not undefined) once seeded so it never re-seeds on later loads.
+ */
+function seedSessionTemplates(life: LifeContext, settings: AppSettings): LifeContext {
+    if (life.sessionTemplates !== undefined) return life;
+    const slots = settings.sessionSlots ?? [];
+    const isCustom = JSON.stringify(slots) !== JSON.stringify(defaultSessionSlots);
+    const sessionTemplates: SessionTemplate[] = isCustom && slots.length
+        ? [{ id: crypto.randomUUID(), name: 'My sessions', slots, createdAt: new Date().toISOString() }]
+        : [];
+    return { ...life, sessionTemplates };
 }
 
 /**
@@ -388,12 +441,15 @@ function peekRawPlan(): DayPlan | null {
 function loadInitialState(): State {
     const settings = loadSettings();
     const baseHistory = loadHistory();
-    const baseLife = loadLifeContext();
+    // v7.1: seed session templates from the legacy global slots (one-time) before any branch.
+    const baseLife = seedSessionTemplates(loadLifeContext(), settings);
     const raw = peekRawPlan();
 
     if (!raw || raw.date === todayISO()) {
+        // Same-day reload: `raw.sessionSlots` is already backfilled by migratePlan.
+        // Cold start: seed a fresh day's sessions from settings/defaults.
         return {
-            plan: raw ?? freshPlan(),
+            plan: raw ?? freshPlan(seedSessionSlots(undefined, settings)),
             settings,
             editingStep: null,
             history: baseHistory,
@@ -401,14 +457,15 @@ function loadInitialState(): State {
         };
     }
 
-    // Stale plan: harvest unfinished intentions into the backlog, then return a fresh plan.
+    // Stale plan: harvest unfinished intentions into the backlog, then return a fresh plan
+    // seeded from the previous day's sessions (continuity).
     const harvested = harvestStalePlan(raw);
     const life: LifeContext = harvested.length === 0
         ? baseLife
         : { ...baseLife, backlog: [...(baseLife.backlog ?? []), ...harvested] };
 
     return {
-        plan: freshPlan(),
+        plan: freshPlan(seedSessionSlots(raw, settings)),
         settings,
         editingStep: null,
         history: baseHistory,
@@ -501,6 +558,11 @@ type Action =
     | { type: 'SYNC_TASK_SNAPSHOTS'; snapshots: Record<string, string> }
     | { type: 'REORDER_SESSION_TASKS'; sessionId: string; taskIds: string[] }
     | { type: 'REORDER_INTENTION_TASKS'; intentionId: string; todoistIds: string[] }
+    // ---- v7.1: per-day sessions ----
+    | { type: 'ADD_DAY_SESSION'; session: Omit<SessionSlot, 'id'> }
+    | { type: 'UPDATE_DAY_SESSION'; session: SessionSlot }
+    | { type: 'REMOVE_DAY_SESSION'; sessionId: string }
+    | { type: 'APPLY_SESSION_TEMPLATE'; templateId: string }
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
@@ -530,6 +592,10 @@ type Action =
     | { type: 'UPDATE_REST_CUE'; cue: RestCue }
     | { type: 'DELETE_REST_CUE'; cueId: string }
     | { type: 'REPLACE_REST_CUES'; cues: RestCue[] | undefined }
+    // ---- v7.1: Session templates (Life) ----
+    | { type: 'ADD_SESSION_TEMPLATE'; template: Omit<SessionTemplate, 'id' | 'createdAt'> }
+    | { type: 'UPDATE_SESSION_TEMPLATE'; template: SessionTemplate }
+    | { type: 'DELETE_SESSION_TEMPLATE'; templateId: string }
     // ---- v6.2: Intentions backlog ----
     | { type: 'MOVE_INTENTION_TO_BACKLOG'; intentionId: string; reason?: BacklogEntry['reason'] }
     | { type: 'RESTORE_FROM_BACKLOG'; backlogId: string; taskCache: Record<string, string>; now?: string }
@@ -775,6 +841,46 @@ function reducer(state: State, action: Action): State {
             return { ...state, plan: { ...plan, intentions } };
         }
 
+        // ---- v7.1: per-day sessions ----
+
+        case 'ADD_DAY_SESSION': {
+            const session: SessionSlot = { ...action.session, id: crypto.randomUUID() };
+            return { ...state, plan: { ...plan, sessionSlots: [...plan.sessionSlots, session] } };
+        }
+
+        case 'UPDATE_DAY_SESSION': {
+            // Id-stable rename/resize/move — assignments keyed by session id survive untouched.
+            const sessionSlots = plan.sessionSlots.map((s) =>
+                s.id === action.session.id ? action.session : s,
+            );
+            return { ...state, plan: { ...plan, sessionSlots } };
+        }
+
+        case 'REMOVE_DAY_SESSION': {
+            const { sessionId } = action;
+            const sessionSlots = plan.sessionSlots.filter((s) => s.id !== sessionId);
+            const { [sessionId]: _dropped, ...taskSessions } = plan.taskSessions;
+            void _dropped;
+            const linkedTasks = plan.linkedTasks.map((lt) =>
+                lt.assignedSessions.includes(sessionId)
+                    ? { ...lt, assignedSessions: lt.assignedSessions.filter((s) => s !== sessionId) }
+                    : lt,
+            );
+            return { ...state, plan: { ...plan, sessionSlots, taskSessions, linkedTasks } };
+        }
+
+        case 'APPLY_SESSION_TEMPLATE': {
+            const tpl = state.life.sessionTemplates?.find((t) => t.id === action.templateId);
+            if (!tpl) return state;
+            // Fresh-id copies → every prior session id vanishes, so clear all assignments.
+            const sessionSlots = cloneSessionSlots(tpl.slots);
+            const linkedTasks = plan.linkedTasks.some((lt) => lt.assignedSessions.length)
+                ? plan.linkedTasks.map((lt) =>
+                    lt.assignedSessions.length ? { ...lt, assignedSessions: [] } : lt)
+                : plan.linkedTasks;
+            return { ...state, plan: { ...plan, sessionSlots, taskSessions: {}, linkedTasks } };
+        }
+
         // ---- Wizard / global actions ----
 
         case 'SET_WIZARD_STEP':
@@ -798,14 +904,15 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'RESET_DAY':
-            return { ...state, plan: freshPlan(), editingStep: null };
+            // Re-seed today's sessions from the legacy global slots / defaults (fresh ids).
+            return { ...state, plan: freshPlan(seedSessionSlots(undefined, settings)), editingStep: null };
 
         case 'RESET_ALL':
             // Wipe all four persisted slices back to factory defaults. The four useEffects
             // below auto-persist the reset state to localStorage. Aux keys outside this
             // provider (Todoist cache, theme, music prefs) are handled by the caller.
             return {
-                plan: freshPlan(),
+                plan: freshPlan(cloneSessionSlots(defaultSessionSlots)),
                 settings: withV6SettingsDefaults({
                     notificationPreference: 'both',
                     sessionSlots: defaultSessionSlots,
@@ -1167,6 +1274,30 @@ function reducer(state: State, action: Action): State {
         case 'REPLACE_REST_CUES':
             return { ...state, life: { ...state.life, restCues: action.cues } };
 
+        case 'ADD_SESSION_TEMPLATE': {
+            const template: SessionTemplate = {
+                ...action.template,
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+            };
+            const sessionTemplates = [...(state.life.sessionTemplates ?? []), template];
+            return { ...state, life: { ...state.life, sessionTemplates } };
+        }
+
+        case 'UPDATE_SESSION_TEMPLATE': {
+            const sessionTemplates = (state.life.sessionTemplates ?? []).map((t) =>
+                t.id === action.template.id ? action.template : t,
+            );
+            return { ...state, life: { ...state.life, sessionTemplates } };
+        }
+
+        case 'DELETE_SESSION_TEMPLATE': {
+            const sessionTemplates = (state.life.sessionTemplates ?? []).filter(
+                (t) => t.id !== action.templateId,
+            );
+            return { ...state, life: { ...state.life, sessionTemplates } };
+        }
+
         case 'IMPORT_BACKUP': {
             const next: State = { ...state };
             if (action.settings) next.settings = { ...state.settings, ...action.settings };
@@ -1176,6 +1307,7 @@ function reducer(state: State, action: Action): State {
                 const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
                 const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
                 const existingBacklogIds = new Set((state.life.backlog ?? []).map((e) => e.id));
+                const existingTemplateIds = new Set((state.life.sessionTemplates ?? []).map((t) => t.id));
                 next.life = {
                     seasons: [
                         ...state.life.seasons,
@@ -1192,6 +1324,10 @@ function reducer(state: State, action: Action): State {
                     backlog: [
                         ...(state.life.backlog ?? []),
                         ...(action.life.backlog ?? []).filter((e) => !existingBacklogIds.has(e.id)),
+                    ],
+                    sessionTemplates: [
+                        ...(state.life.sessionTemplates ?? []),
+                        ...(action.life.sessionTemplates ?? []).filter((t) => !existingTemplateIds.has(t.id)),
                     ],
                 };
             }

@@ -54,6 +54,18 @@ export interface SessionSlot {
     endTime: string;   // "HH:mm"
 }
 
+/**
+ * v7.1: a named, reusable set of session slots. Defined in the Life section and applied
+ * during the wizard's Sessions step as a quick preset. Replaces the old single global
+ * `AppSettings.sessionSlots` editor concept (sessions are now per-day on `DayPlan`).
+ */
+export interface SessionTemplate {
+    id: string;
+    name: string;
+    slots: SessionSlot[];
+    createdAt: string; // ISO
+}
+
 export interface CheckIn {
     id: string;
     timestamp: string; // ISO string
@@ -125,8 +137,9 @@ export interface DayPlan {
     intentions: Intention[];
     linkedTasks: LinkedTask[];                             // all tasks across all intentions
     todaysHabits: TodaysHabitInstance[];                  // v6.3: stabilizer instances for today
+    sessionSlots: SessionSlot[];                          // v7.1: authoritative per-day sessions (seeded from last-used day)
     taskSessions: Record<string, string[]>;               // sessionId -> todoistId[]
-    wizardStep: number; // 1–4
+    wizardStep: number; // 1–5
     setupComplete: boolean;
     checkIns: CheckIn[];
     seededFocusIds?: string[];                            // v6.7: recurring-focus ids already added as intentions today (chip dedup)
@@ -272,6 +285,7 @@ export interface LifeContext {
     activeSeasonId: string | null;       // denormalized for fast lookup; mirrors seasons[].active
     restCues?: RestCue[];                // user-customized list; undefined = use built-in defaults
     backlog?: BacklogEntry[];            // v6.2: parked intentions awaiting reuse; undefined = treated as []
+    sessionTemplates?: SessionTemplate[]; // v7.1: reusable session presets; undefined = treated as []
 }
 
 /**

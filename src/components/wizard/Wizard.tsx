@@ -1,12 +1,14 @@
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Step1Intentions } from './Step1Intentions';
 import { Step2Refine } from './Step2Refine';
+import { Step3Sessions } from './Step3Sessions';
 import { Step3Schedule } from './Step3Schedule';
 import { Step4StartMusic } from './Step4StartMusic';
 
 const STEPS = [
     Step1Intentions,
     Step2Refine,
+    Step3Sessions,
     Step3Schedule,
     Step4StartMusic,
 ];

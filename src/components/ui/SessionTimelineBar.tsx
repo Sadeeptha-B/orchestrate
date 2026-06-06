@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatTimeOfDay, minutesOfDay, timeToMinutes } from '../../lib/time';
+import {
+    DEFAULT_TIMELINE_START_MINUTES,
+    DEFAULT_TIMELINE_END_MINUTES,
+    formatHour,
+} from '../../lib/timeline';
 import { getTaskTitle } from '../../lib/tasks';
 import { openSegment, segmentSeconds, totalEngagedSeconds } from '../../lib/engagement';
 import type { EngagementSegment, LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
@@ -234,17 +239,8 @@ function packLaneMarkers(markers: LaneMarker[], dayStart: number, totalMinutes: 
     return { placed, rowCount: rowsLastLeft.length };
 }
 
-export const DEFAULT_TIMELINE_START_MINUTES = 4 * 60 + 30; // 4:30 am
-export const DEFAULT_TIMELINE_END_MINUTES = 24 * 60;        // midnight (end of day)
-
-/** Format minutes since midnight to a short label like "6am", "2:30pm". Handles 1440 (midnight) as "12am". */
-function formatHour(minutes: number): string {
-    const h = Math.floor(minutes / 60) % 24;
-    const m = minutes % 60;
-    const suffix = h >= 12 ? 'pm' : 'am';
-    const display = h > 12 ? h - 12 : h === 0 ? 12 : h;
-    return m === 0 ? `${display}${suffix}` : `${display}:${String(m).padStart(2, '0')}${suffix}`;
-}
+// Re-exported for callers that historically imported these from here (e.g. CapacitySettings).
+export { DEFAULT_TIMELINE_START_MINUTES, DEFAULT_TIMELINE_END_MINUTES };
 
 interface SessionTimelineBarProps {
     /** Session slots to display on the timeline. */

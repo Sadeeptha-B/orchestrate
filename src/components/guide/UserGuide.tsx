@@ -88,17 +88,17 @@ export function UserGuide() {
                             <tbody>
                                 <Tr>
                                     <Td><strong>LifeContext</strong></Td>
-                                    <Td>Seasons, Habits, which season is active</Td>
+                                    <Td>Seasons, Habits, which season is active, session templates</Td>
                                     <Td>Durable — survives daily resets.</Td>
                                 </Tr>
                                 <Tr>
                                     <Td><strong>DayPlan</strong></Td>
-                                    <Td>Today's Intentions, linked tasks, session assignments, today's habit instances, check-ins</Td>
-                                    <Td>Resets every morning automatically.</Td>
+                                    <Td>Today's Intentions, linked tasks, the day's work sessions, session assignments, today's habit instances, check-ins</Td>
+                                    <Td>Resets every morning automatically — sessions seed from the prior day.</Td>
                                 </Tr>
                                 <Tr>
                                     <Td><strong>Settings</strong></Td>
-                                    <Td>Capacity defaults, session time slots, encrypted Todoist token, calendar config</Td>
+                                    <Td>Capacity defaults, encrypted Todoist token, calendar config</Td>
                                     <Td>Durable — independent of the day.</Td>
                                 </Tr>
                             </tbody>
@@ -150,7 +150,7 @@ export function UserGuide() {
                         <Flow>{`Create an Intention
   → link a Todoist task in Step 1
   → categorize as 'main' in Step 2
-  → assign to one session in Step 3
+  → assign to one session in Step 4
   → work on it; completion syncs back to Todoist`}</Flow>
                         <p><strong>Good for:</strong> sustained, focused work that's specific to today.</p>
                         <ExampleList heading="Examples">
@@ -434,7 +434,7 @@ export function UserGuide() {
                         <ul className="list-disc pl-5 space-y-1.5">
                             <li><strong>How it works:</strong> each session's available time = session length minus a buffer. Assigned minutes = sum of all task estimates in that session. Background tasks count once per assignment.</li>
                             <li><strong>Mid-session:</strong> the available time shrinks to whatever's left on the clock.</li>
-                            <li><strong>Where it shows up:</strong> Step 3 timeline (per-session badge + over-capacity banner) and Dashboard current session (remaining-time indicator + banner if over).</li>
+                            <li><strong>Where it shows up:</strong> Step 4 (Schedule) timeline (per-session badge + over-capacity banner) and Dashboard current session (remaining-time indicator + banner if over).</li>
                             <li><strong>It never blocks the wizard.</strong> Even at 200% you can proceed. The goal is visibility, not prevention.</li>
                             <li><strong>Habits are excluded</strong> (both kinds) — they're outside the task graph entirely.</li>
                         </ul>
@@ -503,9 +503,9 @@ export function UserGuide() {
                         <ol className="list-decimal pl-5 space-y-1.5">
                             <li>
                                 <strong>You park it manually.</strong> Every intention row in Step 1 and the
-                                "Today's intentions" panel at the top of Step 3 shows two icon buttons:{' '}
+                                "Today's intentions" panel at the top of Step 4 (Schedule) shows two icon buttons:{' '}
                                 <code>📥</code> (Move to backlog — no confirm, non-destructive) and <code>🗑</code>{' '}
-                                (Delete — confirm modal). <code>📥</code> is the low-cost default; use it when Step 3
+                                (Delete — confirm modal). <code>📥</code> is the low-cost default; use it when Step 4
                                 reveals an over-stuffed day, or mid-day when priorities shift.
                             </li>
                             <li>
@@ -538,7 +538,7 @@ export function UserGuide() {
                         <p>
                             Open the sidebar's Backlog tab and click "Bring to today" on any entry. The intention
                             reappears in today's plan and its pending tasks come back as fresh <em>unclassified</em>{' '}
-                            rows — you re-flow them through Step 2 (categorize + estimate) and Step 3 (schedule). Nothing
+                            rows — you re-flow them through Step 2 (categorize + estimate) and Step 4 (schedule). Nothing
                             carries the previous estimate or session assignment forward, by design: today's plan isn't
                             yesterday's plan.
                         </p>
@@ -613,7 +613,14 @@ Is X today-only?
                             <li>Habits aren't here — they live separately on the timeline / in Today's Habits.</li>
                         </ul>
 
-                        <SubHeading>Step 3 — Schedule</SubHeading>
+                        <SubHeading>Step 3 — Sessions</SubHeading>
+                        <ul className="list-disc pl-5 space-y-1">
+                            <li>You lay out today's work sessions on a drag-calendar: drag an empty area to add a block, drag a block to move it, drag its edges to resize, click to rename or delete. Today started seeded from yesterday's sessions, so you only tweak what's different.</li>
+                            <li>You shift the afternoon block earlier and add a short evening block. One click on the <em>"Deep Work Day"</em> template chip would have replaced the whole layout instead. <em>"Save as template"</em> stores your current layout for reuse.</li>
+                            <li>These sessions are what every later surface uses — the next step's assignment, the dashboard timeline, check-ins, and capacity all follow them.</li>
+                        </ul>
+
+                        <SubHeading>Step 4 — Schedule</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
                             <li>Phase 1 (Assign): you assign manual tasks to sessions. Habits already render in the dedicated habit lane above the session blocks, positioned at their target time. They are <em>not</em> assignable to sessions.</li>
                             <li>Phase 2 (Time): side-by-side Todoist + Calendar plus a <em>"Today's habits"</em> panel listing each instance. Any habit past its target window gets a ⤴ Reschedule affordance with a time-picker; strict ones are tagged <em>"missed"</em> but still listed and reschedulable.</li>
