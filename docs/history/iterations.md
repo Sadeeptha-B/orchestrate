@@ -2,7 +2,7 @@
 >
 > For the durable "why" see [../vision.md](../vision.md); for current implementation state see [../synthesis.md](../synthesis.md). Forward-looking proposals (currently v7+) live in [../backlog.md](../backlog.md).
 >
-> Future shipped iterations should land here as additional entries.
+> Now frozen. Too much ceremony
 
 # Orchestrate — Iteration History
 

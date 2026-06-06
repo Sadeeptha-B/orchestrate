@@ -88,21 +88,35 @@ Six options. Each is described with its mechanism, pros, cons, and rough effort.
 
 ### E. Google Calendar API via OAuth
 
-**Mechanism.** Write real Google Calendar events for engaged work through the Calendar API.
+**Mechanism.** Write real Google Calendar events for engaged work through the Calendar API. There are two materially different ways to do the OAuth, and earlier framing here conflated them. Split out:
 
-This is the "proper" calendar integration — and the one deferred during v6.3 as too complex. The realities, laid out honestly:
+#### E1. Browser-only via the GIS token client — *near-term, no backend*
 
-- **OAuth 2.0, PKCE flow** if done browser-only (no backend). Orchestrate currently authenticates to Todoist with a pasted personal token; Google Calendar's write API has no equivalent — it requires an OAuth consent flow.
-- **`calendar.events` is a sensitive/restricted scope.** Google requires the OAuth app to go through **verification** (a consent screen review) before non-test users can grant it. For a personal single-user tool the user can stay in "testing" mode and self-authorize, which sidesteps verification but caps token longevity.
-- **Access tokens expire in ~1 hour.** Refreshing them is the hard part. In a pure SPA, refresh tokens are fragile — Google's guidance for browser-only apps discourages long-lived refresh tokens, and testing-mode refresh tokens can expire in days. The practical browser-only outcome is **periodic re-consent**: the user re-authorizes every so often.
-- **The token lands in localStorage** — the same client-side-obfuscation situation as the Todoist token today.
-- **A small backend or self-hosted endpoint removes most of this friction.** A server can hold the refresh token, perform the token exchange server-side, and keep the integration robust without re-consent. This is the single feature in this document that most clearly *wants* infrastructure — and it ties directly into the companion doc, [persistence_and_backend_migration.md](./persistence_and_backend_migration.md).
+The **Google Identity Services (GIS) token client** (`google.accounts.oauth2.initTokenClient`) — the same flow already proven in a sibling app against the YouTube Data API. This is **not** the auth-code/PKCE model and behaves very differently from the pessimistic read below (E2's predecessor):
 
-**Pros.** The richest surface — engaged work as first-class events on the user's primary calendar, editable, color-coded, on the same time-axis as everything else.
+- **Client ID injected at build time; no client secret, no backend.** `scope` includes `calendar.events` (write) and `calendar.calendarlist.readonly` (auto-list the user's calendars).
+- **Access tokens (~1 hr) returned directly; no refresh token at all — by design.** Renewal is just calling `requestAccessToken({ prompt: '' })` again, which is **silent** when the Google session is alive and consent was already granted. This is *not* a re-consent prompt — the earlier "periodic re-consent" framing was about the auth-code path, not this one.
+- **Consent screen stays in "testing" mode** — self-authorized, ≤100 test users — sidestepping Google verification. First consent shows the "Google hasn't verified this app" interstitial; fine for a single-user personal tool.
+- **The token lives in memory only** — never persisted, never encrypted (it expires within the hour anyway), so there is no localStorage token-security concern like the Todoist token has.
+- **CORS-friendly.** Google's REST endpoints accept browser `Bearer` requests, so no dev proxy is needed (unlike Todoist).
 
-**Cons.** The most complex by a wide margin. Browser-only, it's fragile (re-consent friction); robust, it needs a backend. Either way it's a substantial build.
+**Pros.** A genuinely robust write path for interactive, browser-open use with zero infrastructure. Engaged work as first-class events on the user's primary calendar; auto-discovers calendars.
 
-**Effort.** High browser-only; medium-high with a self-hosted endpoint already in place.
+**Cons.** Only works while a browser tab is open with a live Google session — no unattended/background writes. Testing-mode tokens can have shorter validity, but silent re-acquisition absorbs that.
+
+**Effort.** Medium. (The auth + write plumbing is being built now — see §6.)
+
+#### E2. Robust via a backend-held refresh token — *future*
+
+The auth-code flow with a server (or self-hosted endpoint) performing the token exchange and holding the long-lived **refresh token**. This is what enables **unattended/background** writes (e.g. a server writing engagement events with no tab open) and removes even the silent-refresh dependency.
+
+- This is the single feature in this document that most clearly *wants* infrastructure — it ties directly into the companion doc, [persistence_and_backend_migration.md](./persistence_and_backend_migration.md).
+
+**Pros.** The richest, most durable surface; works without a browser tab open.
+
+**Cons.** Needs a backend and the token-exchange/refresh machinery.
+
+**Effort.** Medium-high with a self-hosted endpoint already in place; not worth attempting before the infrastructure decision lands.
 
 ### F. Defer surfacing to the v8 Reviews iteration
 
@@ -122,7 +136,8 @@ This is the "proper" calendar integration — and the one deferred during v6.3 a
 | B. Todoist comments | ✅ (in Todoist) | ❌ | ❌ | none | ❌ (needs network) | Low–Med |
 | C. Todoist `duration` | ⚠️ (lossy) | ❌ | ❌ | none | ❌ | Low |
 | D. ICS feed | ✅ | ✅ | ❌ | hosting for the feed | ✅ (read), ❌ (publish) | Med |
-| E. Google Calendar API | ✅ | ✅ (richest) | ✅ | none (fragile) / backend (robust) | ❌ | High / Med-High |
+| E1. Google Calendar via GIS token client | ✅ | ✅ (richest) | ✅ | none | ❌ (needs tab + session) | Med |
+| E2. Google Calendar via backend refresh token | ✅ | ✅ (richest) | ✅ | backend | ❌ | Med-High |
 | F. v8 Reviews consumer | — (consumer) | ❌ (retrospective) | ❌ | none | ✅ | Part of v8 |
 
 ## 6. Recommendation
@@ -132,7 +147,8 @@ A layered approach — these are not mutually exclusive.
 - **Foundation, near-term: option A — `life.engagementHistory`.** It is the smallest diff, has no external dependency, is offline-safe, and works entirely within the current localStorage model. Every other option that needs a durable record can read from it. The v6.3 `'unfinished'` reschedule predecessor is already a harvest source. **This can ship as its own small iteration at any time and needs no backend.**
 - **Optional mirror: option B — Todoist comments.** A cheap, no-OAuth way to get cross-app visibility once option A exists. Worth a settings toggle, not worth blocking on.
 - **Consumer: option F — v8 Reviews.** The engagement history is exactly the input the v8 review flows need. Building option A *now* means v8 has real data to work with when it arrives.
-- **Time-axis surface: option D or E — deferred.** A genuine calendar surface is desirable but not urgent. Option D (ICS) is the lighter path and pairs with even a minimal self-hosted endpoint. Option E (Google Calendar API) is the richest but is materially easier and more robust *with* a backend — so it should be sequenced against the infrastructure decision in the companion doc rather than attempted browser-only.
+- **Time-axis surface: option E1 now (auth + write plumbing), full feature later.** The **GIS token-client write plumbing (option E1) is being adopted now** as a standalone iteration: OAuth via GIS, auto-listing the user's calendars (replacing the manual calendar-ID config), and a `createEvent` write action — but *no concrete engagement-event write yet*. That waits on the durable record (option A) existing to write *from*. This is deliberately the smallest sufficient step: it unlocks the write path with zero infrastructure, leaving the richer **option E2** (backend-held refresh token, unattended writes) for the infrastructure iteration.
+- **Time-axis surface alternative: option D — deferred.** Option D (ICS) is the lighter calendar-surface path and pairs with even a minimal self-hosted endpoint; consider it against the infrastructure decision in the companion doc.
 - **Drop option C.** The semantic mismatch isn't worth it.
 
 ## 7. Sequencing
@@ -140,4 +156,5 @@ A layered approach — these are not mutually exclusive.
 1. **Option A** — `life.engagementHistory` — can land independently, anytime, as a small iteration. No dependency on anything else.
 2. **Option B** — Todoist comments — a small follow-up once A exists, if cross-app visibility is wanted.
 3. **Option F** — consuming the history — happens naturally as part of the v8 Reviews iteration.
-4. **Options D / E** — the time-axis surface — depend on the infrastructure direction. See [persistence_and_backend_migration.md](./persistence_and_backend_migration.md): option E in particular is the most concrete near-term feature that benefits from a (preferably self-hosted) backend. Note that **option A needs no backend at all**, so durable engagement records and the calendar-surface question can proceed on independent timelines.
+4. **Option E1** — Google Calendar OAuth via the GIS token client — is being built now as a standalone iteration: auth + auto-list calendars + a `createEvent` write action (plumbing only; no engagement-event write yet). Needs no backend. Once option A exists, wiring engaged work into `createEvent` is a small follow-up.
+5. **Options D / E2** — the *unattended/hosted* time-axis surfaces — depend on the infrastructure direction. See [persistence_and_backend_migration.md](./persistence_and_backend_migration.md): option E2 (backend-held refresh token) is the most concrete near-term feature that benefits from a (preferably self-hosted) backend. Note that **option A needs no backend at all**, so durable engagement records and the calendar-surface question can proceed on independent timelines.
