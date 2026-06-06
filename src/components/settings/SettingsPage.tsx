@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Logo } from '../ui/Logo';
 import { HeaderControls } from '../ui/HeaderControls';
 import { TodoistSetup } from '../todoist/TodoistSetup';
+import { GoogleCalendarSetup } from './GoogleCalendarSetup';
 import { DataManagement } from './DataManagement';
 import { CapacitySettings } from './CapacitySettings';
 import { useDayPlan } from '../../hooks/useDayPlan';
@@ -98,7 +99,14 @@ export function SettingsPage() {
                     {/* Tab content */}
                     <section className="flex-1 min-w-0">
                         <h2 className="text-lg font-semibold mb-4">{TAB_LABELS[activeTab]}</h2>
-                        {activeTab === 'integrations' && <TodoistSetup />}
+                        {activeTab === 'integrations' && (
+                            <div className="space-y-8">
+                                <TodoistSetup />
+                                <div className="pt-6 border-t border-border">
+                                    <GoogleCalendarSetup />
+                                </div>
+                            </div>
+                        )}
                         {activeTab === 'capacity' && <CapacitySettings />}
                         {activeTab === 'data' && (
                             <DataManagement onShowSavedSessions={handleShowSavedSessions} />

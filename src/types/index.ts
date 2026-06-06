@@ -157,8 +157,9 @@ export interface SavedDayPlan {
 
 export interface GoogleCalendarEntry {
     id: string;
-    name?: string;  // user-friendly label, e.g. "Work", "Todoist"
-    color?: string; // hex color for the embed, e.g. "#009688"
+    name?: string;    // user-friendly label, e.g. "Work", "Todoist"
+    color?: string;   // hex color for the embed, e.g. "#009688"
+    primary?: boolean; // v7.2: the user's primary calendar (from the Calendar API list)
 }
 
 /** v6: per-kind defaults for habit-instance duration. Habits override via Habit.targetDurationMinutes (v6.1). */
@@ -175,7 +176,8 @@ export interface AppSettings {
     todoistToken?: string;
     todoistTokenIV?: string;
     todoistTokenKey?: string;
-    googleCalendarIds?: GoogleCalendarEntry[];
+    googleCalendarIds?: GoogleCalendarEntry[]; // v7.2: the *selected* calendars to overlay (sourced from the Calendar API list)
+    googleCalendarConnected?: boolean;         // v7.2: user has authorized Google Calendar via GIS; drives silent reconnect on load. The access token itself is in-memory only, never persisted.
     calendarViewMode?: CalendarViewMode;
     taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
     sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)
