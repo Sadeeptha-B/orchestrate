@@ -15,7 +15,7 @@ The core problem it targets:
 - **Contextualization friction.** The mental work of comparing today's goals against an existing todo list, breaking work into actionable tasks, fitting them into available time, and locking into a working state is high-effort and skipped by most apps.
 - **Sustained focus.** Once the day starts, drift, fatigue, and context loss erode follow-through. Orchestrate nudges hour-by-hour and ties working state to a music protocol.
 
-The app is **opinionated and personal** to the author's workflow: fixed default session slots (early morning, morning, afternoon, night), a curated 6-playlist Spotify protocol, and integrations with the specific tools the author already uses (Todoist + Google Calendar).
+The app is **opinionated and personal** to the author's workflow: per-day work sessions (v7.1 — defined on a drag-calendar each morning, seeded from the prior day, with reusable templates; built-in defaults are early morning, morning, afternoon, night), a curated 6-playlist Spotify protocol, and integrations with the specific tools the author already uses (Todoist + Google Calendar).
 
 ---
 
@@ -57,7 +57,7 @@ StrictMode                         (main.tsx)
 
 ### 3.2 Routing
 
-Ten routes, all defined in `AppRoutes` inside `App.tsx`:
+Eleven routes, all defined in `AppRoutes` inside `App.tsx`:
 
 | Path | Component | Guard |
 |---|---|---|
@@ -68,6 +68,7 @@ Ten routes, all defined in `AppRoutes` inside `App.tsx`:
 | `/season` | `SeasonsManager` | Always reachable. List + create + activate seasons |
 | `/season/:id` | `SeasonDetail` | Always reachable. Single-season editor with member-habit list |
 | `/habits` | `HabitsLibrary` | Always reachable. CRUD habits; deleting an active anchor prompts a confirm |
+| `/session-templates` | `SessionTemplatesManager` | Always reachable (v7.1). CRUD reusable session-slot templates; "Apply to today" replaces `plan.sessionSlots` |
 | `/settings` | `SettingsPage` | Always reachable. Vertical-tab layout: Integrations, Capacity, Data |
 | `/guide` | `UserGuide` | Always reachable. In-app user guide. Linked from the About modal. |
 | `*` | Redirect to `/` | Catch-all |
@@ -118,7 +119,8 @@ reducer actions, or schema migration — Focus Mode is a view over the existing 
 | **Recurring focus** | v6.7: a season-scoped recurring *work-thread* (e.g. "Learn redis") on `Season.recurringFocuses[]`. Not a habit — on matching days the Step 1 banner offers a "+ Add" chip that seeds an Intention (then broken down via the normal pipeline). Manual-only; deduped via `plan.seededFocusIds`. |
 | **True Rest** | Catalog of non-task recovery cues. 8 built-in; user-customizable via the `/life` page True Rest card. Surfaced as a collapsible card in the Dashboard habits rail, in the check-in modal for low-energy states, and as a between-session banner. |
 | **Anchor habit** | `isAnchor: true` -- a load-bearing habit (sleep, meditation, gym, shutdown, review). Pure importance tag, orthogonal to `kind`: sorts first in habit lists and prompts a confirm before deleting an active one. Reserved for recovery-mode / Minimum Viable Day. |
-| **Session** | A configurable time block (default: early-morning, morning, afternoon, night). Tasks are assigned to sessions. |
+| **Session** | A per-day work time block on `DayPlan.sessionSlots` (v7.1), defined on the wizard's drag-calendar and seeded from the last-used day. Tasks are assigned to sessions. |
+| **Session template** | A named, reusable set of session slots on `LifeContext.sessionTemplates` (v7.1). Managed at `/session-templates`; quick-applied during the wizard's Sessions step. |
 | **Session capacity** | Advisory arithmetic: `(session length - buffer) - total estimatedMinutes`. Status `over` at >150% -- non-blocking banner, wizard always advances. |
 | **Check-in** | Hourly prompt during active sessions: feeling + work type -> playlist suggestion. Low-resource states surface a couple of micro-gap rows + True Rest cue. `stuck` adds avoidance-note capture. |
 
@@ -127,7 +129,7 @@ reducer actions, or schema migration — Focus Mode is a view over the existing 
 ## 5. Application Lifecycle
 
 ```
-Welcome (hub) --> Wizard (4 steps) --> Dashboard
+Welcome (hub) --> Wizard (5 steps) --> Dashboard
                        ^                   |
                        +-------------------+  (Edit Plan / Recontextualize)
 ```
@@ -148,7 +150,7 @@ Appears at `/` whenever `plan.setupComplete === false`. Once complete, `/` shows
 
 The top-right fixed controls -- About, Settings, ThemeToggle -- are rendered by the shared `HeaderControls` component across all surfaces.
 
-### 5.2 Wizard (4 Steps)
+### 5.2 Wizard (5 Steps)
 
 A sequential flow captured in `plan.wizardStep` (1-indexed, persists across refreshes). `WizardLayout` wraps every step with a collapsible saved-sessions sidebar, header with step progress pills, and Back/Next footer. An "editing" mode supports returning from the dashboard.
 
@@ -156,13 +158,15 @@ A sequential flow captured in `plan.wizardStep` (1-indexed, persists across refr
 
 2. **Step 2 -- Refine** (`Step2Refine`). Per-intention sequential flow: categorize each linked task as **main** or **background**, set an **estimate** (preset pills or custom). Background tasks clamp to `taskCapDefaults.manualBackground`. Tasks > 60 min trigger a nudge to break down via the TodoistPanel.
 
-3. **Step 3 -- Schedule** (`Step3Schedule`). Two phases:
+3. **Step 3 -- Sessions** (`Step3Sessions`, v7.1). Define the day's work sessions on a **drag-calendar** (`SessionEditorTimeline`): drag an empty area to add a block, drag a block to move, drag its edges to resize, click to rename/delete (15-min snapping, advisory overlap tint). The day's sessions live on `DayPlan.sessionSlots` (seeded from the last-used day) and drive every surface thereafter. **Session Templates** (from the Life section) appear as quick-apply chips — applying one replaces the day's sessions (and clears assignments, with a confirm if any exist). A "Save as template" affordance persists the current layout to `LifeContext.sessionTemplates`. Granular reducer actions (`ADD_/UPDATE_/REMOVE_DAY_SESSION`, `APPLY_SESSION_TEMPLATE`) keep session ids stable so assignments survive a Back-edit.
+
+4. **Step 4 -- Schedule** (`Step3Schedule`). Two phases:
    - **Phase 1 (Assign):** Proportional `SessionTimelineBar` shows **all of the day's sessions** as blocks (past ones sit left of the now-line) plus a dedicated **habit lane** above where `TodaysHabitInstance` rows render at their `targetTime` (untimed ones cluster as "Anytime today"). A built-in **view toggle** (top-right) cycles the bar between the full configured day and just the remaining part of the day; the remaining view anchors its left edge to the in-progress session's start so the current session stays fully visible even though it began before now. Clicking a session opens its detail panel: current/upcoming sessions allow assigning tasks; a **past session is read-only for new assignments** but its tasks can be moved forward to a current/upcoming session via a "Move to…" dropdown. Task placement honours Step 1's sequencing (intentions in plan order, tasks in `linkedTaskIds` order) consistently — inside the timeline session blocks (via the bar's `taskOrder` prop) and in the selected-session detail panel (assigned groups, assigned background, and the Add-task lists). A "Today's intentions" overview panel lists every active intention with archive/delete buttons. The "Today's habits" panel exposes ✓ Done (mark complete) alongside Reschedule. Cannot advance until at least one task is assigned.
    - **Phase 2 (Time):** Side-by-side TodoistPanel + Google Calendar for time-blocking, plus a "Today's habits" panel above (habit-kind only; micro-gaps are off-timeline). Habits past their target window get an inline reschedule affordance; v6.8 strict ones are tagged "missed" (greyed) but still listed and reschedulable.
 
-4. **Step 4 -- Start Music** (`Step4StartMusic`). Plays the "Start Work" Spotify playlist as a ramp-in trigger, then transitions to the Dashboard.
+5. **Step 5 -- Start Music** (`Step4StartMusic`). Plays the "Start Work" Spotify playlist as a ramp-in trigger, then transitions to the Dashboard.
 
-The user can return from the Dashboard: "Edit Plan" -> Step 1, "Recontextualize" -> Step 3.
+The user can return from the Dashboard: "Edit Plan" -> Step 1, "Recontextualize" -> Step 4 (Schedule).
 
 ### 5.3 Dashboard
 
@@ -202,17 +206,17 @@ Three independent state contexts, each serving a distinct domain.
 **File:** `src/context/DayPlanContext.tsx`
 
 Manages:
-- **`plan`** -- today's `DayPlan` (intentions, linked tasks, task-session assignments, today's habit instances, wizard step, check-ins).
-- **`settings`** -- persistent `AppSettings` (notification preference, session slots, encrypted Todoist token, Google Calendar config).
+- **`plan`** -- today's `DayPlan` (intentions, linked tasks, the day's `sessionSlots` (v7.1), task-session assignments, today's habit instances, wizard step, check-ins).
+- **`settings`** -- persistent `AppSettings` (notification preference, legacy session-slot fallback, encrypted Todoist token, Google Calendar config). Note (v7.1): the live per-day sessions are `plan.sessionSlots`; `settings.sessionSlots` is only a seed/reset fallback now.
 - **`editingStep`** -- tracks whether the user is re-editing from the dashboard (`number | null`).
 - **`history`** -- array of `SavedDayPlan` entries for past sessions.
-- **`life`** -- persistent `LifeContext` (seasons, habits, activeSeasonId, backlog, rest cues).
+- **`life`** -- persistent `LifeContext` (seasons, habits, activeSeasonId, backlog, rest cues, session templates (v7.1)).
 
 **Architecture:** `useReducer` with a ~57-action discriminated union. State is initialized lazily via `loadInitialState()` which calls `peekRawPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day-rollover migration in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
 
 **Plan date freshness + rollover:** `peekRawPlan()` returns the parsed/migrated plan without a date gate. If the date is stale, `loadInitialState` runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for unfinished intentions, appending them to `life.backlog` with `reason: 'rollover'`. No automatic save to `SavedDayPlan` history at rollover -- the backlog preserves the meaningful unfinished part. Manual `SAVE_DAY` is the only writer to history. Auto-rollover does NOT touch Todoist -- yesterday's tasks remain visibly overdue.
 
-**Migration chain:** Plans include `_wizardSteps` (legacy) and `_schemaVersion` (currently `6.3`, a JSON float) markers. On load, `migratePlan()` runs transformations from v1 through v6.4. The v6.4 step (engagement segments + `'unfinished'`-status coercion) is additive-optional, so the `_schemaVersion` marker deliberately stays at `6.3`. See [data-model.md](./data-model.md) for the full migration chain.
+**Migration chain:** Plans include `_wizardSteps` and `_schemaVersion` (currently `7.1`, a JSON float) markers. On load, `migratePlan()` runs transformations from v1 through v7.1. The v7.1 step backfills `DayPlan.sessionSlots` (per-day sessions), bumps the wizard step for the inserted Sessions step (4-step → 5-step, schema-gated so current plans are untouched), and seeds `LifeContext.sessionTemplates`. See [data-model.md](./data-model.md) for the full migration chain.
 
 **Cross-slice invariants the reducer enforces:**
 - Activating a season auto-deactivates the previously active one.
@@ -392,7 +396,7 @@ All via `localStorage`. No backend — this is the current implementation, not a
 **Backup**: Settings page Data tab has Full Backup (bundles settings + life + history), Import Backup (merge-by-id), Import/Export Sessions. `HistorySidebar` has per-session Restore/Export/Delete.
 
 **Reset**: Settings → Data → Reset section has two destructive actions, each gated by a `ConfirmModal`:
-- **Reset Today's Plan** dispatches `RESET_DAY` — replaces `plan` with `freshPlan()` and clears `editingStep`. Settings, history, life (seasons / habits / backlog / rest cues), and Todoist auth are untouched. Useful for cleaning up after a `RESTORE_DAY` that imported an unwanted session.
+- **Reset Today's Plan** dispatches `RESET_DAY` — replaces `plan` with a fresh plan (sessions re-seeded from settings/defaults) and clears `editingStep`. Settings, history, life (seasons / habits / backlog / rest cues / session templates), and Todoist auth are untouched. Useful for cleaning up after a `RESTORE_DAY` that imported an unwanted session.
 - **Reset Everything** dispatches `RESET_ALL` and manually clears `orchestrate-todoist-cache` — a factory reset of all four reducer-managed slices (plan + settings + history + life). Todoist token is wiped; tasks/projects in Todoist itself are not modified. Theme and music prefs (separate localStorage keys outside the reducer) survive.
 
 ---
@@ -468,6 +472,7 @@ src/
 |   +-- seasons.ts              # findActiveSeason, getSeasonProgress
 |   +-- tasks.ts                # getTaskTitle, collectDescendantIds
 |   +-- capacity.ts             # computeSessionCapacity / computeAllSessionCapacities
+|   +-- timeline.ts             # time<->position geometry (formatHour, minutesToPct/pctToMinutes)
 |   +-- spotify.ts              # spotifyPlaylistId, isValidSpotifyUrl
 |   `-- todoistApi.ts           # API_BASE, validateTodoistToken
 |
@@ -481,7 +486,7 @@ src/
     +-- Welcome.tsx
     +-- wizard/
     |   +-- Wizard.tsx, WizardLayout.tsx
-    |   +-- Step1Intentions.tsx, Step2Refine.tsx, Step3Schedule.tsx, Step4StartMusic.tsx
+    |   +-- Step1Intentions.tsx, Step2Refine.tsx, Step3Sessions.tsx, Step3Schedule.tsx, Step4StartMusic.tsx
     +-- dashboard/
     |   +-- Dashboard.tsx, SessionTimeline.tsx, MusicPanel.tsx, DigitalClock.tsx
     |   +-- InsightCard.tsx, HistorySidebar.tsx, BacklogTab.tsx
@@ -497,12 +502,12 @@ src/
     |   `-- UserGuide.tsx       # Single source for user guide content
     +-- life/
     |   +-- LifeShell.tsx, LifeView.tsx, SeasonsManager.tsx, SeasonDetail.tsx, SeasonForm.tsx
-    |   +-- HabitsLibrary.tsx, HabitForm.tsx, RestCuesEditor.tsx
+    |   +-- HabitsLibrary.tsx, HabitForm.tsx, RestCuesEditor.tsx, SessionTemplatesManager.tsx
     |   +-- SeasonFocusBanner.tsx, SeasonContextCard.tsx
     |   `-- ActiveSeasonBadge.tsx
     `-- ui/
         +-- Button.tsx, Card.tsx, Modal.tsx, ConfirmModal.tsx, ProgressBar.tsx
-        +-- ErrorBoundary.tsx, EditableTaskList.tsx, SessionTimelineBar.tsx
+        +-- ErrorBoundary.tsx, EditableTaskList.tsx, SessionTimelineBar.tsx, SessionEditorTimeline.tsx
         +-- AboutContent.tsx, Logo.tsx, HeaderControls.tsx, ThemeToggle.tsx
         `-- formStyles.ts
 ```

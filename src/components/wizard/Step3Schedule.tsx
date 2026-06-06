@@ -27,10 +27,10 @@ export function Step3Schedule() {
     const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
     // v6.8: strict habits whose window has elapsed render greyed ("missed") but stay actionable.
     const missedInstanceIds = getMissedInstanceIds(life, timelineHabits, new Date());
-    const { remainingSessions } = useCurrentSession(settings.sessionSlots);
+    const { remainingSessions } = useCurrentSession(plan.sessionSlots);
     // Whole-day session list so the timeline shows past sessions too (greyed, left of the
     // now-line). Past sessions stay visible for reference and as a source to move tasks from.
-    const allSessions = settings.sessionSlots;
+    const allSessions = plan.sessionSlots;
     const nowMinutes = minutesOfDay(new Date());
     const isPastSession = (s: SessionSlot) => timeToMinutes(s.endTime) <= nowMinutes;
     const { taskMap } = useTodoistData();
@@ -104,7 +104,7 @@ export function Step3Schedule() {
     const allTasksCompleted = plan.linkedTasks.length > 0 && plan.linkedTasks.every((lt) => lt.completed);
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 5 });
     };
 
     const selectedSession = allSessions.find((s) => s.id === selectedSessionId);

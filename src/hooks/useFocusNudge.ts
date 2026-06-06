@@ -28,7 +28,7 @@ function isAnythingEngaged(plan: DayPlan): boolean {
  * current nudge (for an in-app banner) plus a `dismiss`; browser notifications respect the preference.
  */
 export function useFocusNudge(plan: DayPlan, settings: AppSettings) {
-    const { currentSession } = useCurrentSession(settings.sessionSlots);
+    const { currentSession } = useCurrentSession(plan.sessionSlots);
     const { sendNotification } = useNotifications();
     const [nudge, setNudge] = useState<FocusNudge | null>(null);
     const trackedSessionId = useRef<string | null>(null);

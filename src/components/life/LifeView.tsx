@@ -195,6 +195,19 @@ export function LifeView() {
                 </Card>
 
                 <Card className="md:col-span-2">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-medium">Session templates</h3>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/session-templates')}>
+                            Manage
+                        </Button>
+                    </div>
+                    <p className="text-xs text-text-light">
+                        Reusable layouts of work sessions you can apply in one click when planning a
+                        day. {(life.sessionTemplates ?? []).length} saved.
+                    </p>
+                </Card>
+
+                <Card className="md:col-span-2">
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="font-medium">All active habits</h3>
                         <div className="flex items-center gap-2">

@@ -331,11 +331,11 @@ interface CurrentSessionProps {
 
 export function CurrentSession({ pinnedSessionId, onPinnedChange }: CurrentSessionProps) {
     const { plan, settings } = useDayPlan();
-    const { currentSession, remainingSessions } = useCurrentSession(settings.sessionSlots);
+    const { currentSession, remainingSessions } = useCurrentSession(plan.sessionSlots);
     const { taskMap } = useTodoistData();
     const drag = useTaskDrag();
 
-    const sessions = settings.sessionSlots;
+    const sessions = plan.sessionSlots;
 
     const intentionMap = useMemo(
         () => new Map(plan.intentions.map((i) => [i.id, i])),
@@ -479,7 +479,7 @@ interface SessionTimelineProps {
 
 export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTimelineProps) {
     const { plan, life, settings } = useDayPlan();
-    const { currentSession } = useCurrentSession(settings.sessionSlots);
+    const { currentSession } = useCurrentSession(plan.sessionSlots);
     const { taskMap } = useTodoistData();
 
     // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps live in their own panel.
@@ -489,7 +489,7 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
 
     return (
         <SessionTimelineBar
-            sessions={settings.sessionSlots}
+            sessions={plan.sessionSlots}
             taskSessions={plan.taskSessions}
             linkedTasks={plan.linkedTasks}
             taskMap={taskMap}

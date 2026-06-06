@@ -80,6 +80,7 @@ The central document for a single day. Stored in localStorage and auto-reset dai
 - `linkedTasks` is the flat, denormalized list of intention-bound tasks. Each task's `intentionId` back-references its parent.
 - `todaysHabits` is a parallel list for habit instances (both kinds, v6.6). Independent of `linkedTasks` / `taskSessions`.
 - `taskSessions` is a map from session IDs to ordered arrays of Todoist task IDs. **Habits never appear here.**
+- `sessionSlots` (v7.1) is the **authoritative per-day session list** — every downstream surface (dashboard timeline, carousel, check-ins, capacity, focus nudge) reads it, not `AppSettings.sessionSlots`. Seeded on a new day from the most-recent persisted plan's slots (continuity) → else the legacy global `settings.sessionSlots` → else `defaultSessionSlots`, always with fresh ids. Edited in the wizard's **Sessions** step. `taskSessions` keys reference these ids.
 - `intentions[i].linkedTaskIds` is the ordered list of task IDs belonging to that intention. Kept in sync with `linkedTasks` by the reducer.
 - `seededFocusIds` (v6.7, optional): recurring-focus ids already added as intentions today, so the Step 1 banner chip doesn't re-offer them. Preserved across same-day reloads; reset on rollover.
 
@@ -87,11 +88,17 @@ The central document for a single day. Stored in localStorage and auto-reset dai
 
 ### SessionSlot
 
-A configurable time block. Defaults: early-morning (06:00-08:00), morning (09:00-13:00), afternoon (14:30-18:30), night (20:30-23:00). Defined in `src/data/sessions.ts`.
+A configurable time block (`{ id, name, startTime, endTime }`). Built-in defaults: early-morning (06:00-08:00), morning (09:00-13:00), afternoon (14:30-18:30), night (20:30-23:00) in `src/data/sessions.ts`. **v7.1: sessions are per-day** — the live list lives on `DayPlan.sessionSlots`, edited via a drag-calendar in the wizard's Sessions step. The midnight end-of-day boundary is serialized as `"24:00"` (→ 1440 via `timeToMinutes`), never `"00:00"`.
+
+### SessionTemplate
+
+v7.1: a named, reusable set of session slots (`{ id, name, slots: SessionSlot[], createdAt }`) stored on `LifeContext.sessionTemplates`. Managed in the Life section (`/session-templates`) and quick-applied during the wizard's Sessions step. Applying a template (`APPLY_SESSION_TEMPLATE`) replaces `DayPlan.sessionSlots` with **fresh-id copies** of the template's slots and clears all task assignments (every prior session id vanishes).
 
 ### AppSettings
 
 Persistent user preferences. Survives daily plan resets.
+
+**`sessionSlots`** (v7.1): no longer the live source for the day's sessions — retained only as a legacy seed/reset fallback and the source for the one-time "My sessions" template migration. The live per-day list is `DayPlan.sessionSlots`.
 
 **Token encryption:** The Todoist token is AES-256-GCM encrypted client-side. `encryptToken()` generates a random key + IV, encrypts, returns all three as base64. Key + IV + ciphertext all live in localStorage — protects against casual inspection, not determined browser-profile access.
 
@@ -155,7 +162,7 @@ Not a Habit — no completion semantics, no logging, no streak. Pure prompt data
 
 ### LifeContext
 
-Persistent state slice holding multi-day entities: `seasons`, `habits`, `activeSeasonId`, `restCues`, `backlog`. Persisted to `orchestrate-life-context` localStorage key.
+Persistent state slice holding multi-day entities: `seasons`, `habits`, `activeSeasonId`, `restCues`, `backlog`, `sessionTemplates` (v7.1). Persisted to `orchestrate-life-context` localStorage key.
 
 ---
 
@@ -169,7 +176,8 @@ Habit      1 --> 1  TodaysHabitInstance per day  (via habitId; reschedule is in-
 TodaysHabitInstance  -->  TodoistTask  (via todoistTaskId; stable recurring task, 'habit' kind only)
 Habit      N --> M  Season           (via seasonIds; [] = always-on)
 BacklogEntry     -->  Intention      (snapshot, pending-only linkedTaskIds)
-DayPlan          -->  SessionSlot[]  (via AppSettings.sessionSlots)
+DayPlan          1 --> N  SessionSlot (via DayPlan.sessionSlots; authoritative per-day, v7.1)
+SessionTemplate  1 --> N  SessionSlot (LifeContext.sessionTemplates; quick-applied in the wizard)
 ```
 
 `DayPlan.taskSessions` is the source of truth for session assignments. `LinkedTask.assignedSessions` is a derived convenience kept in sync by the reducer.
@@ -239,10 +247,21 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `COMPLETE_SETUP` | *(none)* | Sets `plan.setupComplete = true` |
 | `ADD_CHECKIN` | `checkIn` | Appends to `plan.checkIns` |
 | `MARK_FOCUS_SEEDED` | `focusId` | v6.7: records a recurring-focus id in `plan.seededFocusIds` so the Step 1 banner chip doesn't re-offer it today. Idempotent. |
-| `RESET_DAY` | *(none)* | Replaces plan with `freshPlan()`, clears `editingStep`. Other slices (settings, history, life) untouched. Surfaced from Settings → Data → Reset Today's Plan. |
-| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan()`, `history = []`, `life = emptyLifeContext()`, `settings` back to defaults (Todoist token cleared). Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). Surfaced from Settings → Data → Reset Everything. |
+| `RESET_DAY` | *(none)* | Replaces plan with `freshPlan(seedSessionSlots(...))` (sessions re-seeded from settings/defaults), clears `editingStep`. Other slices (settings, history, life) untouched. Surfaced from Settings → Data → Reset Today's Plan. |
+| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings` back to defaults (Todoist token cleared). Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). Surfaced from Settings → Data → Reset Everything. |
 | `UPDATE_SETTINGS` | `settings` | Shallow-merges into settings |
 | `SET_EDITING_STEP` | `step` | Tracks which wizard step the user is re-editing from the dashboard |
+
+### 3.5b Per-Day Session Actions (v7.1)
+
+Operate on `DayPlan.sessionSlots`. Granular and **id-stable** so `taskSessions` / `assignedSessions` survive rename/resize.
+
+| Action | Payload | Effect |
+|---|---|---|
+| `ADD_DAY_SESSION` | `session` (no id) | Appends a slot; reducer stamps a fresh `id`. |
+| `UPDATE_DAY_SESSION` | `session` | Replaces by id (rename/resize/move). No assignment impact — id is preserved. |
+| `REMOVE_DAY_SESSION` | `sessionId` | Removes the slot **and** prunes `taskSessions[sessionId]` plus every `linkedTask.assignedSessions` entry for it. |
+| `APPLY_SESSION_TEMPLATE` | `templateId` | Replaces `sessionSlots` with fresh-id copies of the template's slots; clears `taskSessions` and all `assignedSessions` (old ids vanish). UI confirms when assignments exist. |
 
 ### 3.6 History Actions
 
@@ -278,11 +297,21 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `DELETE_REST_CUE` | `cueId` | Removes cue. Auto-seeds if undefined. |
 | `REPLACE_REST_CUES` | `cues | undefined` | Bulk-replaces. Pass `undefined` to reset to built-in defaults. |
 
+### 3.10 Session Template Actions (v7.1)
+
+Operate on `LifeContext.sessionTemplates` (mirrors the Habit/RestCue CRUD pattern; persisted to `orchestrate-life-context`).
+
+| Action | Payload | Effect |
+|---|---|---|
+| `ADD_SESSION_TEMPLATE` | `template` (no id/createdAt) | Appends; reducer stamps `id` + `createdAt`. |
+| `UPDATE_SESSION_TEMPLATE` | `template` | Replaces by id. |
+| `DELETE_SESSION_TEMPLATE` | `templateId` | Removes by id. |
+
 ---
 
 ## 4. Migration Chain
 
-Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On load, `migratePlan()` applies transformations. Current schema: **6.3**.
+Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On load, `migratePlan()` applies transformations. Current schema: **7.1**.
 
 ### v1 -> v2: Tasks to Intentions
 - **Trigger:** Plan has `tasks` array instead of `intentions`.
@@ -341,10 +370,16 @@ Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On lo
 - Additive: `Season.recurringFocuses?`, `DayPlan.seededFocusIds?`, new `MARK_FOCUS_SEEDED` action, `RecurringFocus` type.
 - `_schemaVersion` marker **stays at `6.3`** (`migrateHabit`/`migrateTaskCaps` handle the life/settings remaps; plan is daily-ephemeral; new fields are additive optionals).
 
+### v7.1: Per-day sessions + session templates (`_schemaVersion` -> **7.1**, `_wizardSteps` -> **5**)
+- `DayPlan.sessionSlots` becomes the authoritative per-day session list. `migratePlan` **backfills** it from the persisted plan (`raw.sessionSlots`) or, when absent, `defaultSessionSlots` (the pure plan migrator has no `settings`). `freshPlan(seed)` seeds a new day via `seedSessionSlots()` — previous plan's slots → `settings.sessionSlots` → defaults, all with fresh ids.
+- `LifeContext.sessionTemplates` added. On first load, `seedSessionTemplates()` preserves a customized legacy `settings.sessionSlots` as a single `"My sessions"` template (else `[]`), so per-day sessions don't lose the old global customization. Sets `[]` once so it never re-seeds.
+- `settings.sessionSlots` is no longer read live — retained only as the seed/reset fallback and the template-seed source.
+
 ### Wizard step migration
 - 6-step -> 5-step: steps 2+ shift down by 1.
-- 5-step -> 4-step: old step 4 (nudges) merges into step 3.
-- All clamped to `max: 4`.
+- legacy 5-step -> 4-step: old step 4 (nudges) merges into step 3 (**pre-7.1 only** — gated on `_schemaVersion < 7.1` so it never fires on a current 5-step plan).
+- **v7.1: 4-step -> 5-step** — a new "Sessions" step is inserted at position 3, so any persisted step `>= 3` shifts up by 1 (old Schedule 3→4, Music 4→5). Gated on `_wizardSteps === 4 && _schemaVersion < 7.1`.
+- All clamped to `max: 5`.
 
 ### Settings migration
 - Single `googleCalendarId` string -> `GoogleCalendarEntry[]`.
@@ -359,7 +394,7 @@ Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On lo
 | `orchestrate-day-plan` | Serialized `DayPlan` + `_wizardSteps` + `_schemaVersion` markers | `_wizardSteps` injected during serialization, read during migration only |
 | `orchestrate-settings` | Serialized `AppSettings` | Token fields are base64-encoded ciphertext/IV/key |
 | `orchestrate-history` | `SavedDayPlan[]` | Each entry contains a full plan snapshot |
-| `orchestrate-life-context` | Serialized `LifeContext` + `_schemaVersion` | Seasons, habits, backlog, rest cues |
+| `orchestrate-life-context` | Serialized `LifeContext` + `_schemaVersion` | Seasons, habits, backlog, rest cues, session templates (v7.1) |
 | `orchestrate-todoist-cache` | `{ tasks, projects, sections, fetchedAt }` | Stale-while-revalidate (5min hydration / 30s focus) |
 | `orchestrate-theme` | `"light"` or `"dark"` | Written by `useTheme` |
 | `orchestrate-active-playlist` | Playlist ID string | Written by `MusicProvider` |

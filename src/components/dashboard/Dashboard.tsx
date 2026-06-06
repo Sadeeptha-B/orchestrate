@@ -44,11 +44,11 @@ export function Dashboard() {
     const { plan, settings, life, dispatch } = useDayPlan();
     const navigate = useNavigate();
     const { showCheckin, dismiss } = useHourlyCheckin(
-        settings.sessionSlots,
+        plan.sessionSlots,
         plan.setupComplete,
         settings.notificationPreference,
     );
-    const { nextSessionStartsWithin } = useCurrentSession(settings.sessionSlots);
+    const { nextSessionStartsWithin } = useCurrentSession(plan.sessionSlots);
     const { nudge: focusNudge, dismiss: dismissFocusNudge } = useFocusNudge(plan, settings);
 
     // v6.7: keep `plan.todaysHabits` in sync with the library while on the dashboard, so a habit
@@ -72,8 +72,9 @@ export function Dashboard() {
     };
 
     const handleRecontextualize = () => {
-        dispatch({ type: 'SET_EDITING_STEP', step: 3 });
-        dispatch({ type: 'SET_WIZARD_STEP', step: 3 });
+        // Re-do scheduling — Schedule is step 4 since the v7.1 Sessions step was inserted at 3.
+        dispatch({ type: 'SET_EDITING_STEP', step: 4 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
         navigate('/setup');
     };
 
