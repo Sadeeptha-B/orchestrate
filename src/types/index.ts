@@ -156,6 +156,7 @@ export interface TaskCapDefaults {
 }
 
 export interface AppSettings {
+    userName?: string;
     notificationPreference: NotificationPreference;
     sessionSlots: SessionSlot[];
     todoistToken?: string;

@@ -4,10 +4,8 @@ import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import { CurrentSession, SessionTimeline } from './SessionTimeline';
-import { MusicProvider, PlaylistSelector, SpotifyPlayer } from './MusicPanel';
 import { HistorySidebar, type HistoryTab } from './HistorySidebar';
 import { DigitalClock } from './DigitalClock';
-import { InsightCard } from './InsightCard';
 import { CheckInModal } from '../checkin/CheckInModal';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
@@ -18,11 +16,29 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Logo } from '../ui/Logo';
 import { HeaderControls } from '../ui/HeaderControls';
+import { CollapsibleSection } from '../ui/CollapsibleSection';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
 import { HabitInstanceCard, MicroGapCard, EngagementLogCard } from './HabitInstanceCard';
 import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+
+const DAY_CLOSES = [
+    'Make the most of today.',       // Sun
+    'Set the week\'s tone.',          // Mon
+    'Keep the momentum going.',       // Tue
+    'Midweek — stay the course.',     // Wed
+    'One more push.',                 // Thu
+    'Finish the week strong.',        // Fri
+    'Recharge and reflect.',          // Sat
+];
+
+function greeting(name: string | undefined, now: Date): string {
+    const hour = now.getHours();
+    const period = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    const close = DAY_CLOSES[now.getDay()];
+    return name ? `Good ${period}, ${name}. ${close}` : `Good ${period}. ${close}`;
+}
 
 export function Dashboard() {
     const { plan, settings, life, dispatch } = useDayPlan();
@@ -44,8 +60,6 @@ export function Dashboard() {
     const [panelOpen, setPanelOpen] = useState(false);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
     const backlogCount = life.backlog?.length ?? 0;
-    const [taskManagerOpen, setTaskManagerOpen] = useState(false);
-    const [calendarOpen, setCalendarOpen] = useState(false);
     // Shared between the timeline (click to pin) and the carousel (prev/next, ↩ to unpin).
     const [pinnedSessionId, setPinnedSessionId] = useState<string | null>(null);
 
@@ -145,7 +159,14 @@ export function Dashboard() {
                 )}
 
                 <main className="flex-1 px-6 py-6 min-w-0">
-                    <div className="max-w-6xl mx-auto space-y-6">
+                    <div className="max-w-6xl mx-auto space-y-8">
+                        <section className="bg-subtle/30 rounded-xl p-5 flex items-center justify-between gap-4">
+                            <p className="text-2xl font-semibold text-text">
+                                {greeting(settings.userName, new Date())}
+                            </p>
+                            <DigitalClock />
+                        </section>
+
                         {focusNudge && (
                             <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-accent/10 border border-accent/30 text-sm text-accent">
                                 <span>
@@ -162,54 +183,28 @@ export function Dashboard() {
                                 </button>
                             </div>
                         )}
-                        <MusicProvider>
-                            {/* Row 1: playlist buttons + clock */}
-                            <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
-                                <div className="flex-1 min-w-0">
-                                    <PlaylistSelector />
-                                </div>
-                                <div className="lg:w-72 lg:flex-shrink-0">
-                                    <DigitalClock />
-                                </div>
-                            </div>
+                        <SeasonContextCard variant="inline" />
 
-                            {/* Row 2: Spotify embed + insight card */}
-                            <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
-                                <div className="flex-1 min-w-0">
-                                    <SpotifyPlayer />
-                                </div>
-                                <aside className="lg:w-72 lg:flex-shrink-0">
-                                    <InsightCard />
-                                </aside>
-                            </div>
-                        </MusicProvider>
+                        <section>
+                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                Today
+                            </h3>
 
-                        {/* Timeline + Season side rail */}
-                        <div className="flex flex-col lg:flex-row gap-4 lg:gap-8 lg:items-start">
-                            <div className="flex-1 min-w-0">
-                                <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider mb-3">
-                                    Timeline
-                                </h3>
+                            <div className="mt-6 hidden md:block border border-border rounded-xl overflow-hidden px-4 py-1">
                                 <SessionTimeline
                                     pinnedSessionId={pinnedSessionId}
                                     onSelectSession={setPinnedSessionId}
                                 />
                             </div>
-                            <aside className="lg:w-72 lg:flex-shrink-0 space-y-3">
-                                <SeasonContextCard />
-                            </aside>
-                        </div>
 
-                        {/* Between-session True Rest cue (v6) — only when no active session and next within 60 min */}
-                        {nextSessionStartsWithin(60) && <TrueRestCard variant="banner" />}
+                            {nextSessionStartsWithin(60) && (
+                                <div className="mt-4">
+                                    <TrueRestCard variant="banner" />
+                                </div>
+                            )}
 
-                        {/* v6.4: two-column lower region. The habit card is a right rail spanning the
-                            whole left column (session + task manager + calendar), so its
-                            height — especially the engagement log — is absorbed beside that column
-                            instead of pushing the task manager/calendar down. Task Manager + Calendar
-                            therefore take the Current Session width. Stacks on small screens. */}
-                        <div className="flex flex-col lg:flex-row gap-6 lg:items-start bg-subtle/30 rounded-xl border border-border p-5">
-                            <div className="flex-1 min-w-0 space-y-6">
+                            <div className="mt-10 flex flex-col lg:flex-row gap-6 lg:items-start">
+                                <div className="flex-1 min-w-0 space-y-6">
                                 {/* Current session */}
                                 <div className="space-y-2">
                                     <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
@@ -222,71 +217,34 @@ export function Dashboard() {
                                 </div>
 
                                 {/* Task Manager (Todoist) — collapsible */}
-                                <div>
-                                    <button
-                                        onClick={() => setTaskManagerOpen(!taskManagerOpen)}
-                                        className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
-                                    >
-                                        <svg
-                                            className={`w-3 h-3 transition-transform ${taskManagerOpen ? 'rotate-90' : ''}`}
-                                            fill="none"
-                                            viewBox="0 0 24 24"
-                                            stroke="currentColor"
-                                            strokeWidth={2}
-                                        >
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                        </svg>
-                                        Task Manager
-                                    </button>
-                                    {taskManagerOpen && (
-                                        <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
-                                            <TodoistPanel
-                                                mode="full"
-                                                onSetup={() => navigate('/settings?tab=integrations')}
-                                                showFilterToggle
-                                                defaultFiltered
-                                            />
-                                        </div>
-                                    )}
-                                </div>
+                                <CollapsibleSection title="Task Manager">
+                                    <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
+                                        <TodoistPanel
+                                            mode="full"
+                                            onSetup={() => navigate('/settings?tab=integrations')}
+                                            showFilterToggle
+                                            defaultFiltered
+                                        />
+                                    </div>
+                                </CollapsibleSection>
 
                                 {/* Calendar (Google) — collapsible */}
-                                <div>
-                                    <button
-                                        onClick={() => setCalendarOpen(!calendarOpen)}
-                                        className="flex items-center gap-2 text-sm font-semibold text-text-light uppercase tracking-wider hover:text-accent transition-colors cursor-pointer"
-                                    >
-                                        <svg
-                                            className={`w-3 h-3 transition-transform ${calendarOpen ? 'rotate-90' : ''}`}
-                                            fill="none"
-                                            viewBox="0 0 24 24"
-                                            stroke="currentColor"
-                                            strokeWidth={2}
-                                        >
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                        </svg>
-                                        Calendar
-                                    </button>
-                                    {calendarOpen && (
-                                        <div className="mt-3">
-                                            <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
-                                        </div>
-                                    )}
-                                </div>
+                                <CollapsibleSection title="Calendar">
+                                    <div className="mt-3">
+                                        <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
+                                    </div>
+                                </CollapsibleSection>
+
+                                <EngagementLogCard />
                             </div>
 
-                            {/* v6.3/v6.4: right rail beside the whole left column — today's habits
-                                and the engagement log as two independent, self-headed cards. Each
-                                hides itself when empty. */}
                             <aside className="lg:w-96 lg:flex-shrink-0 space-y-6">
                                 <HabitInstanceCard />
                                 <MicroGapCard />
-                                {/* True Rest — collapsible so it sits with the habits surfaces
-                                    without cluttering the rail. Starts collapsed. */}
                                 <TrueRestCard variant="card" defaultCollapsed />
-                                <EngagementLogCard />
                             </aside>
-                        </div>
+                            </div>
+                        </section>
                     </div>
                 </main>
             </div>

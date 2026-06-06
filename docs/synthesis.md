@@ -88,6 +88,11 @@ min → 10-min blocks; <30 min or unestimated → a single session. The blocks r
 `FocusSlotPlan`, and when the engine runs (`resolveBlockAt`) it highlights the live block, counts it
 down, and fires a chime (`lib/sound.ts`) + notification at each work↔break boundary.
 
+Focus Mode is the app's **execution surface**, so the **music protocol** lives here: a collapsible
+"Music & Tips" panel (`FocusMusicPanel`, starts collapsed) wraps the shared `MusicProvider` and renders
+the `PlaylistSelector`, `SpotifyPlayer`, and the static `InsightCard` transition tips. The dashboard no
+longer carries the Spotify embed.
+
 A separate **focus nudge** (`useFocusNudge`, wired in the Dashboard) notifies the user — browser
 notification + in-app banner — if they've been in an active session ≥10 min without engaging anything
 (and the session still has incomplete work), repeating every 30 min while idle. No new entities,
@@ -165,20 +170,19 @@ The operational view for the rest of the day (`Dashboard.tsx`):
 
 **Top region (full width):**
 1. **Header** -- completion counter, Save/Edit/Saved Sessions buttons, `HeaderControls`.
-2. **Music row** -- `PlaylistSelector` (6 work-type buttons) + live `DigitalClock`.
-3. **Player row** -- `SpotifyPlayer` iframe + `InsightCard` (static music Transition Tips).
-4. **Timeline** -- `SessionTimelineBar` (read-only) with active-session pulse and habit lane rendering `TodaysHabitInstance`s. Side rail: `SeasonContextCard`.
-5. **Between-session True Rest banner** -- when no session is active and the next slot is within 60 min.
+2. **Greeting panel** -- a time-of-day greeting ("Good morning/afternoon/evening, {settings.userName}." + a day-of-week closer) beside the large live `DigitalClock`. The optional `userName` is set in Settings; the greeting omits the name when unset.
+3. **Season panel** -- `SeasonContextCard variant="inline"`: one quiet panel with the context bar (name, "Week N of M" pill, date range, theme, **success criteria**, **supporting goals** as wrapping ◆ chips mirroring the Step 1 `SeasonFocusBanner`) alongside a **Recurring Focuses** column (active focuses with a cadence pill + an "+ Add focus" link that deep-links to `SeasonDetail` in edit mode via router `state.openEdit`). The music protocol (Spotify) moved to Focus Mode (§3.3).
+4. **Between-session True Rest banner** -- inside the "Today" section, when no session is active and the next slot is within 60 min.
 
-**Two-column lower region** (stacks on small screens):
+**"Today" section** -- a borderless tinted working area (header "Today") that leads with the full-width `SessionTimelineBar` (read-only; active-session pulse + habit lane rendering `TodaysHabitInstance`s) — **hidden below the `md` breakpoint**, since the proportional non-reflowing bar is cramped on narrow screens, so the current session leads on mobile — then a two-column region below (stacks on small screens):
 - **Left column:**
-  6. **Current Session** -- active session's tasks: drag-to-reorder, completion checkboxes (with confetti), engagement Start/Stop buttons + live m:s timer on engaged rows, nudge banners for background tasks. `SessionCapacityBadge` + `SessionCapacityBanner` when over-capacity.
-  7. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
-  8. **Calendar** -- collapsible Google Calendar embed.
-- **Right rail** (`HabitInstanceCard.tsx` exports both): two independent, self-headed cards, each hidden when empty:
+  5. **Current Session** -- active session's tasks: drag-to-reorder, completion checkboxes (with confetti), engagement Start/Stop buttons + live m:s timer on engaged rows, nudge banners for background tasks. `SessionCapacityBadge` + `SessionCapacityBanner` when over-capacity.
+  6. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
+  7. **Calendar** -- collapsible Google Calendar embed.
+  8. **Engagement Log** (`EngagementLogCard`) -- a scrollable, time-ordered record: one row per engagement segment (individual Start→Stop, across habits + micro-gaps + tasks) plus reschedule events; see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).
+- **Right rail** (`HabitInstanceCard.tsx` exports both): independent, self-headed cards, each hidden when empty:
   - **Today's Habits** (`HabitInstanceCard`) -- today's **'habit'-kind** instances: timed (Scheduled) + untimed (Anytime), with per-row Start/Stop/Complete/Skip/Reschedule. Engaged rows show a live **m:s timer** (`<EngagementTimer>`, ticks once/sec, counts the current open segment from 0:00).
   - **Micro-gaps** (`MicroGapCard`, v6.7) -- today's **'micro-gap'-kind** instances: ▶ Start / ■ Stop only (repeatable), with a rep-count + total-time badge. No Todoist, no terminal complete.
-  - **Engagement Log** (`EngagementLogCard`) -- a scrollable, time-ordered record: one row per engagement segment (individual Start→Stop, across habits + micro-gaps + tasks) plus reschedule events; see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).
   - **True Rest** (`TrueRestCard`, `variant="card" collapsible`) -- a collapsible recovery-cue card (starts collapsed) sitting with the habit surfaces; rotates a cue every 5 min while open, manual prev/next, "Manage →" to `/life`.
 
 **Season context card**: active season name (links to `/season/:id`), theme, date range with "Week N of M" pill, first 3 goals with expand, "Manage" button. Empty-state prompts "Create a season".

@@ -10,6 +10,7 @@
     --color-accent: #3d9970;
     --color-accent-light: #6fc49e;
     --color-accent-subtle: #eaf6f0;
+    --color-subtle: #e4e8eb;
     --color-text: #212529;
     --color-text-light: #495057;
     --color-border: #ced4da;
@@ -25,6 +26,7 @@
     --color-accent: #6fc49e;
     --color-accent-light: #3d9970;
     --color-accent-subtle: #1a2e24;
+    --color-subtle: #2b2b2b;
     --color-text: #e5e7eb;
     --color-text-light: #9ca3af;
     --color-border: #2e2e2e;

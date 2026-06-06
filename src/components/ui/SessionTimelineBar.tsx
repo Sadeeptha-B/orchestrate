@@ -41,7 +41,7 @@ function habitPillClass(status: DisplayStatus): string {
         case 'engaged':
             return 'border-2 border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse';
         case 'completed':
-            return 'border border-success/40 bg-success/15 text-success-foreground/80 dark:text-success';
+            return 'border border-success/40 bg-success/15 text-emerald-700 dark:text-success';
         case 'skipped':
             return 'border border-dashed border-text-light/40 bg-surface-dark/30 text-text-light/50 line-through';
         case 'missed':

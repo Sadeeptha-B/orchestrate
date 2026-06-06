@@ -134,7 +134,7 @@ export function TrueRestCard({
     if (variant === 'banner') {
         const eyebrow = heading ?? 'Between sessions';
         return (
-            <div className="rounded-lg border border-border bg-subtle/60 px-4 py-3 flex items-start gap-3">
+            <div className="rounded-xl border border-border p-5 flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                     <div className="text-[10px] uppercase tracking-wider text-text-light">
                         {eyebrow}
