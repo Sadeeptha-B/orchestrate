@@ -5,10 +5,13 @@ import { useTodoistData, useTodoistActions } from '../../hooks/useTodoist';
 import { useNotifications } from '../../hooks/useNotifications';
 import { SessionTimeline } from '../dashboard/SessionTimeline';
 import { EngagementTimer } from '../dashboard/EngagementTimer';
+import { MusicProvider, PlaylistSelector, SpotifyPlayer } from '../dashboard/MusicPanel';
+import { InsightCard } from '../dashboard/InsightCard';
 import { FocusSlotPlan } from './FocusSlotPlan';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
+import { CollapsibleSection } from '../ui/CollapsibleSection';
 import { computeFocusPlan, findActiveFocusTask, resolveBlockAt } from '../../lib/focus';
 import { openSegment, formatClock } from '../../lib/engagement';
 import { getTaskTitle } from '../../lib/tasks';
@@ -48,6 +51,10 @@ export function FocusMode() {
                     {/* Day context */}
                     <SessionTimeline pinnedSessionId={null} onSelectSession={() => {}} />
 
+                    {/* Music protocol + transition tips — collapsible so the execution page stays
+                        distraction-free until you want to cue music. */}
+                    <FocusMusicPanel />
+
                     {activeTask ? (
                         <FocusActive task={activeTask} />
                     ) : (
@@ -60,6 +67,33 @@ export function FocusMode() {
                     )}
                 </div>
             </main>
+        </div>
+    );
+}
+
+/**
+ * Collapsible music + transition-tips panel for the Focus (execution) page. Wraps the dashboard's
+ * `MusicProvider` so playlist selection / custom URLs stay in sync with the rest of the app. Starts
+ * collapsed to keep the focus screen clean.
+ */
+function FocusMusicPanel() {
+    return (
+        <div className="rounded-xl border border-border bg-subtle/30 p-4">
+            <CollapsibleSection title="Music & Tips">
+                <MusicProvider>
+                    <div className="mt-4 space-y-4">
+                        <PlaylistSelector />
+                        <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+                            <div className="flex-1 min-w-0">
+                                <SpotifyPlayer />
+                            </div>
+                            <aside className="lg:w-72 lg:flex-shrink-0">
+                                <InsightCard />
+                            </aside>
+                        </div>
+                    </div>
+                </MusicProvider>
+            </CollapsibleSection>
         </div>
     );
 }

@@ -45,10 +45,12 @@ const FocusMode = lazyWithReload(() => import('./components/focus/FocusMode').th
 
 function RouteFallback() {
     return (
-        <div className="min-h-screen bg-app text-text px-4 py-10 sm:px-6 lg:px-8">
-            <div className="mx-auto max-w-3xl rounded-xl border border-border bg-card px-5 py-4 text-sm text-text-light">
-                Loading…
-            </div>
+        <div className="min-h-screen bg-app text-text px-4 py-10 sm:px-6 lg:px-8 flex items-center justify-center">
+            <div
+                className="h-8 w-8 animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+                role="status"
+                aria-label="Loading"
+            />
         </div>
     );
 }

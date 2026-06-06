@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -69,7 +69,10 @@ export function SeasonDetail() {
     const { id } = useParams<{ id: string }>();
     const { life, dispatch } = useDayPlan();
     const navigate = useNavigate();
-    const [editing, setEditing] = useState(false);
+    const location = useLocation();
+    const [editing, setEditing] = useState(
+        (location.state as { openEdit?: boolean } | null)?.openEdit ?? false,
+    );
     const [confirmDelete, setConfirmDelete] = useState(false);
 
     const season = life.seasons.find((s) => s.id === id);

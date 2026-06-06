@@ -5,6 +5,8 @@ import { HeaderControls } from '../ui/HeaderControls';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { DataManagement } from './DataManagement';
 import { CapacitySettings } from './CapacitySettings';
+import { useDayPlan } from '../../hooks/useDayPlan';
+import { inputClass, labelClass } from '../ui/formStyles';
 
 const TABS = ['integrations', 'capacity', 'data'] as const;
 type Tab = (typeof TABS)[number];
@@ -21,6 +23,7 @@ function isTab(value: string | null): value is Tab {
 
 export function SettingsPage() {
     const navigate = useNavigate();
+    const { settings, dispatch } = useDayPlan();
     const [searchParams, setSearchParams] = useSearchParams();
     const tabParam = searchParams.get('tab');
     const [activeTab, setActiveTab] = useState<Tab>(isTab(tabParam) ? tabParam : 'integrations');
@@ -65,6 +68,16 @@ export function SettingsPage() {
                 <div className="max-w-5xl mx-auto flex gap-8">
                     {/* Vertical tab sidebar */}
                     <nav className="w-48 flex-shrink-0">
+                        <div className="mb-5 pb-5 border-b border-border">
+                            <label className={labelClass}>Your name</label>
+                            <input
+                                type="text"
+                                value={settings.userName ?? ''}
+                                onChange={(e) => dispatch({ type: 'UPDATE_SETTINGS', settings: { userName: e.target.value } })}
+                                placeholder="e.g. Alex"
+                                className={inputClass}
+                            />
+                        </div>
                         <ul className="space-y-1">
                             {TABS.map((tab) => (
                                 <li key={tab}>
