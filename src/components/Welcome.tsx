@@ -69,15 +69,15 @@ export function Welcome() {
                         </Button>
 
                         {/* Step timeline */}
-                        <div className="flex items-start justify-center gap-0">
+                        <div className="flex items-start w-full">
                             {WIZARD_STEPS.map(({ num: stepNum, label }, i) => {
                                 const isDone = stepNum < plan.wizardStep;
                                 const isCurrent = stepNum === plan.wizardStep;
                                 const isLast = i === WIZARD_STEPS.length - 1;
 
                                 return (
-                                    <div key={label} className="flex items-start">
-                                        <div className="flex flex-col items-center" style={{ width: 60 }}>
+                                    <div key={label} className="flex items-start flex-1">
+                                        <div className="flex flex-col items-center flex-1 min-w-0">
                                             <div
                                                 className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-[11px] font-medium transition-colors ${isDone
                                                     ? 'bg-accent border-accent text-white'
@@ -101,8 +101,7 @@ export function Welcome() {
                                         </div>
                                         {!isLast && (
                                             <div
-                                                className={`h-0.5 mt-[11px] flex-shrink-0 rounded-full ${isDone ? 'bg-accent' : 'bg-border'}`}
-                                                style={{ width: 16 }}
+                                                className={`h-0.5 mt-[11px] w-4 flex-shrink-0 rounded-full ${isDone ? 'bg-accent' : 'bg-border'}`}
                                             />
                                         )}
                                     </div>
