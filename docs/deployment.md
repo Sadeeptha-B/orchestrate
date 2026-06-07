@@ -97,14 +97,19 @@ Then **Settings → Environment variables / Secrets** (add to the **Production**
 | `GOOGLE_CLIENT_ID` | from Part A | Secret |
 | `GOOGLE_CLIENT_SECRET` | from Part A | Secret |
 | `APP_SHARED_SECRET` | a long random string you generate | Secret |
-| `APP_ORIGIN` *(optional)* | `https://<your-domain>` | Plaintext |
+| `APP_ORIGIN` *(optional)* | your canonical origin (see below) | Plaintext |
 
 Generate a strong shared secret, e.g.:
 ```bash
 openssl rand -base64 32
 ```
 
-`APP_ORIGIN` is optional — the Worker otherwise derives the origin from the incoming request. Set it if you want to pin the redirect to a canonical domain (recommended once you attach a custom domain, so previews don't redirect to the wrong place).
+**About `APP_ORIGIN`** — it's just your one canonical origin (scheme + host, no path, no trailing slash). That origin is whichever you actually serve the app on:
+
+- **No custom domain:** `https://<your-project>.pages.dev`
+- **Custom domain:** your custom domain, e.g. `https://orchestrate.example.com` — yes, `APP_ORIGIN` *is* the custom domain in that case.
+
+It's optional: if unset, the Worker derives the origin from each incoming request. The reason to set it is that Pages also serves **per-deployment preview URLs** (`https://<hash>.<project>.pages.dev`), which are different hosts — pinning `APP_ORIGIN` keeps OAuth redirects on your one real domain. If you're using a custom domain, attach it first (step 4), then set `APP_ORIGIN` to it. Whatever you pick here must match both the Google redirect URI (Part A) and the domain you open the app on.
 
 Or set secrets via CLI:
 ```bash
@@ -117,8 +122,10 @@ npx wrangler pages secret put APP_SHARED_SECRET
 
 Trigger a deploy (push to the branch, or **Retry deployment**). When it's live at `https://<project>.pages.dev`:
 
-- To use a custom domain: **Custom domains → Set up a domain**, follow the DNS steps.
+- To use a custom domain: **Custom domains → Set up a domain**, follow the DNS steps. Once it's live, **update `APP_ORIGIN` (step 3) to the custom domain** — it's the same origin value, just now pointing at your real domain instead of `*.pages.dev`.
 - **Make sure the redirect URI in Part A matches your final origin** (`https://<final-domain>/api/auth/google/callback`). If you added a custom domain after creating the OAuth client, go back and add/replace the redirect URI.
+
+> In short: `APP_ORIGIN`, the Google redirect URI, and the URL you open the app on must all be the same origin — `*.pages.dev` if you're not using a custom domain, otherwise the custom domain.
 
 ---
 
