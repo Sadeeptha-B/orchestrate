@@ -1,10 +1,5 @@
 /// <reference types="vite/client" />
 
-interface ImportMetaEnv {
-    /** OAuth client ID for the Google Calendar (GIS) integration. May be empty when unconfigured. */
-    readonly VITE_GOOGLE_CLIENT_ID?: string;
-}
-
-interface ImportMeta {
-    readonly env: ImportMetaEnv;
-}
+// Google Calendar OAuth no longer uses a build-time client ID — the client ID + secret now live
+// server-side in the Cloudflare Worker (see functions/api/auth/google). The browser holds only a
+// runtime shared secret in localStorage. So there are no app-specific VITE_* env vars to declare.

@@ -1,18 +1,20 @@
 /// <reference lib="webworker" />
 const sw = self;
 
-const CACHE_NAME = 'orchestrate-v2';
+// Bumped to v3 for the move to the domain root (was cached under /orchestrate/ on GitHub Pages);
+// the activate handler purges the stale v2 caches.
+const CACHE_NAME = 'orchestrate-v3';
 
 // Cache app shell on install
 sw.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then((cache) =>
             cache.addAll([
-                '/orchestrate/',
-                '/orchestrate/index.html',
-                '/orchestrate/manifest.json',
-                '/orchestrate/favicon.svg',
-                '/orchestrate/favicon.ico',
+                '/',
+                '/index.html',
+                '/manifest.json',
+                '/favicon.svg',
+                '/favicon.ico',
             ]),
         ),
     );
@@ -57,7 +59,7 @@ sw.addEventListener('fetch', (event) => {
                     // feeding HTML to a dynamic `import()` breaks lazy routes with
                     // "Failed to fetch dynamically imported module".
                     if (event.request.mode === 'navigate') {
-                        return caches.match('/orchestrate/index.html').then(
+                        return caches.match('/index.html').then(
                             (fallback) => fallback || Response.error(),
                         );
                     }

@@ -1,0 +1,25 @@
+# Cloudflare Pages project configuration.
+#
+# This app is a Vite SPA (static assets in `dist/`) plus Pages Functions under
+# `functions/` that implement the Google Calendar OAuth flow (auth-code exchange
+# with a server-held refresh token). Build with `npm run build`; Cloudflare serves
+# `dist/` and auto-bundles `functions/`.
+#
+# Secrets are NOT stored here — set them in the Cloudflare dashboard
+# (Settings → Environment variables / Secrets) or via the CLI, e.g.:
+#   npx wrangler pages secret put GOOGLE_CLIENT_ID
+#   npx wrangler pages secret put GOOGLE_CLIENT_SECRET
+#   npx wrangler pages secret put APP_SHARED_SECRET
+# Optional override (defaults to the request origin):
+#   APP_ORIGIN = "https://orchestrate.example.com"
+
+name = "orchestrate"
+compatibility_date = "2025-01-01"
+pages_build_output_dir = "dist"
+
+# KV namespace that stores the single user's Google refresh token + a cached
+# access token. Create it once and paste the id below:
+#   npx wrangler kv namespace create OAUTH_KV
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

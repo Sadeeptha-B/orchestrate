@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-    globalIgnores(['dist']),
+    // `functions/` are Cloudflare Pages Functions (Workers runtime) — bundled/typechecked by
+    // Cloudflare, not by the app's ESLint/tsc. They use Worker globals (PagesFunction, KVNamespace).
+    globalIgnores(['dist', 'functions']),
     {
         files: ['**/*.{ts,tsx}'],
         extends: [

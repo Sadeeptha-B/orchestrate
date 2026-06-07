@@ -1,0 +1,7 @@
+# Cloudflare Pages SPA fallback: serve index.html for any path the static build
+# doesn't have a file for, so React Router (BrowserRouter, root basename) can
+# handle deep links / refreshes. Replaces the old GitHub Pages 404.html hack.
+#
+# Pages Functions (/api/*) are matched BEFORE these static rules, so the OAuth
+# endpoints are not swallowed by this catch-all.
+/*    /index.html    200

@@ -1,144 +1,106 @@
-// Google Identity Services (GIS) token-client wrapper for the Google Calendar integration.
+// Worker-mediated Google OAuth client for the Google Calendar integration.
 //
-// This is the *browser-only* OAuth path (engagement_record_strategy.md option E1): a build-time
-// client ID, no client secret, no backend. The GIS token client returns short-lived (~1 hr) access
-// tokens directly and *no* refresh token — renewal is just another `requestAccessToken({ prompt })`,
-// which is silent for an already-consented user with a live Google session. Tokens are held in
-// memory by the caller and never persisted.
+// This replaces the browser-only GIS token client (engagement_record_strategy.md option E1) with
+// the server-mediated auth-code flow (option E2). The Cloudflare Pages Functions under
+// `/api/auth/google` hold the client secret and the long-lived refresh token (in Workers KV); the
+// browser only ever holds a single **shared secret** (entered once in Settings) and asks the Worker
+// for short-lived access tokens on demand. See functions/api/auth/google/_lib.ts for the server side.
 
-/** Scopes: read the user's calendar list (auto-discovery) + read/write events (write plumbing). */
-export const GCAL_SCOPES =
-    'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
+const API_BASE = '/api/auth/google';
 
-/** OAuth client ID injected at build time. Empty when unconfigured (UI shows a "not configured" note). */
-export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
+/** localStorage key for the single shared secret guarding the Worker endpoints. */
+const SECRET_KEY = 'orchestrate-cf-secret';
 
-export function isGoogleConfigured(): boolean {
-    return GOOGLE_CLIENT_ID.length > 0;
-}
-
-/** `''` → silent for consented users, consent UI on first run (use from a user gesture). `'none'` → never shows UI; errors if interaction would be required (use for silent refresh). */
-export type TokenPrompt = '' | 'none' | 'consent' | 'select_account';
-
-export interface TokenResult {
-    accessToken: string;
-    /** Seconds until the access token expires (Google returns ~3600). */
-    expiresInSec: number;
-    /** Space-delimited granted scopes. */
-    scope: string;
-}
-
-// ── Minimal GIS typings (the `google.accounts.oauth2` surface we use) ──
-
-interface GisTokenResponse {
-    access_token?: string;
-    expires_in?: number;
-    scope?: string;
-    token_type?: string;
-    error?: string;
-    error_description?: string;
-}
-
-interface GisTokenClient {
-    requestAccessToken: (overrides?: { prompt?: TokenPrompt }) => void;
-}
-
-interface GisOAuth2 {
-    initTokenClient: (config: {
-        client_id: string;
-        scope: string;
-        prompt?: TokenPrompt;
-        callback: (resp: GisTokenResponse) => void;
-        error_callback?: (err: { type?: string; message?: string }) => void;
-    }) => GisTokenClient;
-    revoke: (accessToken: string, done?: () => void) => void;
-}
-
-declare global {
-    interface Window {
-        google?: { accounts?: { oauth2?: GisOAuth2 } };
-    }
-}
-
-// ── GIS script readiness ──
-
-let gisPromise: Promise<void> | null = null;
-
-/** Resolves once the async-loaded GIS script has populated `window.google.accounts.oauth2`. */
-export function loadGis(): Promise<void> {
-    if (gisPromise) return gisPromise;
-    gisPromise = new Promise<void>((resolve, reject) => {
-        const start = Date.now();
-        const check = () => {
-            if (window.google?.accounts?.oauth2) return resolve();
-            if (Date.now() - start > 10_000) {
-                gisPromise = null; // allow a later retry
-                return reject(new Error('Google Identity Services failed to load'));
-            }
-            setTimeout(check, 100);
-        };
-        check();
-    });
-    return gisPromise;
-}
-
-// ── Token client (one shared client; one request in flight at a time) ──
-
-let tokenClient: GisTokenClient | null = null;
-let pending: { resolve: (r: TokenResult) => void; reject: (e: Error) => void } | null = null;
-
-async function ensureClient(): Promise<GisTokenClient> {
-    await loadGis();
-    if (!isGoogleConfigured()) throw new Error('Google client ID is not configured');
-    if (tokenClient) return tokenClient;
-    tokenClient = window.google!.accounts!.oauth2!.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: GCAL_SCOPES,
-        callback: (resp) => {
-            const p = pending;
-            pending = null;
-            if (!p) return;
-            if (resp.error || !resp.access_token) {
-                p.reject(new Error(resp.error_description || resp.error || 'Token request failed'));
-            } else {
-                p.resolve({
-                    accessToken: resp.access_token,
-                    expiresInSec: resp.expires_in ?? 3600,
-                    scope: resp.scope ?? '',
-                });
-            }
-        },
-        error_callback: (err) => {
-            const p = pending;
-            pending = null;
-            if (!p) return;
-            p.reject(new Error(err?.type || err?.message || 'Token request failed'));
-        },
-    });
-    return tokenClient;
-}
-
-/**
- * Request an access token. `prompt: ''` from a user gesture (interactive connect); `prompt: 'none'`
- * for silent refresh / auto-reconnect. Rejects if a request is already in flight.
- */
-export async function requestToken(prompt: TokenPrompt): Promise<TokenResult> {
-    const client = await ensureClient();
-    if (pending) throw new Error('A Google token request is already in progress');
-    return new Promise<TokenResult>((resolve, reject) => {
-        pending = { resolve, reject };
-        client.requestAccessToken({ prompt });
-    });
-}
-
-/** Revoke an access token (best-effort) on disconnect. */
-export async function revokeToken(accessToken: string): Promise<void> {
+export function getStoredSecret(): string {
     try {
-        await loadGis();
+        return localStorage.getItem(SECRET_KEY) ?? '';
     } catch {
-        return;
+        return '';
     }
-    const oauth2 = window.google?.accounts?.oauth2;
-    if (!oauth2) return;
-    await new Promise<void>((resolve) => oauth2.revoke(accessToken, () => resolve()));
+}
+
+export function setStoredSecret(secret: string): void {
+    try {
+        if (secret) localStorage.setItem(SECRET_KEY, secret);
+        else localStorage.removeItem(SECRET_KEY);
+    } catch {
+        // ignore storage failures (private mode, etc.)
+    }
+}
+
+/** "Configured" now means the shared secret is set (the Worker + client config live server-side). */
+export function isGoogleConfigured(): boolean {
+    return getStoredSecret().length > 0;
+}
+
+function authHeaders(): HeadersInit {
+    return { 'X-App-Secret': getStoredSecret() };
+}
+
+export interface ConnectionStatus {
+    connected: boolean;
+    scope: string | null;
+}
+
+/** Thrown when the Worker rejects the shared secret (so the UI can prompt to re-enter it). */
+export class AppSecretError extends Error {
+    constructor() {
+        super('The app secret was rejected by the server.');
+        this.name = 'AppSecretError';
+    }
+}
+
+/** Whether the server currently holds a Google refresh token (i.e. connected). */
+export async function fetchConnectionStatus(): Promise<ConnectionStatus> {
+    const res = await fetch(`${API_BASE}/status`, { headers: authHeaders() });
+    if (res.status === 401) throw new AppSecretError();
+    if (!res.ok) throw new Error(`Status check failed (${res.status})`);
+    return res.json();
+}
+
+/** Begin the interactive consent flow: fetch the Google consent URL, then navigate to it. */
+export async function startGoogleLogin(): Promise<void> {
+    const res = await fetch(`${API_BASE}/login`, { headers: authHeaders() });
+    if (res.status === 401) throw new AppSecretError();
+    if (!res.ok) throw new Error(`Could not start sign-in (${res.status})`);
+    const { url } = (await res.json()) as { url: string };
+    window.location.href = url;
+}
+
+export type AccessTokenOutcome =
+    | { ok: true; accessToken: string; expiresInSec: number }
+    | { ok: false; reason: 'unauthorized' | 'not_connected' | 'error'; message?: string };
+
+/** Ask the Worker for a fresh access token (minted from the server-held refresh token). */
+export async function fetchAccessToken(): Promise<AccessTokenOutcome> {
+    let res: Response;
+    try {
+        res = await fetch(`${API_BASE}/token`, { headers: authHeaders() });
+    } catch (e) {
+        return { ok: false, reason: 'error', message: e instanceof Error ? e.message : 'Network error' };
+    }
+    if (res.ok) {
+        const data = (await res.json()) as { access_token: string; expires_in: number };
+        return { ok: true, accessToken: data.access_token, expiresInSec: data.expires_in };
+    }
+    let body: { error?: string; connected?: boolean } = {};
+    try {
+        body = await res.json();
+    } catch {
+        // non-JSON error
+    }
+    if (res.status === 401 && body.error === 'unauthorized') return { ok: false, reason: 'unauthorized' };
+    if (res.status === 404 || body.connected === false || body.error === 'invalid_grant') {
+        return { ok: false, reason: 'not_connected' };
+    }
+    return { ok: false, reason: 'error', message: body.error };
+}
+
+/** Revoke + clear the server-held refresh token. */
+export async function disconnectGoogle(): Promise<void> {
+    try {
+        await fetch(`${API_BASE}/disconnect`, { method: 'POST', headers: authHeaders() });
+    } catch {
+        // best-effort; the UI clears local state regardless
+    }
 }
