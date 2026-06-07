@@ -42,7 +42,7 @@ export async function storeTodoistToken(token: string): Promise<{ ok: boolean; e
     });
     if (res.status === 401) return { ok: false, error: 'app_secret' };
     if (!res.ok) {
-        let error = 'invalid_token';
+        let error = 'request_failed';
         try {
             error = ((await res.json()) as { error?: string }).error ?? error;
         } catch {

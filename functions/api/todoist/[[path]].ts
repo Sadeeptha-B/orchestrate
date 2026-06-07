@@ -4,20 +4,18 @@
 // the Authorization header, so the token never reaches the browser (it used to live encrypted-but-
 // recoverable in localStorage). The frontend calls this same-origin proxy in both dev and prod.
 
-import { checkSecret, json } from '../../_shared';
+import { KV_TODOIST_TOKEN, TODOIST_API, type TodoistEnv, json, requireAppSecret } from '../../_shared';
 
-interface Env {
-    OAUTH_KV: KVNamespace;
-    APP_SHARED_SECRET: string;
-}
+export const onRequest: PagesFunction<TodoistEnv> = async ({ request, env }) => {
+    const authError = requireAppSecret(request, env);
+    if (authError) return authError;
 
-const TODOIST_API = 'https://api.todoist.com';
-const KV_TODOIST_TOKEN = 'todoist:token';
-
-export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
-    if (!checkSecret(request, env)) return json({ error: 'unauthorized' }, 401);
-
-    const token = await env.OAUTH_KV.get(KV_TODOIST_TOKEN);
+    let token: string | null;
+    try {
+        token = await env.OAUTH_KV.get(KV_TODOIST_TOKEN);
+    } catch {
+        return json({ error: 'storage_unavailable' }, 503);
+    }
     if (!token) return json({ error: 'not_connected' }, 401);
 
     // Strip the /api/todoist/ prefix; everything after it is the real Todoist path (e.g. api/v1/tasks).
@@ -31,11 +29,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     headers.set('authorization', `Bearer ${token}`);
 
     const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
-    const upstream = await fetch(target, {
-        method: request.method,
-        headers,
-        body: hasBody ? await request.text() : undefined,
-    });
+    let upstream: Response;
+    try {
+        upstream = await fetch(target, {
+            method: request.method,
+            headers,
+            body: hasBody ? await request.text() : undefined,
+        });
+    } catch {
+        return json({ error: 'todoist_unreachable' }, 502);
+    }
 
     const respHeaders: Record<string, string> = { 'cache-control': 'no-store' };
     const respContentType = upstream.headers.get('content-type');

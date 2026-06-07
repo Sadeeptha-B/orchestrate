@@ -1,6 +1,7 @@
-// Thin Google Calendar REST v3 client. Direct browser `fetch` with a Bearer access token from the
-// GIS token client (see googleAuth.ts) — Google's endpoints send CORS headers for browser Bearer
-// requests, so no dev proxy is needed (unlike Todoist).
+// Thin Google Calendar REST v3 client. Direct browser `fetch` with a short-lived Bearer access token
+// minted server-side by the Cloudflare Worker (see googleAuth.ts / GoogleCalendarContext) — Google's
+// endpoints send CORS headers for browser Bearer requests, so the browser calls Google directly (no
+// proxy), unlike Todoist whose token must stay server-side.
 
 const CAL_API = 'https://www.googleapis.com/calendar/v3';
 

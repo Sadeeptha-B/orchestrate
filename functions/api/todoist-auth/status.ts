@@ -1,17 +1,17 @@
 // GET /api/todoist-auth/status
 // Guarded by the shared secret. Reports whether a Todoist token is held in KV (drives isConfigured).
 
-import { checkSecret, json } from '../../_shared';
+import { KV_TODOIST_TOKEN, type TodoistEnv, json, requireAppSecret } from '../../_shared';
 
-interface Env {
-    OAUTH_KV: KVNamespace;
-    APP_SHARED_SECRET: string;
-}
+export const onRequestGet: PagesFunction<TodoistEnv> = async ({ request, env }) => {
+    const authError = requireAppSecret(request, env);
+    if (authError) return authError;
 
-const KV_TODOIST_TOKEN = 'todoist:token';
-
-export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-    if (!checkSecret(request, env)) return json({ error: 'unauthorized' }, 401);
-    const token = await env.OAUTH_KV.get(KV_TODOIST_TOKEN);
+    let token: string | null;
+    try {
+        token = await env.OAUTH_KV.get(KV_TODOIST_TOKEN);
+    } catch {
+        return json({ error: 'storage_unavailable' }, 503);
+    }
     return json({ configured: Boolean(token) });
 };

@@ -7,7 +7,8 @@
       "Bash(npx eslint *)",
       "PowerShell(npm run lint 2>&1)",
       "PowerShell(npm run build 2>&1)",
-      "PowerShell(npx tsc --noEmit)"
+      "PowerShell(npx tsc --noEmit)",
+      "PowerShell(npx tsc -p functions/tsconfig.json --noEmit 2>&1 | Select-Object -Last 15; \"functions tsc exit: $LASTEXITCODE\")"
     ]
   }
 }

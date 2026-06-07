@@ -391,7 +391,7 @@ All **app data** via `localStorage`. The only server-side state is the **integra
 | `orchestrate-history` | `SavedDayPlan[]` | `DayPlanProvider` |
 | `orchestrate-life-context` | `LifeContext` + schema marker | `DayPlanProvider` |
 | `orchestrate-todoist-cache` | Tasks, projects, sections, fetchedAt | `TodoistProvider` |
-| `orchestrate-cf-secret` | Shared secret guarding the OAuth Worker endpoints | `googleAuth.ts` |
+| `orchestrate-cf-secret` | Shared secret guarding the OAuth Worker endpoints | `appSecret.ts` (read reactively via `useAppSecret`) |
 | `orchestrate-theme` | `"light"` or `"dark"` | `useTheme` |
 | `orchestrate-active-playlist` | Playlist ID | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<playlistId, spotifyUrl>` | `MusicProvider` |
@@ -424,6 +424,7 @@ All **app data** via `localStorage`. The only server-side state is the **integra
 | `useDayPlan` | `hooks/useDayPlan.ts` | Consumer for `DayPlanContext` |
 | `useTodoistData` | `hooks/useTodoist.ts` | Read-only Todoist context consumer |
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
+| `useAppSecret` | `hooks/useAppSecret.ts` | v7.2: reactive read of the shared Cloudflare Worker secret via `useSyncExternalStore` (returns `{ secret, hasSecret }`); updates in-tab on `setStoredSecret` and across tabs via the `storage` event. Backs the `isConfigured`/`hasSecret` state in both the Todoist + Google providers and their setup forms. |
 | `useGoogleCalendarData` | `hooks/useGoogleCalendar.ts` | v7.2: read-only Google Calendar OAuth state (isConfigured = shared secret set / isConnected / authFailed, available calendars) |
 | `useGoogleCalendarActions` | `hooks/useGoogleCalendar.ts` | v7.2: setAppSecret, connect/disconnect, checkConnection, refreshCalendars, createEvent (Worker-mediated) |
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
@@ -440,7 +441,7 @@ All **app data** via `localStorage`. The only server-side state is the **integra
 
 ## 14. Directory Structure
 
-Repo-root deployment files (outside `src/`): Cloudflare Pages Functions in `functions/` — `api/auth/google/*` (OAuth endpoints + `_lib.ts`), `api/todoist/[[path]].ts` (Todoist proxy) + `api/todoist-auth/*` (token/status/disconnect), and `_shared.ts` (secret guard + json helper); plus `wrangler.toml` (Pages config + KV binding) and `public/_redirects` (SPA fallback). How it works: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md); setup: [deployment.md](./deployment.md).
+Repo-root deployment files (outside `src/`): Cloudflare Pages Functions in `functions/` — `api/auth/google/*` (OAuth endpoints + `_lib.ts`), `api/todoist/[[path]].ts` (Todoist proxy) + `api/todoist-auth/*` (token/status/disconnect), and `_shared.ts` (shared secret guard `requireAppSecret`/`checkSecret`/`hasSharedSecret`, `json` helper, Todoist env type + KV-key/API constants — the Google `_lib.ts` re-exports `json`/`requireAppSecret` from it rather than keeping its own copy); plus `wrangler.toml` (Pages config + KV binding) and `public/_redirects` (SPA fallback). How it works: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md); setup: [deployment.md](./deployment.md).
 
 ```
 src/
@@ -468,10 +469,11 @@ src/
 |   +-- useIntentionRemoval.ts
 |   +-- useConfirmModal.ts
 |   +-- useHabitReconciliation.ts, useSyncHabit.ts, useHabitMutations.ts, useHabitForms.tsx
-|   `-- useHabitReschedule.ts, useToggleHabitInstance.ts, useTodaysHabitsSync.ts
+|   +-- useHabitReschedule.ts, useToggleHabitInstance.ts, useTodaysHabitsSync.ts
+|   `-- useAppSecret.ts          # v7.2: reactive shared-secret read (useSyncExternalStore)
 |
 +-- lib/
-|   +-- appSecret.ts            # v7.2: shared Cloudflare Worker secret storage (get/set/hasStoredSecret) — used by Google + Todoist
+|   +-- appSecret.ts            # v7.2: shared Cloudflare Worker secret storage (get/set/hasStoredSecret + subscribe for reactive reads) — used by Google + Todoist via useAppSecret
 |   +-- googleAuth.ts           # v7.2: Worker OAuth client (re-exports appSecret; startGoogleLogin, fetchAccessToken, fetchConnectionStatus, disconnectGoogle)
 |   +-- googleCalendarApi.ts    # v7.2: Calendar REST v3 client (listCalendars, createCalendarEvent)
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)

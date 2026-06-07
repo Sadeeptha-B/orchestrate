@@ -23,3 +23,4 @@ pages_build_output_dir = "dist"
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "bea5f764eb0e422798cef203dee4f481"
+

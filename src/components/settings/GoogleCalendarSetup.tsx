@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useAppSecret } from '../../hooks/useAppSecret';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useGoogleCalendarData, useGoogleCalendarActions } from '../../hooks/useGoogleCalendar';
-import { getStoredSecret } from '../../lib/googleAuth';
 import { Button } from '../ui/Button';
 import { inputClass } from '../ui/formStyles';
 import type { GoogleCalendarEntry } from '../../types';
+
+const GCAL_CALLBACK_ERRORS: Record<string, string> = {
+    access_denied: 'Google sign-in was cancelled.',
+    exchange_failed: 'Google sign-in could not be completed. Please try again.',
+    google_unreachable: 'Google could not be reached right now. Please try again shortly.',
+    no_code: 'Google sign-in did not return an authorization code.',
+    server_not_configured: 'The Cloudflare worker is missing its Google OAuth configuration.',
+    state: 'The Google sign-in session expired or was invalid. Please try again.',
+    storage_unavailable: 'Cloudflare KV is unavailable right now. Please try again shortly.',
+};
 
 /**
  * Google Calendar OAuth setup (server-mediated, option E2). The browser holds only a single shared
@@ -15,6 +25,7 @@ import type { GoogleCalendarEntry } from '../../types';
  */
 export function GoogleCalendarSetup() {
     const { settings, dispatch } = useDayPlan();
+    const { secret: storedSecret } = useAppSecret();
     const { isConfigured, isConnected, connecting, authFailed, availableCalendars, error } =
         useGoogleCalendarData();
     const { setAppSecret, connect, disconnect, refreshCalendars, checkConnection } =
@@ -40,7 +51,10 @@ export function GoogleCalendarSetup() {
         setSearchParams(next, { replace: true });
     }, [searchParams, setSearchParams, checkConnection]);
 
-    const callbackError = searchParams.get('gcal') === 'error' ? searchParams.get('reason') : null;
+    const callbackErrorCode = searchParams.get('gcal') === 'error' ? searchParams.get('reason') : null;
+    const callbackError = callbackErrorCode
+        ? (GCAL_CALLBACK_ERRORS[callbackErrorCode] ?? 'Sign-in failed. Please try connecting again.')
+        : null;
 
     const selectedIds = useMemo(
         () => new Set((settings.googleCalendarIds ?? []).map((c) => c.id)),
@@ -70,7 +84,7 @@ export function GoogleCalendarSetup() {
 
             {callbackError && (
                 <div className="mb-3 rounded-lg border border-red-400/50 bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                    Sign-in failed ({callbackError}). Please try connecting again.
+                    {callbackError}
                 </div>
             )}
 
@@ -86,7 +100,7 @@ export function GoogleCalendarSetup() {
                             type="password"
                             value={secretDraft}
                             onChange={(e) => setSecretDraft(e.target.value)}
-                            placeholder={getStoredSecret() ? '••••••••  (set — enter to replace)' : 'App secret'}
+                            placeholder={storedSecret ? '••••••••  (set — enter to replace)' : 'App secret'}
                             className={inputClass}
                         />
                         <Button size="sm" onClick={saveSecret} disabled={!secretDraft.trim()}>

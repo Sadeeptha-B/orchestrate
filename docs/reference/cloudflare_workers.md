@@ -58,9 +58,20 @@ Pages Functions live in [`functions/`](../../functions/) at the repo root; the f
 | [`token.ts`](../../functions/api/auth/google/token.ts) | `/api/auth/google/token` | GET | shared secret | Returns a fresh access token (`{ access_token, expires_in }`) from the KV cache or minted via the refresh token. |
 | [`status.ts`](../../functions/api/auth/google/status.ts) | `/api/auth/google/status` | GET | shared secret | Reports `{ connected, scope }` — whether a refresh token is held. |
 | [`disconnect.ts`](../../functions/api/auth/google/disconnect.ts) | `/api/auth/google/disconnect` | POST | shared secret | Revokes the refresh token at Google and clears all KV keys. |
-| [`_lib.ts`](../../functions/api/auth/google/_lib.ts) | — | — | — | Shared helpers: `Env` type, secret guard, state HMAC, Google token calls, KV storage. |
+| [`_lib.ts`](../../functions/api/auth/google/_lib.ts) | — | — | — | Google-specific helpers: `Env` type, state HMAC, Google token calls, KV storage (wrapped to throw `GoogleWorkerError` on KV/upstream failure). Re-exports `json` + `requireAppSecret` from the top-level [`_shared.ts`](../../functions/_shared.ts) (no longer keeps its own copy). |
 
 The `_redirects` file ([`public/_redirects`](../../public/_redirects)) provides the SPA deep-link fallback (`/* → /index.html 200`). Pages Functions match `/api/*` **before** the static `_redirects` rules, so the OAuth routes aren't swallowed by the catch-all.
+
+**Shared guard + error model (both Google and Todoist functions).** Every secret-guarded endpoint enters through `requireAppSecret(request, env)` from [`_shared.ts`](../../functions/_shared.ts), which returns a ready `Response` (so the handler just `if (authError) return authError`):
+
+| Condition | Status | `error` code |
+|---|---|---|
+| `APP_SHARED_SECRET` missing from the Worker env | `500` | `server_not_configured` |
+| `X-App-Secret` missing or wrong | `401` | `unauthorized` |
+| KV read/write threw | `503` | `storage_unavailable` |
+| Upstream (Todoist / Google token endpoint) unreachable or non-JSON | `502` | `todoist_unreachable` / `google_unreachable` |
+
+Distinguishing `server_not_configured` (500) from `unauthorized` (401) means a misdeployed Worker (no secret set) no longer masquerades as "wrong secret." KV/upstream failures surface as `503`/`502` instead of an unhandled `500`. The Google side raises these as a `GoogleWorkerError` from its KV/fetch wrappers, caught per-endpoint; the callback maps them to `?gcal=error&reason=<code>`. The frontend setup forms map each code to a human message ([`GoogleCalendarSetup.tsx`](../../src/components/settings/GoogleCalendarSetup.tsx) / [`TodoistSetup.tsx`](../../src/components/todoist/TodoistSetup.tsx)).
 
 ---
 
@@ -87,7 +98,7 @@ Whenever the app needs to call the Calendar API (e.g. list calendars):
 
 ### 4.3 Auto-reconnect on load
 
-On startup, if `settings.googleCalendarConnected` is set, the provider calls `/status` once. If the server still holds a refresh token, the app is **Connected** without any user interaction — the connection survives reloads and works on any device once the shared secret is entered. ([`src/context/GoogleCalendarContext.tsx`](../../src/context/GoogleCalendarContext.tsx).)
+On startup — and whenever the shared secret changes (the provider reads it reactively via `useAppSecret`) — the provider calls `/status` once. If the server still holds a refresh token, the app is **Connected** without any user interaction; the connection survives reloads and works on any device once the shared secret is entered. The persisted `settings.googleCalendarConnected` flag is no longer the gate for this check — it's kept only as a cache of the last-known result, written **only when the value actually changes** (so a Todoist-only user who never connected Google doesn't incur a settings write on every load). ([`src/context/GoogleCalendarContext.tsx`](../../src/context/GoogleCalendarContext.tsx).)
 
 ### 4.4 Disconnect
 
@@ -143,7 +154,7 @@ This is a **single-user personal tool**; the auth model is deliberately one shar
 
 | File | Role |
 |---|---|
-| [`src/lib/googleAuth.ts`](../../src/lib/googleAuth.ts) | The Worker client: stores/reads the shared secret, and exposes `startGoogleLogin`, `fetchAccessToken`, `fetchConnectionStatus`, `disconnectGoogle`. `isGoogleConfigured()` now means "shared secret is set." |
+| [`src/lib/googleAuth.ts`](../../src/lib/googleAuth.ts) | The Worker client: stores/reads the shared secret, and exposes `startGoogleLogin`, `fetchAccessToken`, `fetchConnectionStatus`, `disconnectGoogle`. "Configured" (shared secret set) is read reactively via the `useAppSecret` hook. |
 | [`src/context/GoogleCalendarContext.tsx`](../../src/context/GoogleCalendarContext.tsx) | Provider: in-memory access-token cache, connection state, `connect`/`disconnect`/`checkConnection`/`refreshCalendars`/`createEvent`, auto-reconnect on load. |
 | [`src/lib/googleCalendarApi.ts`](../../src/lib/googleCalendarApi.ts) | Thin Calendar REST v3 client; takes a Bearer access token. Unchanged by the OAuth migration. |
 | [`src/components/settings/GoogleCalendarSetup.tsx`](../../src/components/settings/GoogleCalendarSetup.tsx) | Settings UI: shared-secret entry, Connect/Disconnect, calendar picker, and the `?gcal=` post-redirect handling. |
@@ -164,7 +175,7 @@ The Todoist integration (v7.2) reuses this exact backend pattern — the **same*
 | [`functions/api/todoist-auth/token.ts`](../../functions/api/todoist-auth/token.ts) | `/api/todoist-auth/token` | POST | shared secret | Validates the token (against Todoist `/projects`) and stores it in KV. |
 | [`functions/api/todoist-auth/status.ts`](../../functions/api/todoist-auth/status.ts) | `/api/todoist-auth/status` | GET | shared secret | `{ configured }` — whether a token is held. |
 | [`functions/api/todoist-auth/disconnect.ts`](../../functions/api/todoist-auth/disconnect.ts) | `/api/todoist-auth/disconnect` | POST | shared secret | Deletes `todoist:token` from KV. |
-| [`functions/_shared.ts`](../../functions/_shared.ts) | — | — | — | `json` + `checkSecret` shared by the Todoist functions. |
+| [`functions/_shared.ts`](../../functions/_shared.ts) | — | — | — | The common backend helpers: `json`, `checkSecret`/`hasSharedSecret`, `requireAppSecret`, the `TodoistEnv` type, and the `TODOIST_API` / `todoist:token` constants. Used by the Todoist functions **and** re-exported (in part) by the Google `_lib.ts`. |
 
 **KV key:** `todoist:token` (string; no TTL). **Why a proxy** (vs. the Google "mint a token for the browser" model): a Todoist personal token *is* the long-lived credential, so it must never reach the browser — the only safe shape is to keep it server-side and proxy every call. (Google's access tokens are short-lived and safe to hand to the browser, so Google returns a token instead of proxying.)
 

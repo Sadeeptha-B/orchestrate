@@ -4,6 +4,11 @@
 // the Worker's `APP_SHARED_SECRET`.
 
 const SECRET_KEY = 'orchestrate-cf-secret';
+const listeners = new Set<() => void>();
+
+function notifyListeners(): void {
+    listeners.forEach((listener) => listener());
+}
 
 export function getStoredSecret(): string {
     try {
@@ -20,8 +25,29 @@ export function setStoredSecret(secret: string): void {
     } catch {
         // ignore storage failures (private mode, etc.)
     }
+    notifyListeners();
 }
 
 export function hasStoredSecret(): boolean {
     return getStoredSecret().length > 0;
+}
+
+export function subscribeToStoredSecret(listener: () => void): () => void {
+    listeners.add(listener);
+
+    if (typeof window === 'undefined') {
+        return () => {
+            listeners.delete(listener);
+        };
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+        if (event.key === SECRET_KEY) listener();
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => {
+        listeners.delete(listener);
+        window.removeEventListener('storage', handleStorage);
+    };
 }

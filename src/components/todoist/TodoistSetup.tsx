@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
+import { useAppSecret } from '../../hooks/useAppSecret';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
-import { getStoredSecret, hasStoredSecret, setStoredSecret } from '../../lib/appSecret';
+import { setStoredSecret } from '../../lib/appSecret';
 import { disconnectTodoist, storeTodoistToken } from '../../lib/todoistApi';
 import { Button } from '../ui/Button';
 import { inputClass } from '../ui/formStyles';
@@ -10,10 +11,14 @@ const SAVE_TOKEN_ERRORS: Record<string, string> = {
     app_secret: 'The app secret was rejected — check it above.',
     invalid_token: 'Invalid token — please check and try again.',
     missing_token: 'Please paste a token.',
+    server_not_configured: 'The Cloudflare worker is missing its app secret or KV binding.',
+    storage_unavailable: 'Cloudflare KV is unavailable right now. Try again shortly.',
+    todoist_unreachable: 'Todoist could not be reached right now. Try again shortly.',
 };
 
 export function TodoistSetup() {
     const { settings, dispatch } = useDayPlan();
+    const { secret: storedSecret, hasSecret } = useAppSecret();
     const { isConfigured, projects, authFailed } = useTodoistData();
     const { refreshProjects, refreshConnection } = useTodoistActions();
 
@@ -23,7 +28,6 @@ export function TodoistSetup() {
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [refreshingProjects, setRefreshingProjects] = useState(false);
 
-    const [hasSecret, setHasSecret] = useState(() => hasStoredSecret());
     const [secretDraft, setSecretDraft] = useState('');
     const [editingSecret, setEditingSecret] = useState(false);
 
@@ -68,7 +72,6 @@ export function TodoistSetup() {
         const value = secretDraft.trim();
         if (!value) return;
         setStoredSecret(value);
-        setHasSecret(true);
         setSecretDraft('');
         setEditingSecret(false);
         await refreshConnection();
@@ -121,7 +124,7 @@ export function TodoistSetup() {
                             value={secretDraft}
                             onChange={(e) => setSecretDraft(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSaveSecret()}
-                            placeholder={getStoredSecret() ? '••••••••  (set — enter to replace)' : 'App secret'}
+                            placeholder={storedSecret ? '••••••••  (set — enter to replace)' : 'App secret'}
                             className={inputClass}
                         />
                         <Button size="sm" onClick={handleSaveSecret} disabled={!secretDraft.trim()}>
