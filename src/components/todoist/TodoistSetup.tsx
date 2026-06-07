@@ -58,16 +58,6 @@ export function TodoistSetup() {
         dispatch({ type: 'UPDATE_SETTINGS', settings: { habitsTodoistProjectId: undefined } });
     };
 
-    /** Clear any legacy in-browser encrypted token (the token now lives server-side in KV). */
-    const clearLegacyToken = () => {
-        if (settings.todoistToken || settings.todoistTokenIV || settings.todoistTokenKey) {
-            dispatch({
-                type: 'UPDATE_SETTINGS',
-                settings: { todoistToken: undefined, todoistTokenIV: undefined, todoistTokenKey: undefined },
-            });
-        }
-    };
-
     const handleSaveSecret = async () => {
         const value = secretDraft.trim();
         if (!value) return;
@@ -91,7 +81,6 @@ export function TodoistSetup() {
             return;
         }
 
-        clearLegacyToken();
         setToken('');
         setStatus('success');
         setTesting(false);
@@ -101,7 +90,6 @@ export function TodoistSetup() {
 
     const handleDisconnect = async () => {
         await disconnectTodoist();
-        clearLegacyToken();
         setStatus('idle');
         await refreshConnection();
     };

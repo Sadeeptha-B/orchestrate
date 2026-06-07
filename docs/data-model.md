@@ -1,6 +1,6 @@
 # Orchestrate — Data Model Reference
 
-> For a high-level overview, start at [synthesis.md](./synthesis.md). This document covers semantics, invariants, lifecycle rules, relationships, and the migration chain. **For exact type shapes, read the source**: [`src/types/index.ts`](../src/types/index.ts). Todoist API mirror types live in [`src/hooks/useTodoist.ts`](../src/hooks/useTodoist.ts).
+> For a high-level overview, start at [synthesis.md](./synthesis.md). This document covers semantics, invariants, lifecycle rules, relationships, and schema compatibility. **For exact type shapes, read the source**: [`src/types/index.ts`](../src/types/index.ts). Todoist API mirror types live in [`src/hooks/useTodoist.ts`](../src/hooks/useTodoist.ts).
 
 ---
 
@@ -52,7 +52,7 @@ A habit's manifestation for today (both kinds). Lives on `DayPlan.todaysHabits`,
 - **skipped** — terminal, user explicitly skipped today ('habit' kind only).
 - **missed** (v6.8) — *not* a persisted status: a **derived presentation** of a `planned`, timed, `windowBehavior: 'strict'` instance whose window (`targetTime + durationMinutes`) has elapsed for the current `now`. Surfaces grey it out and stop prompting it as a live to-do, but it stays fully actionable (Complete/Skip/Start/Reschedule). Computed by `isHabitInstanceMissed(habit, instance, now)` (`lib/habits.ts`); `lenient` instances never read as missed.
 
-(v6.4 removed the old `'unfinished'` status — the v6.3 clone-on-reschedule predecessor. Reschedules are in-place now and segments survive them, so no clone is produced. `migratePlan` coerces any persisted `'unfinished'` instance to `'skipped'`.)
+(v6.4 removed the old `'unfinished'` status — the v6.3 clone-on-reschedule predecessor. Reschedules are in-place now and segments survive them, so no clone is produced. Current 7.1-only builds do not read older persisted variants.)
 
 **Reschedule — always in-place (v6.4):** `RESCHEDULE_HABIT_INSTANCE` updates `targetTime` on the existing instance, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` — if it was engaged, the open segment keeps running at the new target time. **Every reschedule is recorded**, whether or not the instance was engaged. The recurring Todoist task is **never** touched. The `rescheduledAt` stamp doubles as a "user-chose-this-time" sentinel that `REFRESH_TODAYS_HABITS` honors.
 
@@ -100,13 +100,13 @@ Persistent user preferences. Survives daily plan resets.
 
 **`sessionSlots`** (v7.1): no longer the live source for the day's sessions — retained only as a legacy seed/reset fallback and the source for the one-time "My sessions" template migration. The live per-day list is `DayPlan.sessionSlots`.
 
-**Todoist token (v7.2):** held **server-side in Workers KV**, not in the browser. The app sends the shared `X-App-Secret` to the same-origin Worker proxy (`/api/todoist/*`), which injects the `Authorization` header. The legacy `todoistToken`/`todoistTokenIV`/`todoistTokenKey` settings fields are **deprecated** (no longer read/written; cleared on next connect/disconnect) and kept only so old persisted settings + backups still parse.
+**Todoist token (v7.2):** held **server-side in Workers KV**, not in the browser and not in any backup. The app sends the shared `X-App-Secret` to the same-origin Worker proxy (`/api/todoist/*`), which injects the `Authorization` header. (The legacy `todoistToken`/`todoistTokenIV`/`todoistTokenKey` settings fields were removed — the historical browser-encrypted token is gone.)
 
-**`habitsTodoistProjectId`:** Lazily created on first 'habit'-kind save. Resolved by `ensureHabitsProject(...)`.
+**`habitsTodoistProjectId`:** Lazily created on first 'habit'-kind save. Resolved by `ensureHabitsProject(...)`. Included in a Full Backup (it's an ID, not a credential).
 
-**`taskCapDefaults`** (v6.7 keys): `{ habit, microGap, manualBackground }` (renamed from `stabilizer`/`lightCoherent`; `migrateTaskCaps` maps the old keys forward).
+**`taskCapDefaults`** keys: `{ habit, microGap, manualBackground }`. Absent keys are filled from defaults by `fillTaskCaps` on load.
 
-**Google Calendar (v7.2):** `googleCalendarIds` is now the **selected subset** of calendars to overlay in the embed, sourced from the Calendar API list (each `GoogleCalendarEntry` carries `id`/`name`/`color`/`primary`) — no longer hand-entered. `googleCalendarConnected: boolean` records that the user authorized Google Calendar via the **server-mediated OAuth flow**; on load the `GoogleCalendarProvider` uses it to re-check the server connection (`/api/auth/google/status`). The **refresh token lives server-side in KV**; the browser only ever holds a short-lived access token **in memory** (minted by the Worker on demand). `calendarViewMode` is unchanged (embed week/month/agenda). Full OAuth model: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md).
+**Google Calendar (v7.2):** `googleCalendarIds` is the **selected subset** of calendars to overlay in the embed, sourced from the Calendar API list (each `GoogleCalendarEntry` carries `id`/`name`/`color`/`primary`). `googleCalendarConnected: boolean` records that the user authorized Google Calendar via the **server-mediated OAuth flow**; on load the `GoogleCalendarProvider` uses it to re-check the server connection (`/api/auth/google/status`). The **refresh token lives server-side in KV**; the browser only ever holds a short-lived access token **in memory** (minted by the Worker on demand). `calendarViewMode` is unchanged (embed week/month/agenda). Full OAuth model: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md).
 
 ### Season
 
@@ -129,7 +129,7 @@ A first-class recurring entity. **v6.7** discriminates `kind` by *lifecycle*:
 - **habit** — the normal recurring thing. Synced to Todoist as a recurring task; **terminal once/day** (Complete advances the recurrence). `targetTime` is **optional**: timed → timeline lane; untimed → "anytime today". Reschedulable. Both timed and untimed habits render in `HabitInstanceCard`.
 - **micro-gap** — a light, **repeatable** filler. **Never synced to Todoist**, always untimed, never terminal — Start/Stop logs a rep and it stays available all day. Rendered in its own `MicroGapCard`; segments still feed the Engagement Log. (v6.6 briefly unified these as "light-coherent" Todoist-backed terminal habits; v6.7 re-separated them — Todoist's complete-advances-recurrence model fights repeatability, and the value Todoist gave was tracking, which engagement segments already provide. Native streaks are a planned follow-up.)
 
-(Historical: pre-v6.7 the kinds were `'stabilizer'`/`'light-coherent'`; `migrateHabit` remaps them to `'habit'`/`'micro-gap'`.)
+(Historical: pre-v6.7 the kinds were `'stabilizer'`/`'light-coherent'`; that remap lived in the now-removed migration chain — see git history.)
 
 **`isAnchor`** is orthogonal to `kind` — a pure importance tag marking a habit as load-bearing (sleep, meditation, gym, shutdown, weekly review). It does **not** alter behavior or block deletion at the reducer level; the only current effect is UI affordances — anchors sort to the front of habit lists and deleting an *active* anchor prompts a confirm dialog (cancellable, but deletion is permitted once confirmed). The protection axis is forward-looking scaffolding for recovery-mode / Minimum Viable Day, where anchors are the non-negotiables preserved when the plan is narrowed.
 
@@ -250,7 +250,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `ADD_CHECKIN` | `checkIn` | Appends to `plan.checkIns` |
 | `MARK_FOCUS_SEEDED` | `focusId` | v6.7: records a recurring-focus id in `plan.seededFocusIds` so the Step 1 banner chip doesn't re-offer it today. Idempotent. |
 | `RESET_DAY` | *(none)* | Replaces plan with `freshPlan(seedSessionSlots(...))` (sessions re-seeded from settings/defaults), clears `editingStep`. Other slices (settings, history, life) untouched. Surfaced from Settings → Data → Reset Today's Plan. |
-| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings` back to defaults (legacy Todoist token fields cleared). Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). **Does not** clear the server-side tokens in KV (Todoist/Google) or the `orchestrate-cf-secret` — disconnect those from Settings → Integrations. Surfaced from Settings → Data → Reset Everything. |
+| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings = defaultSettings()`. Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). **Does not** clear the server-side tokens in KV (Todoist/Google) or the `orchestrate-cf-secret` — disconnect those from Settings → Integrations. Surfaced from Settings → Data → Reset Everything. |
 | `UPDATE_SETTINGS` | `settings` | Shallow-merges into settings |
 | `SET_EDITING_STEP` | `step` | Tracks which wizard step the user is re-editing from the dashboard |
 
@@ -270,10 +270,10 @@ Operate on `DayPlan.sessionSlots`. Granular and **id-stable** so `taskSessions` 
 | Action | Payload | Effect |
 |---|---|---|
 | `SAVE_DAY` | `label` | Creates a SavedDayPlan snapshot. Replaces any existing entry for same date. Only writer to `history` (rollover uses backlog instead). |
-| `RESTORE_DAY` | `savedAt` | Finds saved plan, runs through `migratePlan()`, sets date to today |
+| `RESTORE_DAY` | `savedAt` | Finds a current-schema saved plan, strips persistence markers, and sets its date to today |
 | `DELETE_SAVED_DAY` | `savedAt` | Removes entry from history |
-| `IMPORT_SESSIONS` | `sessions` | Merges imported sessions, deduplicating by `savedAt` |
-| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import. Imported habits run through `migrateHabit`. |
+| `IMPORT_SESSIONS` | `sessions` | Merges imported sessions, deduplicating by `savedAt`. Caller (`DataManagement`) refuses non-`7.1` saved plans before dispatching. |
+| `IMPORT_BACKUP` | `settings?, life?, history?` | Merge-by-id import (habits appended as-is — no migration). Caller (`DataManagement`) refuses backups whose `_schemaVersion` isn't `7.1` before dispatching. |
 
 ### 3.7 Life Scaffolding Actions
 
@@ -311,81 +311,27 @@ Operate on `LifeContext.sessionTemplates` (mirrors the Habit/RestCue CRUD patter
 
 ---
 
-## 4. Migration Chain
+## 4. Schema Version & Compatibility
 
-Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On load, `migratePlan()` applies transformations. Current schema: **7.1**.
+Current schema: **7.1**. Every persisted slice (plan / settings / life) and every saved-session plan
+is stamped with `_schemaVersion` on write. **There is no in-app migration** — the historical v1→v7.1
+chain (and the `_wizardSteps` step-remap) was removed; it lives in git history.
 
-### v1 -> v2: Tasks to Intentions
-- **Trigger:** Plan has `tasks` array instead of `intentions`.
-- Each v1 task becomes an Intention with empty `linkedTaskIds`.
+**Hard guard (7.1 only).** A single helper, `isCurrentSchema(raw)` (`raw._schemaVersion === SCHEMA_VERSION`),
+gates every read:
+- **Load.** `loadPlan` / `loadSettings` / `loadLifeContext` reject anything not stamped `7.1` and fall back
+  to a fresh/default value (the app starts clean rather than crashing). `loadHistory` keeps only saved
+  plans stamped `7.1`. Plan markers are stripped via `stripPlanMarkers` before use.
+- **Import.** `DataManagement` refuses a Full Backup whose top-level `_schemaVersion !== 7.1`, rejects malformed nested slices, and rejects saved sessions whose plans aren't `7.1` (`validateSessions`), surfacing an error instead of dispatching.
+- **Restore.** `RESTORE_DAY` trusts history (already guarded) and just strips markers + re-dates to today.
 
-### v2/v3 -> v4: Intentions to LinkedTasks
-- **Trigger:** No `linkedTasks`/`taskSessions` on plan.
-- Initializes both to empty. Discards old `intentionSessions`.
+This is safe for in-place data because the live app already persists every slice in 7.1 shape with the
+marker. Because there's no migration, the author re-exports a fresh session + Full Backup once on this
+change; those become the canonical 7.1 artifacts going forward.
 
-### v4 -> v4.1: estimatedMinutes
-- Adds `estimatedMinutes: null` to any LinkedTask missing it.
-
-### v4.1 -> v5: LifeContext
-- Introduces `orchestrate-life-context` localStorage key. Plan shape unchanged.
-- `loadLifeContext()` returns `{ seasons: [], habits: [], activeSeasonId: null }` when absent.
-
-### v5 -> v6: Micro-gap refinement + capacity
-- Strips deprecated `isHabit` from intentions and LinkedTasks.
-- Initializes `plan.habitLog` to `[]`.
-- Defaults habit `kind` to `'stabilizer'` if missing.
-- Injects `taskCapDefaults` and `sessionBufferMinutes` into settings.
-
-### v6 -> v6.1: Habit-as-task decoupling
-- Drops habit-derived intentions; re-anchors their LinkedTasks as orphans with `sourceHabitId`.
-- Migrates deprecated `autoLinkTodoistId` -> `todoistTaskId`, `maxBlockMinutes` -> `targetDurationMinutes`.
-- Defaults `windowBehavior` to `'lenient'`.
-- Strips deprecated fields from persisted shape (old fields remain on type for `IMPORT_BACKUP` compat).
-
-### v6.1 -> v6.2: Intentions backlog
-- Defaults `LifeContext.backlog` to `[]`.
-- Provider init consolidated into `loadInitialState()` with date-stale harvest.
-- No automatic SAVE_DAY at rollover — backlog covers unfinished work.
-
-### v6.2 -> v6.3: Habit/session decoupling + task engagement
-- For every LinkedTask with `sourceHabitId`: emits a synthetic `TodaysHabitInstance`, drops the LinkedTask, prunes from `taskSessions`.
-- For remaining LinkedTasks: stamps `status` based on `completed` flag. Drops `sourceHabitId`/`skippedForToday`.
-- Initializes `plan.todaysHabits: []` when missing.
-
-### v6.4: Engagement segments (no schema-marker bump — additive optionals)
-- Engagement moved from a single cumulative `EngagementRecord` to an `EngagementSegment[]` (`segments`) on both `LinkedTask` and `TodaysHabitInstance`. `migratePlan` converts any legacy `engagement` record into a single segment (`legacyEngagementToSegments`); the old `totalSeconds`/`totalMinutes` accumulators are dropped (duration is derived).
-- Drops `HabitInstanceStatus` `'unfinished'` — `migratePlan` coerces persisted `'unfinished'` instances to `'skipped'`, and `'unfinished'` LinkedTask status to `'pending'`.
-- `BacklogEntry.unfinishedTaskRecords` becomes `Record<todoistId, EngagementSegment[]>`.
-- These are optional fields defaulted on read, so the `_schemaVersion` marker **stays at `6.3`** (no breaking shape change; plans reset daily).
-
-### v6.6: Unify light-coherent into habit instances (no schema-marker bump)
-- Both habit kinds now sync to Todoist + produce `TodaysHabitInstance`s. `kind` discriminates scheduling only (stabilizer = timed + required `targetTime`; light-coherent = always untimed/"anytime").
-- `DayPlan.habitLog` + `HabitLogEntry` + the `LOG_HABIT_*` actions are **removed**. `habitLog` was daily-ephemeral, so `migratePlan` simply doesn't carry it forward (no data to migrate).
-- `migrateHabit` strips stray `targetTime` / `windowBehavior` from light-coherent habits, and migrates legacy `autoLinkTodoistId` for **both** kinds. Existing light-coherent habits have no `todoistTaskId`, so the central `ReconciliationProvider` auto-creates their recurring Todoist tasks on next hydration.
-- Sync/reconcile helpers renamed: `findNeedsSyncStabilizers → findNeedsSyncHabits`, `findOverdueStabilizers → findOverdueHabits`, `reconcileOverdueStabilizers → reconcileOverdueHabits`; hooks `useSyncStabilizer → useSyncHabit`, `useStabilizerReconciliation → useHabitReconciliation`.
-- `_schemaVersion` marker **stays at `6.3`** (plans reset daily; no breaking persisted-shape bump).
-
-### v6.7: Re-separate habits & micro-gaps; recurring focus (no schema-marker bump)
-- `HabitKind` values remap `'stabilizer' → 'habit'`, `'light-coherent' → 'micro-gap'` (via `migrateHabit`). Micro-gaps have `todoistTaskId` / `targetTime` / `windowBehavior` **stripped** (no Todoist, untimed, repeatable); the orphaned v6.6 Todoist task is left in Todoist for the user to delete.
-- `'habit'` kind: `targetTime` is optional again (timed or "anytime"); Todoist sync + terminal completion + reconcile are habit-only. `'micro-gap'` kind: no Todoist, repeatable (planned↔engaged), own `MicroGapCard`, surfaced via `computeTodaysMicroGapInstances`.
-- `TodaysHabitInstance.todoistTaskId` becomes optional. `TaskCapDefaults` keys `stabilizer/lightCoherent → habit/microGap` (`migrateTaskCaps`).
-- Additive: `Season.recurringFocuses?`, `DayPlan.seededFocusIds?`, new `MARK_FOCUS_SEEDED` action, `RecurringFocus` type.
-- `_schemaVersion` marker **stays at `6.3`** (`migrateHabit`/`migrateTaskCaps` handle the life/settings remaps; plan is daily-ephemeral; new fields are additive optionals).
-
-### v7.1: Per-day sessions + session templates (`_schemaVersion` -> **7.1**, `_wizardSteps` -> **5**)
-- `DayPlan.sessionSlots` becomes the authoritative per-day session list. `migratePlan` **backfills** it from the persisted plan (`raw.sessionSlots`) or, when absent, `defaultSessionSlots` (the pure plan migrator has no `settings`). `freshPlan(seed)` seeds a new day via `seedSessionSlots()` — previous plan's slots → `settings.sessionSlots` → defaults, all with fresh ids.
-- `LifeContext.sessionTemplates` added. On first load, `seedSessionTemplates()` preserves a customized legacy `settings.sessionSlots` as a single `"My sessions"` template (else `[]`), so per-day sessions don't lose the old global customization. Sets `[]` once so it never re-seeds.
-- `settings.sessionSlots` is no longer read live — retained only as the seed/reset fallback and the template-seed source.
-
-### Wizard step migration
-- 6-step -> 5-step: steps 2+ shift down by 1.
-- legacy 5-step -> 4-step: old step 4 (nudges) merges into step 3 (**pre-7.1 only** — gated on `_schemaVersion < 7.1` so it never fires on a current 5-step plan).
-- **v7.1: 4-step -> 5-step** — a new "Sessions" step is inserted at position 3, so any persisted step `>= 3` shifts up by 1 (old Schedule 3→4, Music 4→5). Gated on `_wizardSteps === 4 && _schemaVersion < 7.1`.
-- All clamped to `max: 5`.
-
-### Settings migration
-- Single `googleCalendarId` string -> `GoogleCalendarEntry[]`.
-- String array `googleCalendarIds` -> `GoogleCalendarEntry[]` objects.
+**Adding a future migration.** Bump `SCHEMA_VERSION`, then either (a) re-introduce a `migrate*()` step
+branching on the stamped version, or (b) keep the hard guard and re-export. The `_schemaVersion` stamp is
+the anchor for either path.
 
 ---
 
@@ -393,14 +339,45 @@ Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On lo
 
 | Key | Content | Notes |
 |---|---|---|
-| `orchestrate-day-plan` | Serialized `DayPlan` + `_wizardSteps` + `_schemaVersion` markers | `_wizardSteps` injected during serialization, read during migration only |
-| `orchestrate-settings` | Serialized `AppSettings` | Token fields are base64-encoded ciphertext/IV/key |
-| `orchestrate-history` | `SavedDayPlan[]` | Each entry contains a full plan snapshot |
+| `orchestrate-day-plan` | Serialized `DayPlan` + `_schemaVersion` marker | Marker read by the load-time schema guard only |
+| `orchestrate-settings` | Serialized `AppSettings` + `_schemaVersion` | No token here — the Todoist token is server-side in KV |
+| `orchestrate-history` | `SavedDayPlan[]` | Each entry's `plan` carries its own `_schemaVersion`; non-`7.1` entries are dropped on load |
 | `orchestrate-life-context` | Serialized `LifeContext` + `_schemaVersion` | Seasons, habits, backlog, rest cues, session templates (v7.1) |
 | `orchestrate-todoist-cache` | `{ tasks, projects, sections, fetchedAt }` | Stale-while-revalidate (5min hydration / 30s focus) |
+| `orchestrate-cf-secret` | Shared secret guarding the Worker endpoints | Installation-specific; never backed up |
 | `orchestrate-theme` | `"light"` or `"dark"` | Written by `useTheme` |
 | `orchestrate-active-playlist` | Playlist ID string | Written by `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<playlistId, spotifyUrl>` | Written by `MusicProvider` |
+
+---
+
+## 5b. Backup Scope & Integrations
+
+A **Full Backup** is the JSON `{ settings, life, history, _backupVersion, _schemaVersion }` from
+`DataManagement.exportFullBackup`. **Sessions export** is just `SavedDayPlan[]`. Both are **data +
+integration references/preferences — never credentials.**
+
+**Todoist**
+- **Not in the backup:** the personal API token (server-side, Workers KV `todoist:token`).
+- **In the backup:** `settings.habitsTodoistProjectId`; and every embedded **task reference** —
+  `LinkedTask.todoistId` + `titleSnapshot` inside `history[].plan`, and `todoistTaskId` on `life.habits[]`
+  and habit instances. IDs/labels, not auth.
+- **After restore (new device/deployment):** re-enter the **app secret** and **reconnect Todoist** (paste
+  token) in Settings → Integrations. Imported task IDs re-link automatically for the same Todoist account.
+
+**Google Calendar**
+- **Not in the backup:** the OAuth refresh token (KV `google:refresh_token`) or access tokens (KV cache /
+  in-memory).
+- **In the backup:** `settings.googleCalendarConnected` (flag), `settings.googleCalendarIds`
+  (`GoogleCalendarEntry[]`), `settings.calendarViewMode`.
+- **Caveat:** imported `googleCalendarConnected: true` is provisional — `GoogleCalendarProvider` re-checks
+  `/api/auth/google/status` on load, so a device whose KV has no token self-corrects to disconnected.
+  Re-authorize Google if it shows disconnected.
+
+**Shared secret** (`orchestrate-cf-secret`) is **not** in any backup — re-enter per device.
+
+**Not in the Full Backup by design:** today's `plan` (only saved sessions in `history`), the Todoist cache,
+and theme/music/pomodoro prefs.
 
 ---
 

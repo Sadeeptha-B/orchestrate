@@ -52,11 +52,7 @@ export function HabitForm({
     );
     const [targetTime, setTargetTime] = useState<string>(initial?.targetTime ?? '');
     const [targetDurationMinutes, setTargetDurationMinutes] = useState<string>(
-        initial?.targetDurationMinutes !== undefined
-            ? String(initial.targetDurationMinutes)
-            : initial?.maxBlockMinutes !== undefined
-                ? String(initial.maxBlockMinutes)
-                : '',
+        initial?.targetDurationMinutes !== undefined ? String(initial.targetDurationMinutes) : '',
     );
     const [windowBehavior, setWindowBehavior] = useState<HabitWindowBehavior>(
         initial?.windowBehavior ?? 'lenient',

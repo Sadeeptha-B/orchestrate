@@ -16,12 +16,10 @@ import type {
     LifeContext,
     Season,
     Habit,
-    HabitKind,
     TaskCapDefaults,
     RestCue,
     BacklogEntry,
     TodaysHabitInstance,
-    HabitInstanceStatus,
     EngagementSegment,
     RescheduleEventEntry,
 } from '../types';
@@ -41,9 +39,31 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-const SCHEMA_VERSION = 7.1;
-/** Wizard step count stamped on persisted plans for the migration chain to detect old layouts. */
-const WIZARD_STEPS_COUNT = 5;
+/**
+ * Current schema. Persisted artifacts (plan / settings / life / saved-session plans) and full
+ * backups are stamped with this. There is **no in-app migration** from older versions — anything
+ * that isn't this exact version is rejected on load (treated as absent → fresh start) and on import
+ * (refused). See `isCurrentSchema`. The historical v1→v7.1 migration chain lives in git history.
+ */
+export const SCHEMA_VERSION = 7.1;
+
+/** True when a parsed, persisted/imported object carries the current schema stamp. */
+function isCurrentSchema(raw: { _schemaVersion?: unknown } | null | undefined): boolean {
+    return !!raw && raw._schemaVersion === SCHEMA_VERSION;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function isCurrentSavedPlan(value: unknown): value is SavedDayPlan {
+    if (!isRecord(value)) return false;
+    if (typeof value.savedAt !== 'string' || typeof value.label !== 'string') return false;
+    const plan = value.plan;
+    return isRecord(plan)
+        && isCurrentSchema(plan)
+        && Array.isArray((plan as { intentions?: unknown }).intentions);
+}
 
 function freshPlan(seed?: SessionSlot[]): DayPlan {
     return {
@@ -79,256 +99,49 @@ function seedSessionSlots(prevPlan: DayPlan | null | undefined, settings: AppSet
 }
 
 /**
- * v6.4: convert a legacy single `engagement` record (`{ startedAt, endedAt?, totalSeconds?, totalMinutes? }`)
- * into the new `segments` array. One record → one segment. Returns undefined when there's nothing to convert.
- * (Multiple legacy Start/Stop cycles were already collapsed into one record, so only the last is recoverable —
- * acceptable for the same-day reload edge; plans reset daily.)
+ * Strip the persisted schema marker from an otherwise-current plan object. There is no migration:
+ * the caller has already verified `_schemaVersion === SCHEMA_VERSION` via `isCurrentSchema`.
  */
-function legacyEngagementToSegments(raw: Record<string, unknown> | undefined): EngagementSegment[] | undefined {
-    if (!raw) return undefined;
-    const startedAt = raw.startedAt as string | undefined;
-    if (!startedAt) return undefined;
-    const seg: EngagementSegment = { startedAt };
-    if (raw.endedAt) seg.endedAt = raw.endedAt as string;
-    return [seg];
+function stripPlanMarkers(raw: Record<string, unknown>): DayPlan {
+    const { _schemaVersion: _s, ...plan } = raw;
+    void _s;
+    return plan as unknown as DayPlan;
 }
 
-/** Migrate a plan through the version chain: v1 (tasks) → v2 (intentions) → v4 (linkedTasks) → v6.1 (habit-as-task decoupling). */
-function migratePlan(raw: Record<string, unknown>): DayPlan {
-    // Wizard step-count has shifted over time; remap a persisted step into the current 5-step layout.
-    //   • v1 (6 steps) → step 2+ maps to step N-1.
-    //   • old 5-step layout (Intentions/Refine/Schedule/Music/… legacy) → 4-step.
-    //   • v7.1: a new "Sessions" step is inserted at position 3, so old Schedule(3)/Music(4) shift +1.
-    // NOTE the old layout was *also* 5 steps, so we cannot disambiguate on `_wizardSteps` alone —
-    // gate the legacy 5→4 and the new 4→5 rungs on `_schemaVersion` so they never fire on a
-    // current (7.1) plan that legitimately has 5 steps.
-    const wizardSteps = raw._wizardSteps as number;
-    const schema = raw._schemaVersion as number | undefined;
-    const migrateStep = (s: number) => {
-        // v1 (6 steps) → v2 (5 steps): step 2+ maps to step N-1
-        if (wizardSteps !== 5 && wizardSteps !== 4) {
-            s = Math.max(s > 1 ? s - 1 : 1, 1);
-        }
-        // legacy 5-step → 4-step: old step 4 (nudges) merged into 3, step 5 → 4. Pre-7.1 only.
-        if (wizardSteps === 5 && (schema === undefined || schema < 7.1)) {
-            if (s === 4) s = 3;
-            else if (s === 5) s = 4;
-        }
-        // v7.1: insert "Sessions" at position 3 — old Schedule(3)→4, Music(4)→5; steps 1,2 unchanged.
-        if (wizardSteps === 4 && (schema === undefined || schema < 7.1)) {
-            if (s >= 3) s += 1;
-        }
-        return Math.min(s, 5);
-    };
-
-    // v6 → v6.1: identify habit-derived intentions (to be dropped) and the habit ID per intention,
-    // so any LinkedTasks under them can be re-anchored as orphan habit-tasks with `sourceHabitId`.
-    const habitIdByIntentionId = new Map<string, string>();
-    if (Array.isArray(raw.intentions)) {
-        for (const i of raw.intentions as Array<Record<string, unknown>>) {
-            if (i.sourceHabitId) {
-                habitIdByIntentionId.set(i.id as string, i.sourceHabitId as string);
-            }
-        }
-    }
-
-    // --- v1 → v2: convert tasks to intentions ---
-    let intentions: Intention[];
-    let intentionSessions: Record<string, string[]>;
-
-    if (Array.isArray(raw.intentions)) {
-        // Already v2+ shape — extract intentions. v6.1: drop habit-derived intentions entirely
-        // (their tasks become orphan habit-tasks below). Strip the deprecated sourceHabitId /
-        // skippedForToday fields from any remaining entries.
-        intentions = (raw.intentions as Array<Record<string, unknown>>)
-            .filter((i) => !habitIdByIntentionId.has(i.id as string))
-            .map((i) => ({
-                id: i.id as string,
-                title: i.title as string,
-                linkedTaskIds: (i.linkedTaskIds as string[]) ?? [],
-                completed: (i.completed as boolean) ?? false,
-                brokenDown: (i.brokenDown as boolean) ?? false,
-            }));
-        intentionSessions = (raw.intentionSessions ?? {}) as Record<string, string[]>;
-    } else {
-        // v1: tasks → intentions
-        const v1Tasks = (raw.tasks ?? []) as Array<Record<string, unknown>>;
-        intentions = v1Tasks.map((t) => ({
-            id: t.id as string,
-            title: t.title as string,
-            linkedTaskIds: [],
-            completed: (t.completed as boolean) ?? false,
-            brokenDown: false,
-        }));
-        intentionSessions = (raw.taskSessions ?? {}) as Record<string, string[]>;
-    }
-
-    // --- v2/v3 → v4: if plan has intentionSessions but no taskSessions/linkedTasks ---
-    if (Array.isArray(raw.linkedTasks) && raw.taskSessions !== undefined) {
-        // Already v4+ shape. v6.3: stabilizers leave LinkedTask entirely — any row with
-        // `sourceHabitId` (legacy v6.1/v6.2 shape, or rebuilt via the habit-derived-intention
-        // path above) becomes a synthetic TodaysHabitInstance, then is dropped from linkedTasks.
-        const harvestedInstances: TodaysHabitInstance[] = [];
-        const droppedHabitTaskIds = new Set<string>();
-        const v62LinkedTasks: Array<Record<string, unknown>> = [];
-        for (const lt of raw.linkedTasks as Array<Record<string, unknown>>) {
-            const intentionId = lt.intentionId as string | undefined;
-            const inferredHabitId = intentionId ? habitIdByIntentionId.get(intentionId) : undefined;
-            const habitId = (lt.sourceHabitId as string | undefined) ?? inferredHabitId;
-            if (habitId) {
-                const todoistId = lt.todoistId as string;
-                droppedHabitTaskIds.add(todoistId);
-                const completed = (lt.completed as boolean) ?? false;
-                const skipped = (lt.skippedForToday as boolean) ?? false;
-                harvestedInstances.push({
-                    id: crypto.randomUUID(),
-                    habitId,
-                    todoistTaskId: todoistId,
-                    titleSnapshot: (lt.titleSnapshot as string | undefined) ?? todoistId,
-                    durationMinutes: (lt.estimatedMinutes as number | null) ?? 30,
-                    status: completed ? 'completed' : skipped ? 'skipped' : 'planned',
-                });
-                continue;
-            }
-            v62LinkedTasks.push(lt);
-        }
-
-        // v6.3: stamp `status` on remaining LinkedTasks (mirror of `completed`).
-        // v6.4: prefer the new `segments`; fall back to converting a legacy single
-        // `engagement` record into one segment. Coerce the dropped `'unfinished'` status.
-        const migratedLinkedTasks: LinkedTask[] = v62LinkedTasks.map((lt) => {
-            const completed = (lt.completed as boolean) ?? false;
-            const rawStatus = lt.status as string | undefined;
-            const status = rawStatus === 'unfinished' || rawStatus === undefined
-                ? (completed ? 'completed' : 'pending')
-                : (rawStatus as LinkedTask['status']);
-            const segments = (lt.segments as EngagementSegment[] | undefined)
-                ?? legacyEngagementToSegments(lt.engagement as Record<string, unknown> | undefined);
-            const out: LinkedTask = {
-                todoistId: lt.todoistId as string,
-                intentionId: lt.intentionId as string | undefined,
-                type: (lt.type as LinkedTask['type']) ?? 'unclassified',
-                assignedSessions: (lt.assignedSessions as string[]) ?? [],
-                completed,
-                estimatedMinutes: (lt.estimatedMinutes as number | null) ?? null,
-                status,
-                ...(lt.titleSnapshot ? { titleSnapshot: lt.titleSnapshot as string } : {}),
-                ...(segments ? { segments } : {}),
-                ...(lt.rescheduledFromTodoistId ? { rescheduledFromTodoistId: lt.rescheduledFromTodoistId as string } : {}),
-                ...(lt.rescheduledAt ? { rescheduledAt: lt.rescheduledAt as string } : {}),
-            };
-            return out;
-        });
-
-        const rawTaskSessions = raw.taskSessions as Record<string, string[]>;
-        const taskSessions = droppedHabitTaskIds.size > 0
-            ? Object.fromEntries(
-                Object.entries(rawTaskSessions).map(([sid, ids]) => [
-                    sid,
-                    ids.filter((id) => !droppedHabitTaskIds.has(id)),
-                ]),
-            )
-            : rawTaskSessions;
-
-        // v6.4: convert any legacy `engagement` on persisted instances into `segments`, and
-        // coerce the dropped `'unfinished'` status (old clone-on-reschedule predecessor) to
-        // `'skipped'` (it was terminal).
-        const rawTodaysHabits = (raw.todaysHabits as Array<Record<string, unknown>> | undefined) ?? [];
-        const existingTodaysHabits: TodaysHabitInstance[] = rawTodaysHabits.map((i) => {
-            const status = (i.status as string) === 'unfinished' ? 'skipped' : (i.status as HabitInstanceStatus);
-            const segments = (i.segments as EngagementSegment[] | undefined)
-                ?? legacyEngagementToSegments(i.engagement as Record<string, unknown> | undefined);
-            const { engagement: _legacy, ...rest } = i;
-            void _legacy;
-            return {
-                ...(rest as unknown as TodaysHabitInstance),
-                status,
-                ...(segments ? { segments } : {}),
-            };
-        });
-        const knownHabitIds = new Set(existingTodaysHabits.map((i) => i.habitId));
-        const todaysHabits = [
-            ...existingTodaysHabits,
-            ...harvestedInstances.filter((i) => !knownHabitIds.has(i.habitId)),
-        ];
-
-        return {
-            date: raw.date as string,
-            intentions,
-            linkedTasks: migratedLinkedTasks,
-            todaysHabits,
-            sessionSlots: Array.isArray(raw.sessionSlots) && (raw.sessionSlots as SessionSlot[]).length
-                ? (raw.sessionSlots as SessionSlot[])
-                : defaultSessionSlots,
-            taskSessions,
-            wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
-            setupComplete: (raw.setupComplete as boolean) ?? false,
-            checkIns: (raw.checkIns ?? []) as CheckIn[],
-            // v6.6: `habitLog` (Light Pool) removed — daily-ephemeral, simply not carried forward.
-            // v6.7: preserve same-day recurring-focus seeding so a reload doesn't re-offer added chips.
-            ...(raw.seededFocusIds ? { seededFocusIds: raw.seededFocusIds as string[] } : {}),
-        };
-    }
-
-    // v2/v3 → v4: no Todoist task IDs exist, so we can't auto-create LinkedTask entries.
-    // Preserve intentions, initialize empty task structures.
-    // Ignore intentionSessions (they referenced intentions, not tasks).
-    void intentionSessions; // intentionally unused in v4
-    return {
-        date: raw.date as string,
-        intentions,
-        linkedTasks: [],
-        todaysHabits: [],
-        sessionSlots: Array.isArray(raw.sessionSlots) && (raw.sessionSlots as SessionSlot[]).length
-            ? (raw.sessionSlots as SessionSlot[])
-            : defaultSessionSlots,
-        taskSessions: {},
-        wizardStep: migrateStep((raw.wizardStep as number) ?? 1),
-        setupComplete: (raw.setupComplete as boolean) ?? false,
-        checkIns: (raw.checkIns ?? []) as CheckIn[],
-    };
-}
-
-function withV6SettingsDefaults(s: AppSettings): AppSettings {
+function withSettingsDefaults(s: AppSettings): AppSettings {
     return {
         ...s,
-        taskCapDefaults: migrateTaskCaps(s.taskCapDefaults),
+        taskCapDefaults: fillTaskCaps(s.taskCapDefaults),
         sessionBufferMinutes: s.sessionBufferMinutes ?? DEFAULT_SESSION_BUFFER_MINUTES,
     };
 }
 
-/**
- * v6.7: rename the per-kind cap keys `stabilizer → habit`, `lightCoherent → microGap`.
- * Reads legacy keys off persisted settings and maps them forward; falls back to defaults.
- */
-function migrateTaskCaps(caps: AppSettings['taskCapDefaults']): TaskCapDefaults {
+/** Fill absent optional per-kind caps from defaults. */
+function fillTaskCaps(caps: AppSettings['taskCapDefaults']): TaskCapDefaults {
     if (!caps) return { ...DEFAULT_TASK_CAPS };
-    const legacy = caps as Partial<TaskCapDefaults> & { stabilizer?: number; lightCoherent?: number };
     return {
-        habit: legacy.habit ?? legacy.stabilizer ?? DEFAULT_TASK_CAPS.habit,
-        microGap: legacy.microGap ?? legacy.lightCoherent ?? DEFAULT_TASK_CAPS.microGap,
-        manualBackground: legacy.manualBackground ?? DEFAULT_TASK_CAPS.manualBackground,
+        habit: caps.habit ?? DEFAULT_TASK_CAPS.habit,
+        microGap: caps.microGap ?? DEFAULT_TASK_CAPS.microGap,
+        manualBackground: caps.manualBackground ?? DEFAULT_TASK_CAPS.manualBackground,
     };
+}
+
+function defaultSettings(): AppSettings {
+    return withSettingsDefaults({ notificationPreference: 'both', sessionSlots: defaultSessionSlots });
 }
 
 function loadSettings(): AppSettings {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY);
-        if (!raw) return withV6SettingsDefaults({ notificationPreference: 'both', sessionSlots: defaultSessionSlots });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const parsed = JSON.parse(raw) as AppSettings & { googleCalendarId?: string } & { googleCalendarIds?: any };
-        // Migrate legacy single-string googleCalendarId → googleCalendarIds array
-        if (!parsed.googleCalendarIds && parsed.googleCalendarId) {
-            parsed.googleCalendarIds = [{ id: parsed.googleCalendarId }];
-            delete parsed.googleCalendarId;
-        }
-        // Migrate legacy string[] googleCalendarIds → GoogleCalendarEntry[]
-        if (Array.isArray(parsed.googleCalendarIds) && parsed.googleCalendarIds.length > 0 && typeof parsed.googleCalendarIds[0] === 'string') {
-            parsed.googleCalendarIds = (parsed.googleCalendarIds as unknown as string[]).map((id) => ({ id }));
-        }
-        return withV6SettingsDefaults(parsed);
+        if (!raw) return defaultSettings();
+        const parsed = JSON.parse(raw) as AppSettings & { _schemaVersion?: number };
+        // Schema guard: reject anything that isn't the current version (no migration).
+        if (!isCurrentSchema(parsed)) return defaultSettings();
+        const { _schemaVersion: _s, ...settings } = parsed;
+        void _s;
+        return withSettingsDefaults(settings);
     } catch {
-        return withV6SettingsDefaults({ notificationPreference: 'both', sessionSlots: defaultSessionSlots });
+        return defaultSettings();
     }
 }
 
@@ -336,7 +149,9 @@ function loadHistory(): SavedDayPlan[] {
     try {
         const raw = localStorage.getItem(HISTORY_KEY);
         if (!raw) return [];
-        return JSON.parse(raw) as SavedDayPlan[];
+        const parsed = JSON.parse(raw) as SavedDayPlan[];
+        // Schema guard: keep only saved plans stamped with the current version.
+        return parsed.filter(isCurrentSavedPlan);
     } catch {
         return [];
     }
@@ -346,56 +161,20 @@ function emptyLifeContext(): LifeContext {
     return { seasons: [], habits: [], activeSeasonId: null, backlog: [], sessionTemplates: [] };
 }
 
-/**
- * Per-habit schema migration:
- *  - v5 → v6: ensure `kind`.
- *  - v6 → v6.1: fold `autoLinkTodoistId` → `todoistTaskId`, `maxBlockMinutes` → `targetDurationMinutes`,
- *    default `windowBehavior` to `'lenient'`.
- *  - v6.7: remap kind values `'stabilizer' → 'habit'`, `'light-coherent' → 'micro-gap'`. Micro-gaps
- *    are no-Todoist / untimed / repeatable, so strip `todoistTaskId` (a v6.6 light-coherent habit may
- *    have one — we clear it locally; the orphaned Todoist task is left for the user to delete),
- *    `targetTime`, and `windowBehavior`.
- *
- * Called from both `loadLifeContext` (initial localStorage load) and the `IMPORT_BACKUP` reducer
- * case (so imported payloads also get the current shape applied).
- */
-function migrateHabit(h: Habit): Habit {
-    const { autoLinkTodoistId, maxBlockMinutes, ...rest } = h;
-    // v6.7: remap legacy kind values (the old strings are no longer in the HabitKind union).
-    const rawKind = (rest.kind ?? 'habit') as string;
-    const kind: HabitKind = rawKind === 'micro-gap' || rawKind === 'light-coherent' ? 'micro-gap' : 'habit';
-    const migrated: Habit = { ...rest, kind };
-    if (maxBlockMinutes && migrated.targetDurationMinutes === undefined) {
-        migrated.targetDurationMinutes = maxBlockMinutes;
-    }
-    if (kind === 'habit') {
-        if (autoLinkTodoistId && !rest.todoistTaskId) {
-            migrated.todoistTaskId = autoLinkTodoistId;
-        }
-        if (!rest.windowBehavior) {
-            migrated.windowBehavior = 'lenient';
-        }
-    } else {
-        // v6.7: micro-gaps never sync to Todoist and are always untimed/repeatable.
-        delete migrated.todoistTaskId;
-        delete migrated.targetTime;
-        delete migrated.windowBehavior;
-    }
-    return migrated;
-}
-
 function loadLifeContext(): LifeContext {
     try {
         const raw = localStorage.getItem(LIFE_KEY);
         if (!raw) return emptyLifeContext();
         const parsed = JSON.parse(raw) as Partial<LifeContext> & { _schemaVersion?: number };
+        // Schema guard: reject anything that isn't the current version (no migration).
+        if (!isCurrentSchema(parsed)) return emptyLifeContext();
         return {
             seasons: parsed.seasons ?? [],
-            habits: (parsed.habits ?? []).map(migrateHabit),
+            habits: parsed.habits ?? [],
             activeSeasonId: parsed.activeSeasonId ?? null,
             restCues: parsed.restCues,
             backlog: parsed.backlog ?? [],
-            sessionTemplates: parsed.sessionTemplates,
+            sessionTemplates: parsed.sessionTemplates ?? [],
         };
     } catch {
         return emptyLifeContext();
@@ -403,30 +182,17 @@ function loadLifeContext(): LifeContext {
 }
 
 /**
- * v7.1: one-time seed of `life.sessionTemplates`. If the user had customized the legacy global
- * `settings.sessionSlots`, preserve it as a "My sessions" template so it isn't lost when sessions
- * become per-day. Sets `[]` (not undefined) once seeded so it never re-seeds on later loads.
+ * Read the persisted plan *without* the date-freshness gate (so `loadInitialState` can harvest a
+ * stale plan before discarding it). Schema guard: anything not stamped with the current version is
+ * treated as absent (no migration). Returns the plan with its schema markers stripped.
  */
-function seedSessionTemplates(life: LifeContext, settings: AppSettings): LifeContext {
-    if (life.sessionTemplates !== undefined) return life;
-    const slots = settings.sessionSlots ?? [];
-    const isCustom = JSON.stringify(slots) !== JSON.stringify(defaultSessionSlots);
-    const sessionTemplates: SessionTemplate[] = isCustom && slots.length
-        ? [{ id: crypto.randomUUID(), name: 'My sessions', slots, createdAt: new Date().toISOString() }]
-        : [];
-    return { ...life, sessionTemplates };
-}
-
-/**
- * v6.2: peek at the raw persisted plan *without* the date-freshness gate that `loadPlan` applies.
- * Used by `loadInitialState` so we can harvest a stale plan before discarding it.
- */
-function peekRawPlan(): DayPlan | null {
+function loadPlan(): DayPlan | null {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw) as Record<string, unknown>;
-        return migratePlan(parsed);
+        if (!isCurrentSchema(parsed)) return null;
+        return stripPlanMarkers(parsed);
     } catch {
         return null;
     }
@@ -441,12 +207,11 @@ function peekRawPlan(): DayPlan | null {
 function loadInitialState(): State {
     const settings = loadSettings();
     const baseHistory = loadHistory();
-    // v7.1: seed session templates from the legacy global slots (one-time) before any branch.
-    const baseLife = seedSessionTemplates(loadLifeContext(), settings);
-    const raw = peekRawPlan();
+    const baseLife = loadLifeContext();
+    const raw = loadPlan();
 
     if (!raw || raw.date === todayISO()) {
-        // Same-day reload: `raw.sessionSlots` is already backfilled by migratePlan.
+        // Same-day reload: use the persisted plan as-is.
         // Cold start: seed a fresh day's sessions from settings/defaults.
         return {
             plan: raw ?? freshPlan(seedSessionSlots(undefined, settings)),
@@ -910,13 +675,12 @@ function reducer(state: State, action: Action): State {
         case 'RESET_ALL':
             // Wipe all four persisted slices back to factory defaults. The four useEffects
             // below auto-persist the reset state to localStorage. Aux keys outside this
-            // provider (Todoist cache, theme, music prefs) are handled by the caller.
+            // provider (Todoist cache, theme, music prefs) are handled by the caller. The
+            // server-side integration tokens (Todoist/Google in KV) and the shared secret are
+            // not touched here — disconnect those from Settings → Integrations.
             return {
                 plan: freshPlan(cloneSessionSlots(defaultSessionSlots)),
-                settings: withV6SettingsDefaults({
-                    notificationPreference: 'both',
-                    sessionSlots: defaultSessionSlots,
-                }),
+                settings: defaultSettings(),
                 editingStep: null,
                 history: [],
                 life: emptyLifeContext(),
@@ -930,7 +694,7 @@ function reducer(state: State, action: Action): State {
 
         case 'SAVE_DAY': {
             const entry: SavedDayPlan = {
-                plan: { ...structuredClone(plan), _wizardSteps: WIZARD_STEPS_COUNT, _schemaVersion: SCHEMA_VERSION } as DayPlan,
+                plan: { ...structuredClone(plan), _schemaVersion: SCHEMA_VERSION } as DayPlan,
                 savedAt: new Date().toISOString(),
                 label: action.label,
             };
@@ -941,7 +705,9 @@ function reducer(state: State, action: Action): State {
         case 'RESTORE_DAY': {
             const saved = state.history.find((h) => h.savedAt === action.savedAt);
             if (!saved) return state;
-            const restored = migratePlan(saved.plan as unknown as Record<string, unknown>);
+            // History is already schema-guarded on load/import, so the saved plan is current —
+            // just strip its markers and re-date it to today (no migration).
+            const restored = stripPlanMarkers(saved.plan as unknown as Record<string, unknown>);
             return { ...state, plan: { ...restored, date: todayISO() }, editingStep: null };
         }
 
@@ -1300,42 +1066,58 @@ function reducer(state: State, action: Action): State {
 
         case 'IMPORT_BACKUP': {
             const next: State = { ...state };
-            if (action.settings) next.settings = { ...state.settings, ...action.settings };
+            if (action.settings) {
+                next.settings = withSettingsDefaults({ ...state.settings, ...action.settings });
+            }
             if (action.life) {
-                // Merge by id — never overwrite existing entries; append new ones.
-                // Imported habits go through `migrateHabit` so a v6 backup picks up the v6.1 shape.
+                // Merge by id — never overwrite existing entries; append new ones. The import is
+                // schema-guarded in DataManagement, so the payload is already current (no migration).
+                const incomingSeasons = Array.isArray(action.life.seasons) ? action.life.seasons : [];
+                const incomingHabits = Array.isArray(action.life.habits) ? action.life.habits : [];
+                const incomingBacklog = Array.isArray(action.life.backlog) ? action.life.backlog : [];
+                const incomingTemplates = Array.isArray(action.life.sessionTemplates)
+                    ? action.life.sessionTemplates
+                    : [];
+                const incomingRestCues = Array.isArray(action.life.restCues)
+                    ? action.life.restCues
+                    : undefined;
                 const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
                 const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
                 const existingBacklogIds = new Set((state.life.backlog ?? []).map((e) => e.id));
                 const existingTemplateIds = new Set((state.life.sessionTemplates ?? []).map((t) => t.id));
+                const mergedSeasons = [
+                    ...state.life.seasons,
+                    ...incomingSeasons.filter((s) => !existingSeasonIds.has(s.id)),
+                ];
+                const importedActiveSeasonId =
+                    typeof action.life.activeSeasonId === 'string' ? action.life.activeSeasonId : null;
                 next.life = {
-                    seasons: [
-                        ...state.life.seasons,
-                        ...action.life.seasons.filter((s) => !existingSeasonIds.has(s.id)),
-                    ],
+                    seasons: mergedSeasons,
                     habits: [
                         ...state.life.habits,
-                        ...action.life.habits
-                            .filter((h) => !existingHabitIds.has(h.id))
-                            .map(migrateHabit),
+                        ...incomingHabits.filter((h) => !existingHabitIds.has(h.id)),
                     ],
-                    activeSeasonId: state.life.activeSeasonId ?? action.life.activeSeasonId,
-                    restCues: state.life.restCues ?? action.life.restCues,
+                    activeSeasonId: state.life.activeSeasonId
+                        ?? (importedActiveSeasonId && mergedSeasons.some((s) => s.id === importedActiveSeasonId)
+                            ? importedActiveSeasonId
+                            : null),
+                    restCues: state.life.restCues ?? incomingRestCues,
                     backlog: [
                         ...(state.life.backlog ?? []),
-                        ...(action.life.backlog ?? []).filter((e) => !existingBacklogIds.has(e.id)),
+                        ...incomingBacklog.filter((e) => !existingBacklogIds.has(e.id)),
                     ],
                     sessionTemplates: [
                         ...(state.life.sessionTemplates ?? []),
-                        ...(action.life.sessionTemplates ?? []).filter((t) => !existingTemplateIds.has(t.id)),
+                        ...incomingTemplates.filter((t) => !existingTemplateIds.has(t.id)),
                     ],
                 };
             }
             if (action.history) {
                 const existing = new Set(state.history.map((h) => h.savedAt));
+                const currentHistory = action.history.filter(isCurrentSavedPlan);
                 next.history = [
                     ...state.history,
-                    ...action.history.filter((h) => !existing.has(h.savedAt)),
+                    ...currentHistory.filter((h) => !existing.has(h.savedAt)),
                 ];
             }
             return next;
@@ -1416,11 +1198,11 @@ export { DayPlanContext };
 export function DayPlanProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, null, loadInitialState);
 
-    // Persist on every state change (include schema markers for migration detection)
+    // Persist on every state change (stamp the schema version so loads can guard against old data)
     useEffect(() => {
         localStorage.setItem(
             STORAGE_KEY,
-            JSON.stringify({ ...state.plan, _wizardSteps: WIZARD_STEPS_COUNT, _schemaVersion: SCHEMA_VERSION }),
+            JSON.stringify({ ...state.plan, _schemaVersion: SCHEMA_VERSION }),
         );
     }, [state.plan]);
 

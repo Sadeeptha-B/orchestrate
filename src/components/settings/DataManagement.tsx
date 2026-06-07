@@ -4,6 +4,7 @@ import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { downloadJSON } from '../../lib/download';
+import { SCHEMA_VERSION } from '../../context/DayPlanContext';
 import type { AppSettings, LifeContext, SavedDayPlan } from '../../types';
 
 interface FullBackup {
@@ -11,6 +12,11 @@ interface FullBackup {
     life?: LifeContext;
     history?: SavedDayPlan[];
     _backupVersion?: number;
+    _schemaVersion?: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
 }
 
 function validateSessions(data: unknown): SavedDayPlan[] | null {
@@ -22,14 +28,39 @@ function validateSessions(data: unknown): SavedDayPlan[] | null {
             typeof (item as SavedDayPlan).savedAt !== 'string' ||
             typeof (item as SavedDayPlan).label !== 'string' ||
             !(item as SavedDayPlan).plan ||
-            // Accept v1 (tasks), v2/v3 (intentions), and v4 (intentions + linkedTasks)
-            (!Array.isArray((item as SavedDayPlan).plan?.intentions) &&
-                !Array.isArray((item as unknown as { plan: { tasks: unknown[] } }).plan?.tasks))
+            !Array.isArray((item as SavedDayPlan).plan?.intentions) ||
+            // Schema guard: only accept current-version saved plans (no migration).
+            (item as unknown as { plan: { _schemaVersion?: number } }).plan?._schemaVersion !== SCHEMA_VERSION
         ) {
             return null;
         }
     }
     return arr as SavedDayPlan[];
+}
+
+function validateBackup(data: unknown): FullBackup | null {
+    if (!isRecord(data) || (!data.settings && !data.life && !data.history)) {
+        return null;
+    }
+    if (data._schemaVersion !== SCHEMA_VERSION) {
+        return null;
+    }
+    if (data.settings !== undefined && !isRecord(data.settings)) {
+        return null;
+    }
+    if (data.life !== undefined && !isRecord(data.life)) {
+        return null;
+    }
+    if (data.history !== undefined && validateSessions(data.history) === null) {
+        return null;
+    }
+    return {
+        settings: data.settings as AppSettings | undefined,
+        life: data.life as LifeContext | undefined,
+        history: data.history as SavedDayPlan[] | undefined,
+        _backupVersion: typeof data._backupVersion === 'number' ? data._backupVersion : undefined,
+        _schemaVersion: data._schemaVersion,
+    };
 }
 
 interface DataManagementProps {
@@ -69,6 +100,7 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
             life,
             history,
             _backupVersion: 1,
+            _schemaVersion: SCHEMA_VERSION,
         };
         const stamp = new Date().toISOString().slice(0, 10);
         downloadJSON(payload, `orchestrate-backup-${stamp}.json`);
@@ -113,13 +145,21 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
         const reader = new FileReader();
         reader.onload = () => {
             try {
-                const data = JSON.parse(reader.result as string) as FullBackup;
-                if (
-                    typeof data !== 'object' ||
-                    data === null ||
-                    (!data.settings && !data.life && !data.history)
-                ) {
+                const parsed = JSON.parse(reader.result as string) as unknown;
+                if (!isRecord(parsed)) {
                     setImportError('File is not a recognised Orchestrate full backup.');
+                    return;
+                }
+                // Schema guard: refuse backups that aren't the current version (no migration).
+                if (parsed._schemaVersion !== SCHEMA_VERSION) {
+                    setImportError(
+                        `Backup is from an unsupported version (expected schema ${SCHEMA_VERSION}). Only current backups can be imported.`,
+                    );
+                    return;
+                }
+                const data = validateBackup(parsed);
+                if (!data) {
+                    setImportError('Backup file is malformed or contains unsupported saved sessions.');
                     return;
                 }
                 dispatch({
