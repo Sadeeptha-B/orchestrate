@@ -1,11 +1,11 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useDayPlan } from '../hooks/useDayPlan';
+import { useAppSecret } from '../hooks/useAppSecret';
 import {
     AppSecretError,
     disconnectGoogle,
     fetchAccessToken,
     fetchConnectionStatus,
-    isGoogleConfigured,
     setStoredSecret,
     startGoogleLogin,
 } from '../lib/googleAuth';
@@ -59,16 +59,22 @@ export { GoogleCalendarDataContext, GoogleCalendarActionsContext };
 const EXPIRY_SKEW_MS = 60_000; // refresh a minute before the cached access token expires
 
 export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
-    const { settings, dispatch } = useDayPlan();
-
-    // Mirrors "shared secret is set"; updated when the user saves/clears it (localStorage-backed).
-    const [isConfigured, setIsConfigured] = useState(() => isGoogleConfigured());
+    const { dispatch, settings } = useDayPlan();
+    const { secret, hasSecret: isConfigured } = useAppSecret();
 
     const [isConnected, setIsConnected] = useState(false);
     const [connecting, setConnecting] = useState(false);
     const [authFailed, setAuthFailed] = useState(false);
     const [availableCalendars, setAvailableCalendars] = useState<GoogleCalendarListEntry[]>([]);
     const [error, setError] = useState<string | null>(null);
+
+    // Mirror the persisted connected flag in a ref so checkConnection can skip a redundant
+    // UPDATE_SETTINGS (and its localStorage write) when the value hasn't actually changed —
+    // without taking `settings` as a dep, which would re-fire the auto-check effect.
+    const connectedFlagRef = useRef(settings.googleCalendarConnected);
+    useEffect(() => {
+        connectedFlagRef.current = settings.googleCalendarConnected;
+    }, [settings.googleCalendarConnected]);
 
     // In-memory access-token cache (the refresh token lives server-side; this is just a short-lived
     // access token, re-minted by the Worker).
@@ -139,34 +145,38 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     }, [getAccessToken, handleError]);
 
     const checkConnection = useCallback(async () => {
-        if (!isGoogleConfigured()) return;
+        if (!isConfigured) return;
         try {
             const status = await fetchConnectionStatus();
             setIsConnected(status.connected);
             if (status.connected) {
                 setAuthFailed(false);
-                dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: true } });
+                if (!connectedFlagRef.current) {
+                    dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: true } });
+                }
                 await refreshCalendars();
+            } else if (connectedFlagRef.current) {
+                // Server has no refresh token (revoked / expired). Clear the persisted flag so the
+                // app's state matches reality and auto-reconnect stops re-checking on every load.
+                dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: false } });
             }
         } catch (e) {
             handleError(e, 'Failed to check Google connection');
         }
-    }, [dispatch, refreshCalendars, handleError]);
+    }, [dispatch, isConfigured, refreshCalendars, handleError]);
 
     const setAppSecret = useCallback(
         (secret: string) => {
             setStoredSecret(secret);
-            setIsConfigured(isGoogleConfigured());
             setError(null);
             setAuthFailed(false);
             tokenRef.current = null;
-            void checkConnection();
         },
-        [checkConnection],
+        [],
     );
 
     const connect = useCallback(async () => {
-        if (!isGoogleConfigured()) return;
+        if (!isConfigured) return;
         setConnecting(true);
         setError(null);
         try {
@@ -176,7 +186,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             setConnecting(false);
             handleError(e, 'Failed to start Google sign-in');
         }
-    }, [handleError]);
+    }, [handleError, isConfigured]);
 
     const disconnect = useCallback(async () => {
         tokenRef.current = null;
@@ -202,14 +212,17 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         [getAccessToken, handleError],
     );
 
-    // ── Auto-reconnect on load: if previously connected, re-check server state once ──
-    const autoTried = useRef(false);
     useEffect(() => {
-        if (autoTried.current) return;
-        if (!isConfigured || !settings.googleCalendarConnected) return;
-        autoTried.current = true;
+        tokenRef.current = null;
+        setConnecting(false);
+        if (!isConfigured) {
+            setIsConnected(false);
+            setAuthFailed(false);
+            setAvailableCalendars([]);
+            return;
+        }
         void checkConnection();
-    }, [isConfigured, settings.googleCalendarConnected, checkConnection]);
+    }, [secret, isConfigured, checkConnection]);
 
     const dataValue = useMemo<GoogleCalendarDataValue>(
         () => ({ isConfigured, isConnected, connecting, authFailed, availableCalendars, error }),

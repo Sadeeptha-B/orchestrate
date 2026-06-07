@@ -1,4 +1,5 @@
 import { createContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
+import { useAppSecret } from '../hooks/useAppSecret';
 import { useDayPlan } from '../hooks/useDayPlan';
 import { getStoredSecret } from '../lib/appSecret';
 import { API_BASE, TodoistAuthError, getTodoistStatus } from '../lib/todoistApi';
@@ -136,6 +137,7 @@ export { TodoistDataContext, TodoistActionsContext };
 
 export function TodoistProvider({ children }: { children: ReactNode }) {
     const { plan, dispatch } = useDayPlan();
+    const { secret } = useAppSecret();
 
     // ── Initial state from cache ──
     const cache = useRef(loadCache());
@@ -194,8 +196,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── Connection status ──
     const refreshConnection = useCallback(async () => {
-        if (!getStoredSecret()) {
+        if (!secret) {
             setIsConfigured(false);
+            setAuthFailed(false);
+            setError(null);
             return;
         }
         try {
@@ -206,7 +210,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             setIsConfigured(false);
             if (e instanceof TodoistAuthError) setAuthFailed(true);
         }
-    }, []);
+    }, [secret]);
 
     // Resolve connection on mount (cache still renders synchronously meanwhile).
     useEffect(() => { void refreshConnection(); }, [refreshConnection]);
@@ -338,14 +342,14 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── Persist cache on data change ──
     useEffect(() => {
-        if (tasks.length === 0 && projects.length === 0 && sections.length === 0) return;
+        if (!tasksHydrated && tasks.length === 0 && projects.length === 0 && sections.length === 0) return;
         saveCache(tasks, projects, sections);
-    }, [tasks, projects, sections]);
+    }, [tasks, projects, sections, tasksHydrated]);
 
     // ── Data reconciliation: title snapshot sync ──
     const hasSyncedSnapshots = useRef(false);
     useEffect(() => {
-        if (loading || tasks.length === 0 || plan.linkedTasks.length === 0) return;
+        if (loading || !tasksHydrated || plan.linkedTasks.length === 0) return;
         const snapshots: Record<string, string> = {};
         for (const lt of plan.linkedTasks) {
             const t = tasks.find((task) => task.id === lt.todoistId);
@@ -357,12 +361,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             dispatch({ type: 'SYNC_TASK_SNAPSHOTS', snapshots });
         }
         hasSyncedSnapshots.current = true;
-    }, [loading, tasks, plan.linkedTasks, dispatch]);
+    }, [loading, tasks, tasksHydrated, plan.linkedTasks, dispatch]);
 
     // ── Data reconciliation: stale task cleanup (one-time) ──
     const hasCleanedUp = useRef(false);
     useEffect(() => {
-        if (hasCleanedUp.current || loading || tasks.length === 0) return;
+        if (hasCleanedUp.current || loading || !tasksHydrated) return;
         if (!hasSyncedSnapshots.current) return;
         hasCleanedUp.current = true;
         const fetchedIds = new Set(tasks.map((t) => t.id));
@@ -371,7 +375,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                 dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: lt.todoistId, titleSnapshot: lt.titleSnapshot });
             }
         }
-    }, [loading, tasks, plan.linkedTasks, dispatch]);
+    }, [loading, tasks, tasksHydrated, plan.linkedTasks, dispatch]);
 
     // ── CRUD mutations ──
 

@@ -9,6 +9,17 @@ export interface GuardEnv {
     APP_SHARED_SECRET: string;
 }
 
+/** Env for the Todoist proxy + token endpoints (shared secret guard + the KV holding the token). */
+export interface TodoistEnv extends GuardEnv {
+    OAUTH_KV: KVNamespace;
+}
+
+/** Origin of the Todoist REST/Sync API the proxy forwards to. */
+export const TODOIST_API = 'https://api.todoist.com';
+
+/** KV key holding the single user's Todoist personal token. */
+export const KV_TODOIST_TOKEN = 'todoist:token';
+
 export function json(data: unknown, status = 200): Response {
     return new Response(JSON.stringify(data), {
         status,
@@ -16,8 +27,17 @@ export function json(data: unknown, status = 200): Response {
     });
 }
 
+export function hasSharedSecret(env: GuardEnv): boolean {
+    return typeof env.APP_SHARED_SECRET === 'string' && env.APP_SHARED_SECRET.length > 0;
+}
+
 /** True when the request carries the correct shared secret (X-App-Secret header). */
 export function checkSecret(request: Request, env: GuardEnv): boolean {
     const provided = request.headers.get('X-App-Secret') ?? '';
-    return provided.length > 0 && provided === env.APP_SHARED_SECRET;
+    return provided.length > 0 && hasSharedSecret(env) && provided === env.APP_SHARED_SECRET;
+}
+
+export function requireAppSecret(request: Request, env: GuardEnv): Response | null {
+    if (!hasSharedSecret(env)) return json({ error: 'server_not_configured' }, 500);
+    return checkSecret(request, env) ? null : json({ error: 'unauthorized' }, 401);
 }

@@ -3,14 +3,22 @@
 // minted from the stored refresh token). The browser uses it as a Bearer token against the
 // Calendar REST API. The refresh token itself never leaves the Worker.
 
-import { checkSecret, getAccessToken, json, type Env } from './_lib';
+import { getAccessToken, isGoogleWorkerError, json, requireAppSecret, type Env } from './_lib';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-    if (!checkSecret(request, env)) return json({ error: 'unauthorized' }, 401);
+    const authError = requireAppSecret(request, env);
+    if (authError) return authError;
 
-    const result = await getAccessToken(env);
-    if (!result.ok) {
-        return json({ error: result.error, connected: !result.disconnected }, result.status);
+    try {
+        const result = await getAccessToken(env);
+        if (!result.ok) {
+            return json({ error: result.error, connected: !result.disconnected }, result.status);
+        }
+        return json({ access_token: result.access_token, expires_in: result.expires_in });
+    } catch (error) {
+        if (isGoogleWorkerError(error)) {
+            return json({ error: error.code, connected: !error.disconnected }, error.status);
+        }
+        throw error;
     }
-    return json({ access_token: result.access_token, expires_in: result.expires_in });
 };

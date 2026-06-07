@@ -8,6 +8,10 @@
 //
 // Files prefixed with `_` are treated as modules, not routes, by Pages Functions.
 
+import { hasSharedSecret } from '../../../_shared';
+
+export { json, requireAppSecret } from '../../../_shared';
+
 export interface Env {
     /** KV namespace holding the refresh token + cached access token (single user). */
     OAUTH_KV: KVNamespace;
@@ -37,21 +41,60 @@ const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const STATE_TTL_SEC = 600; // OAuth state is valid for 10 minutes
 const ACCESS_SKEW_MS = 60_000; // refresh a minute before the cached token expires
 
-// ── Response helpers ─────────────────────────────────────────────────────────
-
-export function json(data: unknown, status = 200): Response {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-    });
+export class GoogleWorkerError extends Error {
+    constructor(
+        readonly status: number,
+        readonly code: string,
+        readonly disconnected = false,
+    ) {
+        super(code);
+        this.name = 'GoogleWorkerError';
+    }
 }
 
-/** True when the request carries the correct shared secret (X-App-Secret header). */
-export function checkSecret(request: Request, env: Env): boolean {
-    const provided = request.headers.get('X-App-Secret') ?? '';
-    // Length guard first; the comparison itself is not constant-time but the secret is
-    // high-entropy and this is a single-user personal tool.
-    return provided.length > 0 && provided === env.APP_SHARED_SECRET;
+export function isGoogleWorkerError(error: unknown): error is GoogleWorkerError {
+    return error instanceof GoogleWorkerError;
+}
+
+function storageUnavailable(): GoogleWorkerError {
+    return new GoogleWorkerError(503, 'storage_unavailable');
+}
+
+function googleUnreachable(): GoogleWorkerError {
+    return new GoogleWorkerError(502, 'google_unreachable');
+}
+
+async function kvGet(env: Env, key: string): Promise<string | null> {
+    try {
+        return await env.OAUTH_KV.get(key);
+    } catch {
+        throw storageUnavailable();
+    }
+}
+
+async function kvPut(
+    env: Env,
+    key: string,
+    value: string,
+    options?: KVNamespacePutOptions,
+): Promise<void> {
+    try {
+        await env.OAUTH_KV.put(key, value, options);
+    } catch {
+        throw storageUnavailable();
+    }
+}
+
+async function kvDelete(env: Env, key: string): Promise<void> {
+    try {
+        await env.OAUTH_KV.delete(key);
+    } catch {
+        throw storageUnavailable();
+    }
+}
+
+export function hasGoogleOAuthConfig(env: Env): boolean {
+    return hasSharedSecret(env) && Boolean(env.GOOGLE_CLIENT_ID) && Boolean(env.GOOGLE_CLIENT_SECRET);
 }
 
 export function appOrigin(request: Request, env: Env): string {
@@ -135,32 +178,50 @@ export async function exchangeCode(
     env: Env,
     code: string,
 ): Promise<GoogleTokenResponse> {
-    const res = await fetch(GOOGLE_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            code,
-            client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: env.GOOGLE_CLIENT_SECRET,
-            redirect_uri: redirectUri(request, env),
-            grant_type: 'authorization_code',
-        }),
-    });
-    return res.json();
+    let res: Response;
+    try {
+        res = await fetch(GOOGLE_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                code,
+                client_id: env.GOOGLE_CLIENT_ID,
+                client_secret: env.GOOGLE_CLIENT_SECRET,
+                redirect_uri: redirectUri(request, env),
+                grant_type: 'authorization_code',
+            }),
+        });
+    } catch {
+        throw googleUnreachable();
+    }
+    try {
+        return await res.json();
+    } catch {
+        throw googleUnreachable();
+    }
 }
 
 async function refreshTokens(env: Env, refreshToken: string): Promise<GoogleTokenResponse> {
-    const res = await fetch(GOOGLE_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            refresh_token: refreshToken,
-            client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: env.GOOGLE_CLIENT_SECRET,
-            grant_type: 'refresh_token',
-        }),
-    });
-    return res.json();
+    let res: Response;
+    try {
+        res = await fetch(GOOGLE_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                refresh_token: refreshToken,
+                client_id: env.GOOGLE_CLIENT_ID,
+                client_secret: env.GOOGLE_CLIENT_SECRET,
+                grant_type: 'refresh_token',
+            }),
+        });
+    } catch {
+        throw googleUnreachable();
+    }
+    try {
+        return await res.json();
+    } catch {
+        throw googleUnreachable();
+    }
 }
 
 export async function revokeToken(token: string): Promise<void> {
@@ -174,8 +235,8 @@ export async function revokeToken(token: string): Promise<void> {
 // ── KV-backed token storage ──────────────────────────────────────────────────
 
 export async function storeConnection(env: Env, tokens: GoogleTokenResponse): Promise<void> {
-    if (tokens.refresh_token) await env.OAUTH_KV.put(KV_REFRESH, tokens.refresh_token);
-    if (tokens.scope) await env.OAUTH_KV.put(KV_SCOPE, tokens.scope);
+    if (tokens.refresh_token) await kvPut(env, KV_REFRESH, tokens.refresh_token);
+    if (tokens.scope) await kvPut(env, KV_SCOPE, tokens.scope);
     if (tokens.access_token && tokens.expires_in) {
         await cacheAccessToken(env, tokens.access_token, tokens.expires_in);
     }
@@ -183,14 +244,14 @@ export async function storeConnection(env: Env, tokens: GoogleTokenResponse): Pr
 
 async function cacheAccessToken(env: Env, accessToken: string, expiresIn: number): Promise<void> {
     const expiresAt = Date.now() + expiresIn * 1000;
-    await env.OAUTH_KV.put(KV_ACCESS, JSON.stringify({ access_token: accessToken, expires_at: expiresAt }), {
+    await kvPut(env, KV_ACCESS, JSON.stringify({ access_token: accessToken, expires_at: expiresAt }), {
         expirationTtl: Math.max(60, expiresIn),
     });
 }
 
 export async function isConnected(env: Env): Promise<{ connected: boolean; scope: string | null }> {
-    const refresh = await env.OAUTH_KV.get(KV_REFRESH);
-    const scope = await env.OAUTH_KV.get(KV_SCOPE);
+    const refresh = await kvGet(env, KV_REFRESH);
+    const scope = await kvGet(env, KV_SCOPE);
     return { connected: Boolean(refresh), scope };
 }
 
@@ -200,7 +261,7 @@ export type AccessTokenResult =
 
 /** Return a valid access token, using the KV cache and refreshing via the stored refresh token. */
 export async function getAccessToken(env: Env): Promise<AccessTokenResult> {
-    const cachedRaw = await env.OAUTH_KV.get(KV_ACCESS);
+    const cachedRaw = await kvGet(env, KV_ACCESS);
     if (cachedRaw) {
         try {
             const cached = JSON.parse(cachedRaw) as { access_token: string; expires_at: number };
@@ -216,7 +277,7 @@ export async function getAccessToken(env: Env): Promise<AccessTokenResult> {
         }
     }
 
-    const refresh = await env.OAUTH_KV.get(KV_REFRESH);
+    const refresh = await kvGet(env, KV_REFRESH);
     if (!refresh) return { ok: false, status: 404, error: 'not_connected', disconnected: true };
 
     const tokens = await refreshTokens(env, refresh);
@@ -233,9 +294,9 @@ export async function getAccessToken(env: Env): Promise<AccessTokenResult> {
 }
 
 export async function clearConnection(env: Env): Promise<string | null> {
-    const refresh = await env.OAUTH_KV.get(KV_REFRESH);
-    await env.OAUTH_KV.delete(KV_REFRESH);
-    await env.OAUTH_KV.delete(KV_ACCESS);
-    await env.OAUTH_KV.delete(KV_SCOPE);
+    const refresh = await kvGet(env, KV_REFRESH);
+    await kvDelete(env, KV_REFRESH);
+    await kvDelete(env, KV_ACCESS);
+    await kvDelete(env, KV_SCOPE);
     return refresh;
 }

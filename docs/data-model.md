@@ -409,7 +409,7 @@ Plans in localStorage include `_wizardSteps` and `_schemaVersion` markers. On lo
 ### Fetch cycle
 1. On window focus / initial mount, `TodoistProvider` checks cache age.
 2. If cache < 5 min: use cached data, skip fetch.
-3. Otherwise: `resolveToken()` -> `decryptToken()` -> paginated fetch of tasks, projects, sections -> save to cache.
+3. Otherwise: paginated fetch of tasks, projects, sections through the same-origin Worker proxy (`/api/todoist/*`, which injects the server-held token) -> save to cache.
 
 ### Deduplication
 - Inflight requests tracked via `inflightRef`. Duplicate calls return the existing promise.

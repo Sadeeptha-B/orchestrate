@@ -157,4 +157,5 @@ For pure UI work without OAuth, `npm run dev` is still the fastest loop — the 
 - **Sign-in returns `?gcal=error&reason=state`** — the OAuth state failed verification (expired >10 min, or `APP_SHARED_SECRET` changed mid-flow). Just connect again.
 - **"App secret was rejected"** — the value entered in Settings doesn't match `APP_SHARED_SECRET`. Re-enter it (Settings → Integrations → Change).
 - **Connected, then later needs reconnecting** — the refresh token was revoked or expired (testing-mode 7-day idle limit). Reconnect; consider publishing the consent screen for stability.
-- **Functions 500 / `server_not_configured`** — `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` aren't set on the environment that served the request (check Production vs Preview).
+- **Functions 500 / `server_not_configured`** — a required secret isn't set on the environment that served the request (check Production vs Preview): `APP_SHARED_SECRET` for any guarded endpoint, or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` for the Google login/callback specifically.
+- **`storage_unavailable` (503) / `todoist_unreachable` · `google_unreachable` (502)** — transient: Workers KV or the upstream API (Todoist / Google's token endpoint) was momentarily unreachable. Retry; if it persists, check the Cloudflare status page and that the `OAUTH_KV` binding is attached to the serving environment.
