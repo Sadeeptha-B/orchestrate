@@ -1,31 +1,10 @@
 # Deployment — Cloudflare Pages + Google Calendar OAuth
 
-How Orchestrate is hosted and how its Google Calendar OAuth works, end to end.
+The **step-by-step setup** to host Orchestrate on Cloudflare Pages and wire up the Google Calendar OAuth.
 
-## Architecture at a glance
+> **How it all works** — the Functions, the OAuth flow, every variable/secret and how each is used, the KV storage, and the security model — lives in the reference: [reference/google_calendar_oauth.md](./reference/google_calendar_oauth.md). This page is just the procedure.
 
-- **Hosting:** static Vite SPA on **Cloudflare Pages**, served at the **domain root** (`/`). (Previously GitHub Pages under `/orchestrate/`.)
-- **OAuth:** a thin serverless backend — **Cloudflare Pages Functions** under `functions/api/auth/google/` — runs the Google **auth-code flow** and holds the long-lived **refresh token** in **Workers KV**. The browser never sees the client secret or the refresh token; it holds only a single **shared secret** and asks the Worker for short-lived access tokens. This is the roadmap's **option E2**.
-- **Endpoint guard:** every browser→Worker request carries the `APP_SHARED_SECRET` (sent as an `X-App-Secret` header). It's a single-user personal tool, so one shared secret is the whole auth model.
-
-```
-Browser (SPA)                Pages Functions (Worker)            Google
-  | enter shared secret           |                                |
-  | Connect ───fetch /login──────▶| build consent URL (state HMAC) |
-  | ◀──{ url }────────────────────|                                |
-  | ──redirect──────────────────────────────────────────────────▶ | consent
-  |                               | ◀──/callback?code&state─────── |
-  |                               | exchange code → tokens         |
-  |                               | store refresh_token in KV      |
-  | ◀──redirect /settings?gcal=connected ─────────────────────────|
-  | need a token ──fetch /token──▶| refresh_token → access_token   |
-  | ◀──{ access_token }───────────|                                |
-  | ──Bearer call──────────────────────────────────────────────▶  | Calendar API
-```
-
-Endpoints (all under `/api/auth/google/`): `login` (guarded → returns consent URL), `callback` (Google → stores tokens), `token` (guarded → fresh access token), `status` (guarded → connected?), `disconnect` (guarded → revoke + clear).
-
-Why this also fixes the localStorage concern: Cloudflare Pages serves the app from its own origin (`<project>.pages.dev`, or your custom domain), so its `localStorage` is isolated from any other site — unlike GitHub Pages project sites, which all share the single `<user>.github.io` origin.
+**In one paragraph:** the app is a static Vite SPA on Cloudflare Pages (served at the domain root), plus serverless **Pages Functions** under `functions/api/auth/google/` that run Google's auth-code flow and hold the long-lived refresh token in **Workers KV**. The browser holds only a single shared secret. To deploy you'll: create a Google OAuth client (Part A), create the Cloudflare Pages project with a KV namespace + secrets (Part B), then connect inside the app (Part C).
 
 ---
 
