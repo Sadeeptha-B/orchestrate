@@ -26,10 +26,10 @@ The app is **opinionated and personal** to the author's workflow: per-day work s
 | Framework | React 19 with TypeScript |
 | Build tool | Vite 8 |
 | Styling | Tailwind CSS v4 (CSS custom properties via `@theme`); light/dark via `.dark` on `<html>` |
-| Routing | React Router v7 (`BrowserRouter`, basename `/orchestrate/`) |
+| Routing | React Router v7 (`BrowserRouter`, basename `/` — served at the domain root on Cloudflare Pages) |
 | State management | React Context + `useReducer` (DayPlan), React Context + `useState` (Todoist, Music) |
 | Persistence | `localStorage` only — 4 primary keys + 3 auxiliary keys |
-| External APIs | Todoist REST API v1, Google Calendar (REST v3 via GIS OAuth + read-only embed), Spotify embed |
+| External APIs | Todoist REST API v1, Google Calendar (REST v3 via server-mediated OAuth + read-only embed), Spotify embed |
 | Crypto | Web Crypto API (AES-256-GCM for token encryption) |
 | PWA | Service worker (network-first, falls back to cache then `index.html`), manifest with maskable icons |
 | Dependencies of note | `canvas-confetti` (task completion), `date-fns`, `react-router-dom` |
@@ -42,18 +42,18 @@ The app is **opinionated and personal** to the author's workflow: per-day work s
 
 ```
 StrictMode                         (main.tsx)
-`-- BrowserRouter (basename: /orchestrate/)   (main.tsx)
+`-- BrowserRouter (basename: /)   (main.tsx)
     `-- App                        (App.tsx)
         `-- ErrorBoundary
             `-- DayPlanProvider              <-- core app state (plan, settings, history, life)
-                `-- GoogleCalendarProvider   <-- v7.2: GIS OAuth (calendar list + write plumbing)
+                `-- GoogleCalendarProvider   <-- v7.3: server-mediated OAuth (calendar list + write plumbing)
                     `-- TodoistProvider          <-- Todoist data + API actions
                         `-- ReconciliationProvider  <-- v6.5: central habit reconcile
                             `-- AppRoutes        <-- router switch
 ```
 
 - `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
-- `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The access token it holds lives **in memory only** — never persisted.
+- `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The **refresh token lives server-side** (Cloudflare Worker + KV); the provider holds only a short-lived access token **in memory** (re-minted by the Worker on demand) plus a runtime shared secret in localStorage.
 - `TodoistProvider` reads `settings` (encrypted token) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
 - `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
 
@@ -270,10 +270,10 @@ Lightweight context scoped to the dashboard. Manages active playlist ID, custom 
 | System | Integration | Purpose |
 |---|---|---|
 | **Todoist** | REST API v1 with personal API token (AES-256-GCM encrypted in localStorage). Full CRUD on tasks/projects, completion via Sync API. Stale-while-revalidate cache (5min hydration / 30s focus on both tasks and projects). HTTP 401 -> `authFailed` flag + reconnect banner. | Source of truth for tasks. Orchestrate stores only Todoist task IDs + a `titleSnapshot` fallback. |
-| **Google Calendar** | **Display:** read-only embed iframe (multi-calendar, per-calendar colors, week / month / agenda view). **Auth (v7.2):** browser-only OAuth via Google Identity Services (GIS) token client — build-time `VITE_GOOGLE_CLIENT_ID`, no backend. Used to auto-list the user's calendars (the setup picker; replaces manual calendar-ID entry) and as **write plumbing** (`createEvent`; scope `calendar.events`, not yet wired to a feature). Access token (~1 hr) is in-memory only and silently re-acquired (`prompt: 'none'`); only a `googleCalendarConnected` flag persists. | Time context. The user's existing Todoist<->Google Calendar sync makes scheduled tasks appear automatically. Future: server-held refresh token for unattended writes (see roadmap). |
+| **Google Calendar** | **Display:** read-only embed iframe (multi-calendar, per-calendar colors, week / month / agenda view). **Auth (v7.3):** server-mediated OAuth via Cloudflare Pages Functions (`functions/api/auth/google/*`) — the auth-code flow with the **client secret + refresh token held server-side** in Workers KV (roadmap option E2). The browser holds only a runtime **shared secret** (entered in Settings, `localStorage` key `orchestrate-cf-secret`) and asks the Worker for short-lived access tokens. Used to auto-list the user's calendars (the setup picker) and as **write plumbing** (`createEvent`; scope `calendar.events`, not yet wired to a feature). Only a `googleCalendarConnected` flag persists client-side. Setup: [deployment.md](./deployment.md). | Time context. The user's existing Todoist<->Google Calendar sync makes scheduled tasks appear automatically. Server-held refresh token enables future unattended writes. |
 | **Spotify** | Embedded player iframe. 6 curated playlists, custom URL override per playlist. | Music protocol. |
 
-**No backend (current implementation).** All persistence is `localStorage`. Todoist API calls are direct from the browser (via Vite dev proxy in dev to dodge CORS). The Todoist token is encrypted client-side; key + IV + ciphertext all live in localStorage -- protects against casual inspection, not against an attacker with browser-profile access. This is the current implementation, not a permanent design stance: infrastructure is subordinate to the vision, and a backend (notably self-hosted) is on the table if it serves the vision better -- see [vision.md](./vision.md) "Infrastructure is subordinate to the vision" and [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
+**Hosting + minimal backend.** The app is a static SPA deployed to **Cloudflare Pages** (served at the domain root). The only server-side code is the Google Calendar **OAuth Pages Functions** (`functions/api/auth/google/*`) — a thin auth-code/token-refresh layer backed by a Workers KV namespace. **All app data still lives in `localStorage`** (no app-data backend). Todoist API calls are direct from the browser (via Vite dev proxy in dev to dodge CORS); the Todoist token is encrypted client-side (key + IV + ciphertext all in localStorage — protects against casual inspection, not browser-profile access). The OAuth Worker is the first piece of the staged infrastructure direction — see [vision.md](./vision.md) "Infrastructure is subordinate to the vision" and [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md). Deployment + OAuth setup: [deployment.md](./deployment.md).
 
 ---
 
@@ -382,7 +382,7 @@ Full entity semantics, reducer actions, and migration chain: [data-model.md](./d
 
 ## 11. Persistence
 
-All via `localStorage`. No backend — this is the current implementation, not a fixed constraint; the persistence direction is analysed in [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
+All **app data** via `localStorage`. The only server-side state is the Google refresh token, held in Workers KV by the OAuth Functions (not localStorage) — see §7. The persistence direction is analysed in [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
 
 | Key | Content | Written By |
 |---|---|---|
@@ -391,6 +391,7 @@ All via `localStorage`. No backend — this is the current implementation, not a
 | `orchestrate-history` | `SavedDayPlan[]` | `DayPlanProvider` |
 | `orchestrate-life-context` | `LifeContext` + schema marker | `DayPlanProvider` |
 | `orchestrate-todoist-cache` | Tasks, projects, sections, fetchedAt | `TodoistProvider` |
+| `orchestrate-cf-secret` | Shared secret guarding the OAuth Worker endpoints | `googleAuth.ts` |
 | `orchestrate-theme` | `"light"` or `"dark"` | `useTheme` |
 | `orchestrate-active-playlist` | Playlist ID | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<playlistId, spotifyUrl>` | `MusicProvider` |
@@ -423,8 +424,8 @@ All via `localStorage`. No backend — this is the current implementation, not a
 | `useDayPlan` | `hooks/useDayPlan.ts` | Consumer for `DayPlanContext` |
 | `useTodoistData` | `hooks/useTodoist.ts` | Read-only Todoist context consumer |
 | `useTodoistActions` | `hooks/useTodoist.ts` | Mutation Todoist context consumer |
-| `useGoogleCalendarData` | `hooks/useGoogleCalendar.ts` | v7.2: read-only Google Calendar OAuth state (isConfigured/isConnected/authFailed, available calendars) |
-| `useGoogleCalendarActions` | `hooks/useGoogleCalendar.ts` | v7.2: connect/disconnect, refreshCalendars, createEvent (GIS token client) |
+| `useGoogleCalendarData` | `hooks/useGoogleCalendar.ts` | v7.3: read-only Google Calendar OAuth state (isConfigured = shared secret set / isConnected / authFailed, available calendars) |
+| `useGoogleCalendarActions` | `hooks/useGoogleCalendar.ts` | v7.3: setAppSecret, connect/disconnect, checkConnection, refreshCalendars, createEvent (Worker-mediated) |
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
 | `useConfirmModal` | `hooks/useConfirmModal.ts` | Reusable confirm-dialog state |
 | `useHabitReconciliation` | `hooks/useHabitReconciliation.ts` | v6.5: read central reconcile status — counts, the **named needs-sync habit list**, error, in-flight — + manual trigger |
@@ -439,6 +440,8 @@ All via `localStorage`. No backend — this is the current implementation, not a
 
 ## 14. Directory Structure
 
+Repo-root deployment files (outside `src/`): `functions/api/auth/google/*` (Cloudflare Pages Functions — the OAuth endpoints + `_lib.ts`), `wrangler.toml` (Pages config + KV binding), `public/_redirects` (SPA fallback). See [deployment.md](./deployment.md).
+
 ```
 src/
 +-- main.tsx                    # Entry point, service worker registration
@@ -451,7 +454,7 @@ src/
 +-- context/
 |   +-- DayPlanContext.tsx          # Core reducer, migration, persistence
 |   +-- TodoistContext.tsx          # Todoist API layer, cache, reconciliation
-|   +-- GoogleCalendarContext.tsx   # v7.2: GIS OAuth state + calendar list + createEvent plumbing
+|   +-- GoogleCalendarContext.tsx   # v7.3: server-mediated OAuth state + calendar list + createEvent plumbing
 |   `-- ReconciliationContext.tsx   # v6.5: central habit reconcile (overdue + needs-sync)
 |
 +-- hooks/
@@ -469,7 +472,7 @@ src/
 |
 +-- lib/
 |   +-- crypto.ts               # AES-256-GCM encryption/decryption
-|   +-- googleAuth.ts           # v7.2: GIS token-client wrapper (loadGis, requestToken, revokeToken)
+|   +-- googleAuth.ts           # v7.3: Worker OAuth client (shared secret, startGoogleLogin, fetchAccessToken, fetchConnectionStatus, disconnectGoogle)
 |   +-- googleCalendarApi.ts    # v7.2: Calendar REST v3 client (listCalendars, createCalendarEvent)
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)
 |   +-- habits.ts               # habitMatchesDate/recurrenceMatchesDate, habitKindOf, partitionByKind, computeTodaysMicroGapInstances, getActiveHabits, getAnchorHabits

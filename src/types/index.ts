@@ -177,7 +177,7 @@ export interface AppSettings {
     todoistTokenIV?: string;
     todoistTokenKey?: string;
     googleCalendarIds?: GoogleCalendarEntry[]; // v7.2: the *selected* calendars to overlay (sourced from the Calendar API list)
-    googleCalendarConnected?: boolean;         // v7.2: user has authorized Google Calendar via GIS; drives silent reconnect on load. The access token itself is in-memory only, never persisted.
+    googleCalendarConnected?: boolean;         // v7.3: user has authorized Google Calendar via the server-mediated OAuth flow (Cloudflare Worker holds the refresh token); drives the connection re-check on load. Access tokens are minted server-side on demand and held only in memory.
     calendarViewMode?: CalendarViewMode;
     taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
     sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)

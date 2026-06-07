@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-    base: '/orchestrate/',
+    // Served at the domain root on Cloudflare Pages (was '/orchestrate/' on GitHub Pages).
+    base: '/',
     plugins: [react(), tailwindcss()],
     server: {
         proxy: {
