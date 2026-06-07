@@ -173,12 +173,8 @@ export interface AppSettings {
     userName?: string;
     notificationPreference: NotificationPreference;
     sessionSlots: SessionSlot[];
-    // v7.2 (deprecated): the Todoist token moved server-side (Cloudflare Worker + KV). These legacy
-    // fields are no longer read or written; they're cleared on next connect/disconnect. Kept on the
-    // type so old persisted settings + backups still parse.
-    todoistToken?: string;
-    todoistTokenIV?: string;
-    todoistTokenKey?: string;
+    // v7.2: the Todoist token lives server-side (Cloudflare Worker + KV) — never in the browser, never
+    // in a backup. The app authenticates to the Worker proxy with the shared secret (`orchestrate-cf-secret`).
     googleCalendarIds?: GoogleCalendarEntry[]; // v7.2: the *selected* calendars to overlay (sourced from the Calendar API list)
     googleCalendarConnected?: boolean;         // v7.2: user has authorized Google Calendar via the server-mediated OAuth flow (Cloudflare Worker holds the refresh token); drives the connection re-check on load. Access tokens are minted server-side on demand and held only in memory.
     calendarViewMode?: CalendarViewMode;
@@ -265,10 +261,6 @@ export interface Habit {
     targetTime?: string;                 // "HH:mm" target time-of-day. v6.7: optional for 'habit' (timed → timeline; absent → anytime); always absent for 'micro-gap'.
     targetDurationMinutes?: number;      // v6.1: minutes; pushed to Todoist `duration` and used as the LinkedTask estimate
     windowBehavior?: HabitWindowBehavior;// v6.1/v6.8: timed-habit window policy. 'strict' = still surfaced + completable past targetTime+duration but presented as "missed" (greyed); 'lenient' = stays an active to-do. v6.8: no longer hides the row. Default 'lenient'.
-    /** @deprecated v6.1: replaced by `todoistTaskId`. Retained for migration only. */
-    autoLinkTodoistId?: string;
-    /** @deprecated v6.1: replaced by `targetDurationMinutes`. Retained for migration only. */
-    maxBlockMinutes?: number;
     createdAt: string;                   // ISO timestamp
 }
 

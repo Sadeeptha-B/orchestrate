@@ -54,7 +54,7 @@ StrictMode                         (main.tsx)
 
 - `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
 - `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The **refresh token lives server-side** (Cloudflare Worker + KV); the provider holds only a short-lived access token **in memory** (re-minted by the Worker on demand) plus a runtime shared secret in localStorage.
-- `TodoistProvider` reads `settings` (encrypted token) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
+- `TodoistProvider` reads `settings` (connection state + habits project preference) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
 - `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
 
 ### 3.2 Routing
@@ -209,16 +209,16 @@ Three independent state contexts, each serving a distinct domain.
 
 Manages:
 - **`plan`** -- today's `DayPlan` (intentions, linked tasks, the day's `sessionSlots` (v7.1), task-session assignments, today's habit instances, wizard step, check-ins).
-- **`settings`** -- persistent `AppSettings` (notification preference, legacy session-slot fallback, encrypted Todoist token, Google Calendar config). Note (v7.1): the live per-day sessions are `plan.sessionSlots`; `settings.sessionSlots` is only a seed/reset fallback now.
+- **`settings`** -- persistent `AppSettings` (notification preference, legacy session-slot fallback, Google Calendar config, `habitsTodoistProjectId`). Note (v7.1): the live per-day sessions are `plan.sessionSlots`; `settings.sessionSlots` is only a seed/reset fallback now. The Todoist token is **not** here — it lives server-side in Workers KV (v7.2).
 - **`editingStep`** -- tracks whether the user is re-editing from the dashboard (`number | null`).
 - **`history`** -- array of `SavedDayPlan` entries for past sessions.
 - **`life`** -- persistent `LifeContext` (seasons, habits, activeSeasonId, backlog, rest cues, session templates (v7.1)).
 
-**Architecture:** `useReducer` with a ~57-action discriminated union. State is initialized lazily via `loadInitialState()` which calls `peekRawPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day-rollover migration in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
+**Architecture:** `useReducer` with a ~57-action discriminated union. State is initialized lazily via `loadInitialState()` which calls `loadPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day rollover in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
 
-**Plan date freshness + rollover:** `peekRawPlan()` returns the parsed/migrated plan without a date gate. If the date is stale, `loadInitialState` runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for unfinished intentions, appending them to `life.backlog` with `reason: 'rollover'`. No automatic save to `SavedDayPlan` history at rollover -- the backlog preserves the meaningful unfinished part. Manual `SAVE_DAY` is the only writer to history. Auto-rollover does NOT touch Todoist -- yesterday's tasks remain visibly overdue.
+**Plan date freshness + rollover:** `loadPlan()` returns the current-schema persisted plan without a date gate. If the date is stale, `loadInitialState` runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for unfinished intentions, appending them to `life.backlog` with `reason: 'rollover'`. No automatic save to `SavedDayPlan` history at rollover -- the backlog preserves the meaningful unfinished part. Manual `SAVE_DAY` is the only writer to history. Auto-rollover does NOT touch Todoist -- yesterday's tasks remain visibly overdue.
 
-**Migration chain:** Plans include `_wizardSteps` and `_schemaVersion` (currently `7.1`, a JSON float) markers. On load, `migratePlan()` runs transformations from v1 through v7.1. The v7.1 step backfills `DayPlan.sessionSlots` (per-day sessions), bumps the wizard step for the inserted Sessions step (4-step → 5-step, schema-gated so current plans are untouched), and seeds `LifeContext.sessionTemplates`. See [data-model.md](./data-model.md) for the full migration chain.
+**Schema guard (7.1 only):** there is **no in-app migration**. Every persisted slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` (currently `7.1`, a JSON float). On load, anything not stamped `7.1` is **rejected**: a stale/foreign plan, settings, or life slice is treated as absent (fresh defaults), and `loadHistory` keeps only `7.1` saved plans. Imports (Full Backup / Sessions) are likewise refused unless `7.1`. The single `isCurrentSchema` helper centralizes the check; `_wizardSteps` is gone (it only fed the deleted wizard-step migration). The historical v1→v7.1 migration chain lives in git history. See [data-model.md](./data-model.md) §4.
 
 **Cross-slice invariants the reducer enforces:**
 - Activating a season auto-deactivates the previously active one.
@@ -346,7 +346,7 @@ Season-scoped recurring *work-threads* on `Season.recurringFocuses[]` (`{ id, ti
 
 **Overdue bump details** (v6.4): `reconcileOverdueHabits(...)` bumps each overdue habit's Todoist task via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
 
-**Reschedule semantics** (v6.4; **'habit'-kind only** — micro-gaps are untimed and not reschedulable): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the `'unfinished'` status it produced is gone, and `migratePlan` coerces any persisted `'unfinished'` to `'skipped'`.)
+**Reschedule semantics** (v6.4; **'habit'-kind only** — micro-gaps are untimed and not reschedulable): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the historical `'unfinished'` status is gone.)
 
 **Habits Library** (`/habits`): groups active habits into **Habits** and **Micro-gaps** sections (+ collapsible Inactive). Shows a "needs sync" banner for **'habit'-kind** entries that are unsynced or whose Todoist task is missing (micro-gaps never sync, so they're excluded); the banner **names each affected habit** as a chip (a ⚠ marks a task that's gone missing in Todoist) and offers — alongside Migrate / Re-sync — a confirm-gated **bulk "Delete habits"** escape hatch for habits the user would rather drop than push to Todoist. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races. CRUD (create / edit / pause / delete) and the create/edit/anchor-delete **modal stack** run through the shared `useHabitForms` hook (over `useHabitMutations`), also used by `LifeView`, so the two surfaces share one mutation + form path; the needs-sync banner and bulk-delete modal stay library-only.
 
@@ -376,7 +376,7 @@ Three interlocking ideas:
 
 The plan auto-resets daily. Stale task handling: completed tasks stay visible via `titleSnapshot`; deleted tasks auto-unlink; externally-completed tasks are detected and marked complete (not unlinked).
 
-Full entity semantics, reducer actions, and migration chain: [data-model.md](./data-model.md).
+Full entity semantics, reducer actions, and schema-compatibility notes: [data-model.md](./data-model.md).
 
 ---
 
@@ -396,11 +396,17 @@ All **app data** via `localStorage`. The only server-side state is the **integra
 | `orchestrate-active-playlist` | Playlist ID | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<playlistId, spotifyUrl>` | `MusicProvider` |
 
-**Backup**: Settings page Data tab has Full Backup (bundles settings + life + history), Import Backup (merge-by-id), Import/Export Sessions. `HistorySidebar` has per-session Restore/Export/Delete.
+**Backup**: Settings page Data tab has Full Backup (bundles settings + life + history, stamped `_schemaVersion`), Import Backup (merge-by-id; refuses non-`7.1` files), Import/Export Sessions (refuses non-`7.1` saved plans). `HistorySidebar` has per-session Restore/Export/Delete.
+
+**Backup scope & integrations** — a Full Backup is **data + integration references/preferences, never credentials**:
+- **Todoist.** *Not* in the backup: the personal API token (server-side in Workers KV `todoist:token`; the browser never holds it). *In* the backup: `settings.habitsTodoistProjectId`, and every embedded **task reference** — `LinkedTask.todoistId` + `titleSnapshot` inside `history[].plan`, and `todoistTaskId` on `life.habits[]` and habit instances (IDs/labels, not auth). After restoring on a fresh device/deployment, re-enter the **app secret** and **reconnect Todoist** (paste token) in Settings → Integrations; the imported IDs re-link automatically for the same account.
+- **Google Calendar.** *Not* in the backup: the OAuth refresh/access tokens (Workers KV / in-memory, server-side). *In* the backup: `settings.googleCalendarConnected` (flag), `settings.googleCalendarIds` (selected `GoogleCalendarEntry[]`), `settings.calendarViewMode`. The imported `googleCalendarConnected: true` is provisional — `GoogleCalendarProvider` re-checks `/api/auth/google/status` on load, so a device whose KV has no token self-corrects to disconnected; re-authorize Google if it shows disconnected.
+- **Shared secret** (`orchestrate-cf-secret`, localStorage) is **not** in any backup — it's installation-specific and re-entered per device.
+- **Not in the full backup by design:** today's `plan` (only saved sessions in `history`), the Todoist cache, and theme/music/pomodoro prefs.
 
 **Reset**: Settings → Data → Reset section has two destructive actions, each gated by a `ConfirmModal`:
 - **Reset Today's Plan** dispatches `RESET_DAY` — replaces `plan` with a fresh plan (sessions re-seeded from settings/defaults) and clears `editingStep`. Settings, history, life (seasons / habits / backlog / rest cues / session templates), and Todoist auth are untouched. Useful for cleaning up after a `RESTORE_DAY` that imported an unwanted session.
-- **Reset Everything** dispatches `RESET_ALL` and manually clears `orchestrate-todoist-cache` — a factory reset of all four reducer-managed slices (plan + settings + history + life). Todoist token is wiped; tasks/projects in Todoist itself are not modified. Theme and music prefs (separate localStorage keys outside the reducer) survive.
+- **Reset Everything** dispatches `RESET_ALL` and manually clears `orchestrate-todoist-cache` — a factory reset of all four reducer-managed slices (plan + settings + history + life). It does **not** touch the server-side integration tokens (Todoist/Google in KV) or the shared secret (`orchestrate-cf-secret`) — disconnect those from Settings → Integrations. Tasks/projects in Todoist itself are not modified. Theme and music prefs (separate localStorage keys outside the reducer) survive.
 
 ---
 
