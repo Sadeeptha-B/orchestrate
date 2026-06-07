@@ -2,9 +2,11 @@
 
 The **step-by-step setup** to host Orchestrate on Cloudflare Pages and wire up the Google Calendar OAuth.
 
-> **How it all works** — the Functions, the OAuth flow, every variable/secret and how each is used, the KV storage, and the security model — lives in the reference: [reference/google_calendar_oauth.md](./reference/google_calendar_oauth.md). This page is just the procedure.
+> **How it all works** — the Functions, the OAuth flow, every variable/secret and how each is used, the KV storage, and the security model — lives in the reference: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md). This page is just the procedure.
 
-**In one paragraph:** the app is a static Vite SPA on Cloudflare Pages (served at the domain root), plus serverless **Pages Functions** under `functions/api/auth/google/` that run Google's auth-code flow and hold the long-lived refresh token in **Workers KV**. The browser holds only a single shared secret. To deploy you'll: create a Google OAuth client (Part A), create the Cloudflare Pages project with a KV namespace + secrets (Part B), then connect inside the app (Part C).
+**In one paragraph:** the app is a static Vite SPA on Cloudflare Pages (served at the domain root), plus serverless **Pages Functions** that run Google's auth-code flow (`functions/api/auth/google/`) and proxy Todoist (`functions/api/todoist*`), holding the Google refresh token + the Todoist personal token in **Workers KV**. The browser holds only a single shared secret. To deploy you'll: create a Google OAuth client (Part A), create the Cloudflare Pages project with a KV namespace + secrets (Part B), then connect Google **and** Todoist inside the app (Part C).
+
+> **Todoist reuses everything.** The Todoist proxy uses the **same** `OAUTH_KV` binding and `APP_SHARED_SECRET` as the Google flow — no extra secrets, no extra KV namespace. If Google is set up, Todoist needs nothing more on the Cloudflare side; you just paste the Todoist token in-app (Part C).
 
 ---
 
@@ -116,6 +118,14 @@ Trigger a deploy (push to the branch, or **Retry deployment**). When it's live a
 4. Pick which calendars to overlay. Done.
 
 Because the refresh token lives on the server, the connection persists across devices and browser sessions — each new device just needs the app secret entered once.
+
+### Connect Todoist (same panel)
+
+1. In **Settings → Integrations → Todoist**, enter the **app secret** if not already set (it's the same `APP_SHARED_SECRET`, shared with Google Calendar).
+2. Paste your **Todoist personal API token** (Todoist → Settings → Integrations → Developer) and click **Test & Save**. The Worker validates it against Todoist and stores it in KV — it's never kept in the browser.
+3. That's it — tasks load through the proxy. Like Google, the connection persists across devices once the app secret is entered.
+
+> **One-time reconnect on upgrade.** If you used Orchestrate before v7.2, your old Todoist token was stored (obfuscated) in `localStorage`. That value is now ignored — paste the token once more here to store it server-side. The old local copy is cleared automatically when you do.
 
 ---
 

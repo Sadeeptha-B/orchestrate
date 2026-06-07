@@ -173,11 +173,14 @@ export interface AppSettings {
     userName?: string;
     notificationPreference: NotificationPreference;
     sessionSlots: SessionSlot[];
+    // v7.2 (deprecated): the Todoist token moved server-side (Cloudflare Worker + KV). These legacy
+    // fields are no longer read or written; they're cleared on next connect/disconnect. Kept on the
+    // type so old persisted settings + backups still parse.
     todoistToken?: string;
     todoistTokenIV?: string;
     todoistTokenKey?: string;
     googleCalendarIds?: GoogleCalendarEntry[]; // v7.2: the *selected* calendars to overlay (sourced from the Calendar API list)
-    googleCalendarConnected?: boolean;         // v7.3: user has authorized Google Calendar via the server-mediated OAuth flow (Cloudflare Worker holds the refresh token); drives the connection re-check on load. Access tokens are minted server-side on demand and held only in memory.
+    googleCalendarConnected?: boolean;         // v7.2: user has authorized Google Calendar via the server-mediated OAuth flow (Cloudflare Worker holds the refresh token); drives the connection re-check on load. Access tokens are minted server-side on demand and held only in memory.
     calendarViewMode?: CalendarViewMode;
     taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
     sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)

@@ -6,31 +6,17 @@
 // browser only ever holds a single **shared secret** (entered once in Settings) and asks the Worker
 // for short-lived access tokens on demand. See functions/api/auth/google/_lib.ts for the server side.
 
+import { getStoredSecret, hasStoredSecret, setStoredSecret } from './appSecret';
+
 const API_BASE = '/api/auth/google';
 
-/** localStorage key for the single shared secret guarding the Worker endpoints. */
-const SECRET_KEY = 'orchestrate-cf-secret';
-
-export function getStoredSecret(): string {
-    try {
-        return localStorage.getItem(SECRET_KEY) ?? '';
-    } catch {
-        return '';
-    }
-}
-
-export function setStoredSecret(secret: string): void {
-    try {
-        if (secret) localStorage.setItem(SECRET_KEY, secret);
-        else localStorage.removeItem(SECRET_KEY);
-    } catch {
-        // ignore storage failures (private mode, etc.)
-    }
-}
+// The shared secret now lives in appSecret.ts (it guards the Todoist proxy too). Re-exported here so
+// existing importers of googleAuth keep working.
+export { getStoredSecret, setStoredSecret };
 
 /** "Configured" now means the shared secret is set (the Worker + client config live server-side). */
 export function isGoogleConfigured(): boolean {
-    return getStoredSecret().length > 0;
+    return hasStoredSecret();
 }
 
 function authHeaders(): HeadersInit {

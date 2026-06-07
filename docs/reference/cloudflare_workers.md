@@ -1,6 +1,6 @@
-# Reference — Google Calendar OAuth & Cloudflare Functions
+# Reference — Cloudflare Workers (Functions) backend
 
-How the Google Calendar integration authenticates, end to end: the Cloudflare Pages Functions, the OAuth flow, the variables and secrets, and how the browser uses them. This is the **conceptual / "how it works"** reference. For the **step-by-step setup** (Google Cloud + Cloudflare dashboard), see [../deployment.md](../deployment.md).
+How Orchestrate's serverless backend works, end to end: the Cloudflare Pages Functions that run the **Google Calendar OAuth** flow (§1–§8) and **proxy Todoist** (§9), the variables and secrets, the KV storage, the security model, and the **cost/quota** picture (§10). This is the **conceptual / "how it works"** reference. For the **step-by-step setup** (Google Cloud + Cloudflare dashboard), see [../deployment.md](../deployment.md).
 
 For where this sits in the broader app, see [synthesis.md §7 (External Integrations)](../synthesis.md). For the design rationale and the alternatives that were weighed, see [roadmap/engagement_record_strategy.md](../roadmap/engagement_record_strategy.md) (this is **option E2**) and [roadmap/persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md).
 
@@ -152,7 +152,59 @@ The only client-persisted state is the `orchestrate-cf-secret` localStorage key 
 
 ---
 
-## 9. See also
+## 9. Todoist token proxy (same machinery)
+
+The Todoist integration (v7.2) reuses this exact backend pattern — the **same** `OAUTH_KV` namespace and `APP_SHARED_SECRET`, just a different token and a simpler shape (a Todoist personal token never expires, so there's no refresh dance).
+
+**Functions:**
+
+| File | Route | Method | Guard | Purpose |
+|---|---|---|---|---|
+| [`functions/api/todoist/[[path]].ts`](../../functions/api/todoist/%5B%5Bpath%5D%5D.ts) | `/api/todoist/*` | any | shared secret | Catch-all **proxy**: reads `todoist:token` from KV, forwards the request to `https://api.todoist.com/*` with the `Authorization` header injected. |
+| [`functions/api/todoist-auth/token.ts`](../../functions/api/todoist-auth/token.ts) | `/api/todoist-auth/token` | POST | shared secret | Validates the token (against Todoist `/projects`) and stores it in KV. |
+| [`functions/api/todoist-auth/status.ts`](../../functions/api/todoist-auth/status.ts) | `/api/todoist-auth/status` | GET | shared secret | `{ configured }` — whether a token is held. |
+| [`functions/api/todoist-auth/disconnect.ts`](../../functions/api/todoist-auth/disconnect.ts) | `/api/todoist-auth/disconnect` | POST | shared secret | Deletes `todoist:token` from KV. |
+| [`functions/_shared.ts`](../../functions/_shared.ts) | — | — | — | `json` + `checkSecret` shared by the Todoist functions. |
+
+**KV key:** `todoist:token` (string; no TTL). **Why a proxy** (vs. the Google "mint a token for the browser" model): a Todoist personal token *is* the long-lived credential, so it must never reach the browser — the only safe shape is to keep it server-side and proxy every call. (Google's access tokens are short-lived and safe to hand to the browser, so Google returns a token instead of proxying.)
+
+**Frontend:** [`src/lib/todoistApi.ts`](../../src/lib/todoistApi.ts) sets `API_BASE = /api/todoist/api/v1` (same-origin, dev + prod) and exposes `getTodoistStatus` / `storeTodoistToken` / `disconnectTodoist`; [`src/context/TodoistContext.tsx`](../../src/context/TodoistContext.tsx) sends `X-App-Secret` on every call (no token in the browser) and resolves `isConfigured` from `/status`; [`src/components/todoist/TodoistSetup.tsx`](../../src/components/todoist/TodoistSetup.tsx) holds the shared-secret + token entry. The shared secret itself lives in [`src/lib/appSecret.ts`](../../src/lib/appSecret.ts) (used by both integrations; `googleAuth.ts` re-exports it). The legacy `settings.todoistToken*` fields are deprecated.
+
+**Dev caveat:** like the Google flow, the proxy only runs under `wrangler pages dev` — plain `npm run dev` has no Functions, so Todoist shows the connect prompt.
+
+---
+
+## 10. Cost & quotas
+
+**The Todoist proxy is per-request, not one-time.** Because the token lives server-side, the browser can't call Todoist directly — every Todoist operation (schedule, reschedule, complete, habit sync, task/project refresh) is **1 Function invocation + 1 KV read** (`todoist:token`). The Google endpoints are likewise per-call. This is intrinsic to the security model and can't be avoided without putting the token back in the browser.
+
+For a **single-user** tool that's effectively free — usage sits orders of magnitude inside Cloudflare's free tier.
+
+**What's billed vs. not:**
+
+- **Pages Functions invocations** (the `/api/*` calls) count as Workers requests.
+- **Static asset requests** (the SPA's HTML/JS/CSS) are **free and unlimited** on Pages — loading the app costs nothing.
+- Each proxied call = 1 invocation + 1 KV **read**. KV **writes** happen only on connect (token save), so they're negligible.
+
+**Free-tier headroom** (Cloudflare's current tiers — verify, they adjust occasionally):
+
+| Resource | Free plan | Realistic single-user load |
+|---|---|---|
+| Functions / Workers requests | ~100,000 / day | a few hundred → low thousands on a heavy planning day |
+| KV reads | ~100,000 / day | = the call count (1 read each) |
+| KV writes | ~1,000 / day | ~0 (only on connect) |
+
+An intense hour of planning (100+ reschedules/completes plus periodic refreshes) is roughly **150–300 invocations** — ~0.2% of the daily free allowance. You'd need ~100,000 Todoist operations in a single day to approach the ceiling, which one person can't reach by hand.
+
+**No surprise bill on the Free plan:** if the daily limit were ever hit, Functions return errors until the UTC reset rather than auto-charging. The Paid plan ($5/mo, ~10M requests/month included) is strictly opt-in.
+
+**Already-present mitigations:** the frontend's stale-while-revalidate cache (≤5 min hydration, 30s focus-refresh dedup — see [synthesis.md §6.2](../synthesis.md)) means tab-switches and re-renders don't spam the proxy; only genuine mutations and stale refreshes invoke it.
+
+**When this *would* matter** (none apply to Orchestrate): going **multi-user** (the only real volume multiplier — explicitly out of scope), a **cron/background Worker** hammering the API (we have none), or tens of thousands of ops/day. If ever needed, a short-lived in-Worker token cache could collapse the per-call KV read, but it's unnecessary at single-user scale.
+
+---
+
+## 11. See also
 
 - [../deployment.md](../deployment.md) — step-by-step setup (Google Cloud client, Cloudflare project, KV, secrets, local dev, troubleshooting).
 - [../synthesis.md](../synthesis.md) §7 (integrations), §11 (persistence) — where this fits in the app.

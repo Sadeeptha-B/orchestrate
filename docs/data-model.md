@@ -100,13 +100,13 @@ Persistent user preferences. Survives daily plan resets.
 
 **`sessionSlots`** (v7.1): no longer the live source for the day's sessions — retained only as a legacy seed/reset fallback and the source for the one-time "My sessions" template migration. The live per-day list is `DayPlan.sessionSlots`.
 
-**Token encryption:** The Todoist token is AES-256-GCM encrypted client-side. `encryptToken()` generates a random key + IV, encrypts, returns all three as base64. Key + IV + ciphertext all live in localStorage — protects against casual inspection, not determined browser-profile access.
+**Todoist token (v7.2):** held **server-side in Workers KV**, not in the browser. The app sends the shared `X-App-Secret` to the same-origin Worker proxy (`/api/todoist/*`), which injects the `Authorization` header. The legacy `todoistToken`/`todoistTokenIV`/`todoistTokenKey` settings fields are **deprecated** (no longer read/written; cleared on next connect/disconnect) and kept only so old persisted settings + backups still parse.
 
 **`habitsTodoistProjectId`:** Lazily created on first 'habit'-kind save. Resolved by `ensureHabitsProject(...)`.
 
 **`taskCapDefaults`** (v6.7 keys): `{ habit, microGap, manualBackground }` (renamed from `stabilizer`/`lightCoherent`; `migrateTaskCaps` maps the old keys forward).
 
-**Google Calendar (v7.2):** `googleCalendarIds` is now the **selected subset** of calendars to overlay in the embed, sourced from the Calendar API list (each `GoogleCalendarEntry` carries `id`/`name`/`color`/`primary`) — no longer hand-entered. `googleCalendarConnected: boolean` records that the user authorized Google Calendar via the GIS token client; on load the `GoogleCalendarProvider` uses it to attempt a **silent** token re-acquisition (`prompt: 'none'`). The OAuth **access token itself is held in memory only — never persisted, never encrypted** (it expires within ~1 hr and is silently re-acquired), unlike the Todoist token. `calendarViewMode` is unchanged (embed week/month/agenda).
+**Google Calendar (v7.2):** `googleCalendarIds` is now the **selected subset** of calendars to overlay in the embed, sourced from the Calendar API list (each `GoogleCalendarEntry` carries `id`/`name`/`color`/`primary`) — no longer hand-entered. `googleCalendarConnected: boolean` records that the user authorized Google Calendar via the **server-mediated OAuth flow**; on load the `GoogleCalendarProvider` uses it to re-check the server connection (`/api/auth/google/status`). The **refresh token lives server-side in KV**; the browser only ever holds a short-lived access token **in memory** (minted by the Worker on demand). `calendarViewMode` is unchanged (embed week/month/agenda). Full OAuth model: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md).
 
 ### Season
 
@@ -250,7 +250,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `ADD_CHECKIN` | `checkIn` | Appends to `plan.checkIns` |
 | `MARK_FOCUS_SEEDED` | `focusId` | v6.7: records a recurring-focus id in `plan.seededFocusIds` so the Step 1 banner chip doesn't re-offer it today. Idempotent. |
 | `RESET_DAY` | *(none)* | Replaces plan with `freshPlan(seedSessionSlots(...))` (sessions re-seeded from settings/defaults), clears `editingStep`. Other slices (settings, history, life) untouched. Surfaced from Settings → Data → Reset Today's Plan. |
-| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings` back to defaults (Todoist token cleared). Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). Surfaced from Settings → Data → Reset Everything. |
+| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings` back to defaults (legacy Todoist token fields cleared). Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). **Does not** clear the server-side tokens in KV (Todoist/Google) or the `orchestrate-cf-secret` — disconnect those from Settings → Integrations. Surfaced from Settings → Data → Reset Everything. |
 | `UPDATE_SETTINGS` | `settings` | Shallow-merges into settings |
 | `SET_EDITING_STEP` | `step` | Tracks which wizard step the user is re-editing from the dashboard |
 

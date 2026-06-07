@@ -19,7 +19,7 @@ import type { LinkedTask } from '../../types';
 
 export function Step1Intentions() {
     const { plan, settings, life, dispatch } = useDayPlan();
-    const { taskMap } = useTodoistData();
+    const { taskMap, isConfigured: todoistConfigured } = useTodoistData();
 
     // v6.3/v6.7: surface today's habit + micro-gap instances on the timeline / dashboard. Shared
     // with the dashboard so the two surfaces can't drift.
@@ -92,9 +92,6 @@ export function Step1Intentions() {
         [commitTitleEdit],
     );
 
-    const todoistConfigured = Boolean(
-        settings.todoistToken && settings.todoistTokenIV && settings.todoistTokenKey,
-    );
     const calendarConfigured = Boolean(
         settings.googleCalendarIds && settings.googleCalendarIds.length > 0,
     );

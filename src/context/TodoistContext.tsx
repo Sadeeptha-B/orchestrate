@@ -1,7 +1,7 @@
 import { createContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { useDayPlan } from '../hooks/useDayPlan';
-import { decryptToken } from '../lib/crypto';
-import { API_BASE } from '../lib/todoistApi';
+import { getStoredSecret } from '../lib/appSecret';
+import { API_BASE, TodoistAuthError, getTodoistStatus } from '../lib/todoistApi';
 import { collectDescendantIds } from '../lib/tasks';
 import type { TodoistTask, TodoistProject, TodoistSection } from '../hooks/useTodoist';
 
@@ -15,20 +15,13 @@ const CACHE_STALENESS_MS = 5 * 60_000;  // 5min — skip initial fetch if cache 
 
 interface PaginatedResponse<T> { results: T[]; next_cursor: string | null }
 
-/** Thrown by `apiFetch` on HTTP 401 so the provider can route to a re-auth banner. */
-class TodoistAuthError extends Error {
-    readonly status = 401;
-    constructor() {
-        super('Todoist authentication failed');
-        this.name = 'TodoistAuthError';
-    }
-}
-
-async function apiFetch<T>(token: string, path: string, opts?: RequestInit): Promise<T> {
+// All calls go through the same-origin proxy (`/api/todoist/*`) with the shared `X-App-Secret`; the
+// Worker injects the Todoist token server-side (see lib/todoistApi.ts). The token is never in the browser.
+async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`, {
         ...opts,
         headers: {
-            Authorization: `Bearer ${token}`,
+            'X-App-Secret': getStoredSecret(),
             'Content-Type': 'application/json',
             ...(opts?.headers ?? {}),
         },
@@ -39,25 +32,17 @@ async function apiFetch<T>(token: string, path: string, opts?: RequestInit): Pro
     return res.json();
 }
 
-async function fetchAllPages<T>(token: string, path: string): Promise<T[]> {
+async function fetchAllPages<T>(path: string): Promise<T[]> {
     let all: T[] = [];
     let cursor: string | null = null;
     do {
         const separator = path.includes('?') ? '&' : '?';
         const fullPath: string = cursor ? `${path}${separator}cursor=${cursor}` : path;
-        const data: PaginatedResponse<T> = await apiFetch<PaginatedResponse<T>>(token, fullPath);
+        const data: PaginatedResponse<T> = await apiFetch<PaginatedResponse<T>>(fullPath);
         all = [...all, ...data.results];
         cursor = data.next_cursor;
     } while (cursor);
     return all;
-}
-
-async function getToken(settings: {
-    todoistToken?: string; todoistTokenIV?: string; todoistTokenKey?: string;
-}): Promise<string | null> {
-    if (!settings.todoistToken || !settings.todoistTokenIV || !settings.todoistTokenKey) return null;
-    try { return await decryptToken(settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey); }
-    catch { return null; }
 }
 
 // ─── Cache ───────────────────────────────────────────────────────────────────
@@ -138,6 +123,8 @@ export interface TodoistActionsValue {
     refreshTasks: (opts?: RefreshOpts) => Promise<void>;
     refreshProjects: (opts?: RefreshOpts) => Promise<void>;
     refreshSections: (opts?: RefreshOpts) => Promise<void>;
+    /** Re-check whether the Worker holds a Todoist token (after entering the secret / saving / disconnecting a token). */
+    refreshConnection: () => Promise<void>;
 }
 
 const TodoistDataContext = createContext<TodoistDataValue | null>(null);
@@ -148,7 +135,7 @@ export { TodoistDataContext, TodoistActionsContext };
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export function TodoistProvider({ children }: { children: ReactNode }) {
-    const { settings, plan, dispatch } = useDayPlan();
+    const { plan, dispatch } = useDayPlan();
 
     // ── Initial state from cache ──
     const cache = useRef(loadCache());
@@ -160,7 +147,6 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const [error, setError] = useState<string | null>(null);
     const [authFailed, setAuthFailed] = useState(false);
 
-    const tokenRef = useRef<string | null>(null);
     const hasDataRef = useRef((cache.current?.tasks?.length ?? 0) > 0);
     // v6.4: `completeTask` needs to inspect the task's `due.is_recurring` to decide whether
     // to filter the cache or refetch. A ref avoids stale-closure and avoids dragging `tasks`
@@ -169,9 +155,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const tasksRef = useRef<TodoistTask[]>(tasks);
     useEffect(() => { tasksRef.current = tasks; }, [tasks]);
 
-    const isConfigured = Boolean(
-        settings.todoistToken && settings.todoistTokenIV && settings.todoistTokenKey,
-    );
+    // Connection lives server-side now: the Worker either holds a Todoist token or it doesn't.
+    // `isConfigured` is resolved from /status (requires the shared secret). A ref mirrors it so the
+    // mutation callbacks can early-return when disconnected without taking it as a dep.
+    const [isConfigured, setIsConfigured] = useState(false);
+    const isConfiguredRef = useRef(false);
+    useEffect(() => { isConfiguredRef.current = isConfigured; }, [isConfigured]);
 
     /**
      * Single error-handling funnel: 401s flip `authFailed` and route to a re-auth message;
@@ -203,20 +192,24 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         sections: Promise<void> | null;
     }>({ tasks: null, projects: null, sections: null });
 
-    // ── Token resolution ──
-    const resolveToken = useCallback(async () => {
-        if (tokenRef.current) return tokenRef.current;
-        const t = await getToken(settings);
-        tokenRef.current = t;
-        return t;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey]);
+    // ── Connection status ──
+    const refreshConnection = useCallback(async () => {
+        if (!getStoredSecret()) {
+            setIsConfigured(false);
+            return;
+        }
+        try {
+            const { configured } = await getTodoistStatus();
+            setIsConfigured(configured);
+            setAuthFailed(false);
+        } catch (e) {
+            setIsConfigured(false);
+            if (e instanceof TodoistAuthError) setAuthFailed(true);
+        }
+    }, []);
 
-    useEffect(() => {
-        tokenRef.current = null;
-        setAuthFailed(false);
-        setTasksHydrated(false);
-    }, [settings.todoistToken, settings.todoistTokenIV, settings.todoistTokenKey]);
+    // Resolve connection on mount (cache still renders synchronously meanwhile).
+    useEffect(() => { void refreshConnection(); }, [refreshConnection]);
 
     // ── Refresh functions with dedup + staleness ──
 
@@ -241,12 +234,11 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             if (inflightRef.current[kind]) return inflightRef.current[kind] ?? undefined;
 
             const promise = (async () => {
-                const token = await resolveToken();
-                if (!token) return;
+                if (!isConfiguredRef.current) return;
                 if (withLoadingSpinner) setLoading(true);
                 if (errorMessage !== undefined) setError(null);
                 try {
-                    const data = await fetchAllPages<T>(token, path);
+                    const data = await fetchAllPages<T>(path);
                     setData(data);
                     lastFetchedRef.current[kind] = Date.now();
                 } catch (e) {
@@ -267,7 +259,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             promise.finally(() => { inflightRef.current[kind] = null; });
             return promise;
         },
-        [resolveToken],
+        [],
     );
 
     const refreshTasks = useCallback(
@@ -384,11 +376,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     // ── CRUD mutations ──
 
     const createTask = useCallback(async (content: string, opts?: CreateTaskOpts): Promise<TodoistTask | null> => {
-        const token = await resolveToken();
-        if (!token) return null;
+        if (!isConfiguredRef.current) return null;
         setError(null);
         try {
-            const task = await apiFetch<TodoistTask>(token, '/tasks', {
+            const task = await apiFetch<TodoistTask>('/tasks', {
                 method: 'POST', body: JSON.stringify({ content, ...opts }),
             });
             setTasks((prev) => [...prev, task]);
@@ -397,11 +388,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             handleApiError(e, 'Failed to create task');
             return null;
         }
-    }, [resolveToken, handleApiError]);
+    }, [handleApiError]);
 
     const completeTask = useCallback(async (taskId: string) => {
-        const token = await resolveToken();
-        if (!token) return;
+        if (!isConfiguredRef.current) return;
         // Capture recurrence-ness *before* the await so we know whether to drop the cache
         // entry. We use `item_close` (not `item_complete`): it does exactly what the official
         // Todoist clients do when you check a task off — regular tasks are completed, and
@@ -411,7 +401,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         const existing = tasksRef.current.find((t) => t.id === taskId);
         const isRecurring = Boolean(existing?.due?.is_recurring);
         try {
-            await apiFetch(token, '/sync', {
+            await apiFetch('/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `commands=${encodeURIComponent(JSON.stringify([
@@ -430,13 +420,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         } catch (e) {
             handleApiError(e, 'Failed to complete task');
         }
-    }, [resolveToken, handleApiError, refreshTasks]);
+    }, [handleApiError, refreshTasks]);
 
     const reopenTask = useCallback(async (taskId: string) => {
-        const token = await resolveToken();
-        if (!token) return;
+        if (!isConfiguredRef.current) return;
         try {
-            await apiFetch(token, '/sync', {
+            await apiFetch('/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `commands=${encodeURIComponent(JSON.stringify([
@@ -447,13 +436,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         } catch (e) {
             handleApiError(e, 'Failed to reopen task');
         }
-    }, [resolveToken, refreshTasks, handleApiError]);
+    }, [refreshTasks, handleApiError]);
 
     const moveTask = useCallback(async (taskId: string, projectId: string): Promise<boolean> => {
-        const token = await resolveToken();
-        if (!token) return false;
+        if (!isConfiguredRef.current) return false;
         try {
-            await apiFetch(token, '/sync', {
+            await apiFetch('/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `commands=${encodeURIComponent(JSON.stringify([
@@ -467,17 +455,16 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             handleApiError(e, 'Failed to move task');
             return false;
         }
-    }, [resolveToken, handleApiError]);
+    }, [handleApiError]);
 
     const reorderTasks = useCallback(async (items: { id: string; child_order: number }[]): Promise<boolean> => {
         if (items.length === 0) return true;
-        const token = await resolveToken();
-        if (!token) return false;
+        if (!isConfiguredRef.current) return false;
         // Optimistic: patch local child_order so the tree re-sorts immediately.
         const orderById = new Map(items.map((it) => [it.id, it.child_order]));
         setTasks((prev) => prev.map((t) => (orderById.has(t.id) ? { ...t, child_order: orderById.get(t.id)! } : t)));
         try {
-            await apiFetch(token, '/sync', {
+            await apiFetch('/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `commands=${encodeURIComponent(JSON.stringify([
@@ -491,14 +478,13 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             void refreshTasks({ force: true });
             return false;
         }
-    }, [resolveToken, handleApiError, refreshTasks]);
+    }, [handleApiError, refreshTasks]);
 
     const updateTask = useCallback(async (taskId: string, updates: UpdateTaskOpts): Promise<TodoistTask | null> => {
-        const token = await resolveToken();
-        if (!token) return null;
+        if (!isConfiguredRef.current) return null;
         setError(null);
         try {
-            const updated = await apiFetch<TodoistTask>(token, `/tasks/${taskId}`, {
+            const updated = await apiFetch<TodoistTask>(`/tasks/${taskId}`, {
                 method: 'POST', body: JSON.stringify(updates),
             });
             setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
@@ -507,26 +493,24 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             handleApiError(e, 'Failed to update task');
             return null;
         }
-    }, [resolveToken, handleApiError]);
+    }, [handleApiError]);
 
     const createTaskComment = useCallback(async (taskId: string, content: string) => {
-        const token = await resolveToken();
-        if (!token) return;
+        if (!isConfiguredRef.current) return;
         try {
-            await apiFetch(token, '/comments', {
+            await apiFetch('/comments', {
                 method: 'POST',
                 body: JSON.stringify({ task_id: taskId, content }),
             });
         } catch (e) {
             handleApiError(e, 'Failed to post comment');
         }
-    }, [resolveToken, handleApiError]);
+    }, [handleApiError]);
 
     const deleteTask = useCallback(async (taskId: string) => {
-        const token = await resolveToken();
-        if (!token) return;
+        if (!isConfiguredRef.current) return;
         try {
-            await apiFetch(token, `/tasks/${taskId}`, { method: 'DELETE' });
+            await apiFetch(`/tasks/${taskId}`, { method: 'DELETE' });
             setTasks((prev) => {
                 const removed = collectDescendantIds(prev, [taskId], (t) => t.parent_id);
                 return prev.filter((t) => !removed.has(t.id));
@@ -534,14 +518,13 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         } catch (e) {
             handleApiError(e, 'Failed to delete task');
         }
-    }, [resolveToken, handleApiError]);
+    }, [handleApiError]);
 
     const createProject = useCallback(async (name: string, opts?: CreateProjectOpts): Promise<TodoistProject | null> => {
-        const token = await resolveToken();
-        if (!token) return null;
+        if (!isConfiguredRef.current) return null;
         setError(null);
         try {
-            const project = await apiFetch<TodoistProject>(token, '/projects', {
+            const project = await apiFetch<TodoistProject>('/projects', {
                 method: 'POST', body: JSON.stringify({ name, ...opts }),
             });
             setProjects((prev) => [...prev, project]);
@@ -550,13 +533,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             handleApiError(e, 'Failed to create project');
             return null;
         }
-    }, [resolveToken, handleApiError]);
+    }, [handleApiError]);
 
     const deleteProject = useCallback(async (projectId: string) => {
-        const token = await resolveToken();
-        if (!token) return;
+        if (!isConfiguredRef.current) return;
         try {
-            await apiFetch(token, `/projects/${projectId}`, { method: 'DELETE' });
+            await apiFetch(`/projects/${projectId}`, { method: 'DELETE' });
             const removedProjects = collectDescendantIds(projects, [projectId], (p) => p.parent_id);
             setProjects((prev) => prev.filter((p) => !removedProjects.has(p.id)));
             setTasks((prev) => prev.filter((t) => !removedProjects.has(t.project_id)));
@@ -564,7 +546,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         } catch (e) {
             handleApiError(e, 'Failed to delete project');
         }
-    }, [resolveToken, projects, handleApiError]);
+    }, [projects, handleApiError]);
 
     // ── Memoized task lookup map ──
     const taskMap = useMemo(
@@ -587,9 +569,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
         createTask, updateTask, moveTask, reorderTasks, completeTask, reopenTask, deleteTask, createTaskComment,
-        createProject, deleteProject, refreshTasks, refreshProjects, refreshSections,
+        createProject, deleteProject, refreshTasks, refreshProjects, refreshSections, refreshConnection,
     }), [createTask, updateTask, moveTask, reorderTasks, completeTask, reopenTask, deleteTask, createTaskComment,
-        createProject, deleteProject, refreshTasks, refreshProjects, refreshSections]);
+        createProject, deleteProject, refreshTasks, refreshProjects, refreshSections, refreshConnection]);
 
     return (
         <TodoistDataContext.Provider value={dataValue}>
