@@ -452,6 +452,42 @@ export function UserGuide() {
                         </ul>
                     </Section>
 
+                    <Section id="replanning" title="8b. Replanning during the day — Anytime & Adjust day">
+                        <p>
+                            Plans drift. A session runs long, a task didn't fit, priorities shift after lunch. You don't
+                            need to re-run the wizard for that. The rule of thumb:
+                        </p>
+                        <Callout tone="info">
+                            The <strong>dashboard</strong> handles <strong>placement</strong> — where tasks sit and when
+                            your sessions run today. The <strong>wizard</strong> ("Edit Plan") handles{' '}
+                            <strong>contextualization</strong> — what you're doing: intentions, links, estimates, and
+                            session templates.
+                        </Callout>
+                        <SubHeading>Move a task</SubHeading>
+                        <p>
+                            On the day timeline, <strong>drag a task pill</strong> from one session onto another, or onto
+                            the <strong>Anytime today</strong> tray to set it aside. Prefer the keyboard, or on a phone?
+                            Every task row has a <strong>⋯ "Move to…"</strong> menu listing your sessions plus Anytime —
+                            same result. Main tasks stay exclusive to one session; background tasks can sit in several.
+                        </p>
+                        <SubHeading>Anytime today</SubHeading>
+                        <p>
+                            Not every task slots neatly into a block. A task that's committed for today but assigned to no
+                            session lives in the <strong>Anytime tray</strong> — visible and actionable, just not pinned
+                            to a time block. Drag it into a session when you're ready, or work it whenever a window opens.
+                            (Need a task at a precise clock time instead? Give it a due time in Todoist — it shows as a
+                            time pill and flows to your calendar.)
+                        </p>
+                        <SubHeading>Adjust day</SubHeading>
+                        <p>
+                            When the clock itself drifts, hit <strong>✎ Adjust day</strong> next to the "Today" header.
+                            The timeline becomes editable: drag to add a block, drag a block to move it, drag its edges to
+                            resize, click to rename or delete. Deleting a session sends its tasks to Anytime (nothing is
+                            lost). Reusable <strong>session templates</strong> stay in the wizard — reshaping today's
+                            clock is a dashboard job; redefining your standard layout is a planning job.
+                        </p>
+                    </Section>
+
                     <Section id="check-in" title="9. The hourly check-in">
                         <p>Every hour during an active session, Orchestrate asks how you're doing. This is where the system reads your state and routes you to the right response:</p>
                         <ul className="list-disc pl-5 space-y-1.5">
@@ -743,6 +779,7 @@ const TOC_ENTRIES: { id: string; label: string }[] = [
     { id: 'stabilizer-vs-anchor', label: '6. Kind vs Anchor' },
     { id: 'anchor-stabilizer-seasons', label: '7. Habits, Seasons, Anchors' },
     { id: 'capacity', label: '8. Session capacity' },
+    { id: 'replanning', label: '8b. Replanning during the day' },
     { id: 'check-in', label: '9. The hourly check-in' },
     { id: 'focus-mode', label: '9b. Focus Mode' },
     { id: 'backlog', label: '9a. Intentions Backlog' },

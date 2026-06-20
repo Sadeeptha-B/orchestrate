@@ -5,6 +5,16 @@ export function buildLinkedTaskMap(linkedTasks: LinkedTask[]): Map<string, Linke
     return new Map(linkedTasks.map((task) => [task.todoistId, task]));
 }
 
+/**
+ * Tasks that are linked + still open but not committed to any session — the "Anytime today"
+ * set. Derived from `assignedSessions` (the denormalized mirror of `taskSessions`), so absence
+ * from every session bucket *is* the Anytime state — no separate flag. Mirrors the Step 3
+ * derivation (`assignedSessions.length === 0`).
+ */
+export function unscheduledTasks(linkedTasks: LinkedTask[]): LinkedTask[] {
+    return linkedTasks.filter((lt) => !lt.completed && lt.assignedSessions.length === 0);
+}
+
 export function getLinkedTasksByIds(
     taskIds: string[],
     linkedTasks: LinkedTask[] | Map<string, LinkedTask>,

@@ -6,6 +6,7 @@ import {
     formatHour,
 } from '../../lib/timeline';
 import { getTaskTitle } from '../../lib/tasks';
+import { writeTaskDragPayload, readTaskDragPayload } from '../../hooks/useTaskPlacement';
 import { openSegment, segmentSeconds, totalEngagedSeconds } from '../../lib/engagement';
 import type { EngagementSegment, LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
 import type { SessionCapacity } from '../../lib/capacity';
@@ -272,6 +273,9 @@ interface SessionTimelineBarProps {
     timelineStartMinutes?: number;
     /** Minutes since midnight for the right edge of the timeline. Defaults to DEFAULT_TIMELINE_END_MINUTES. */
     timelineEndMinutes?: number;
+    /** When provided, task pills become draggable and session blocks become drop targets, so a task
+     * can be re-placed between sessions (and to/from the Anytime tray). `from`/`to` null = Anytime. */
+    onMoveTask?: (todoistId: string, fromSessionId: string | null, toSessionId: string | null) => void;
 }
 
 export function SessionTimelineBar({
@@ -288,6 +292,7 @@ export function SessionTimelineBar({
     missedInstanceIds,
     timelineStartMinutes,
     timelineEndMinutes,
+    onMoveTask,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -355,6 +360,8 @@ export function SessionTimelineBar({
     const titleFor = (todoistId: string) => getTaskTitle(todoistId, linkedTasks, taskMap);
 
     const isInteractive = onSelectSession !== undefined;
+    const canMove = onMoveTask !== undefined;
+    const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
 
     const nowPercent =
         visibleSessions.length > 0 && now >= dayStart && now <= dayEnd
@@ -474,15 +481,32 @@ export function SessionTimelineBar({
                     const sessionMain = mainTasks.filter((lt) => assignedIds.includes(lt.todoistId)).sort(byOrder);
                     const sessionBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId)).sort(byOrder);
 
+                    const isDropTarget = canMove && dragOverSessionId === session.id;
+
                     const blockClasses = [
                         'rounded-lg border p-2 text-left overflow-hidden transition-colors',
-                        isSelected
-                            ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
-                            : isCurrent
-                                ? 'border-accent/40 bg-accent/5 ring-2 ring-accent/30'
-                                : 'border-border bg-card',
+                        isDropTarget
+                            ? 'border-accent ring-2 ring-accent/60 bg-accent/10'
+                            : isSelected
+                                ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
+                                : isCurrent
+                                    ? 'border-accent/40 bg-accent/5 ring-2 ring-accent/30'
+                                    : 'border-border bg-card',
                         isInteractive ? 'cursor-pointer hover:border-accent/40' : '',
                     ].join(' ');
+
+                    const dropProps = canMove
+                        ? {
+                            onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOverSessionId(session.id); },
+                            onDragLeave: () => setDragOverSessionId((cur) => (cur === session.id ? null : cur)),
+                            onDrop: (e: React.DragEvent) => {
+                                e.preventDefault();
+                                setDragOverSessionId(null);
+                                const payload = readTaskDragPayload(e);
+                                if (payload) onMoveTask!(payload.todoistId, payload.fromSessionId, session.id);
+                            },
+                        }
+                        : {};
 
                     const content = (
                         <>
@@ -506,7 +530,9 @@ export function SessionTimelineBar({
                                 {sessionMain.map((lt) => (
                                     <span
                                         key={lt.todoistId}
-                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-accent/15 text-accent'}`}
+                                        draggable={canMove}
+                                        onDragStart={canMove ? (e) => { e.stopPropagation(); writeTaskDragPayload(e, { todoistId: lt.todoistId, fromSessionId: session.id }); } : undefined}
+                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${canMove ? 'cursor-grab active:cursor-grabbing' : ''} ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-accent/15 text-accent'}`}
                                     >
                                         {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
@@ -514,7 +540,9 @@ export function SessionTimelineBar({
                                 {sessionBg.map((lt) => (
                                     <span
                                         key={lt.todoistId}
-                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
+                                        draggable={canMove}
+                                        onDragStart={canMove ? (e) => { e.stopPropagation(); writeTaskDragPayload(e, { todoistId: lt.todoistId, fromSessionId: session.id }); } : undefined}
+                                        className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight ${canMove ? 'cursor-grab active:cursor-grabbing' : ''} ${lt.completed ? 'bg-success/10 text-text-light line-through' : 'bg-surface-dark text-text-light'}`}
                                     >
                                         {lt.completed && '🎉 '}{titleFor(lt.todoistId)}
                                     </span>
@@ -539,6 +567,7 @@ export function SessionTimelineBar({
                             onClick={() => onSelectSession(session.id)}
                             className={blockClasses}
                             style={blockStyle}
+                            {...dropProps}
                         >
                             {content}
                         </button>
@@ -547,6 +576,7 @@ export function SessionTimelineBar({
                             key={session.id}
                             className={blockClasses}
                             style={blockStyle}
+                            {...dropProps}
                         >
                             {content}
                         </div>

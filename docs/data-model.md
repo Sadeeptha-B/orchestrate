@@ -23,6 +23,13 @@ A Todoist task surfaced inside the plan, always bound to an intention via `inten
 - **background** — Small nudge task. Can be assigned to multiple sessions. Cap: `taskCapDefaults.manualBackground` (default 30 min).
 - **unclassified** — Default after linking. Must be categorized before advancing past Step 2.
 
+**Placement states (orthogonal to type).** A session is a *soft, ordered context bucket*, not a clock; a task's placement is one of three states:
+- **Session-bound** — assigned to one (main, exclusive) or many (background) sessions via `taskSessions`; ordered within each.
+- **Anytime today** — committed for today but in no session bucket. **Derived, not a stored flag**: `assignedSessions.length === 0` (helper `unscheduledTasks` in [`lib/tasks.ts`](../src/lib/tasks.ts)). Surfaced on the dashboard in the **Anytime tray**; it is the home for tasks that don't slot neatly into a session.
+- **Time-anchored** — has a Todoist due *time*; rendered as the `scheduledRange` pill and synced to Calendar. Orthogonal to the above (there is **no** in-app per-task clock time — precise timing is delegated to Todoist/Calendar).
+
+Placement is changed on the dashboard via drag-and-drop or a per-row "Move to…" menu, both routed through `useTaskPlacement().moveTask(todoistId, fromSessionId | null, toSessionId | null)` — which reuses `ASSIGN_TASK`/`UNASSIGN_TASK` (no new action; `null` = the Anytime pool).
+
 **Execution-layer field (v7.4 Phase 2): `contextTrail?: ContextNote[]`** — a cumulative re-entry breadcrumb trail (replaces the Phase-1 `firstAction`/`reentryNote` scalars). Each `ContextNote` is `{ at, text, kind: 'entry' | 'exit' }`:
 - An **`entry`** note is the concrete entry point ("open auth.ts, add the middleware stub"), captured optionally on **main** tasks in Step 2 (`UPSERT_TASK_ENTRY_NOTE`, last-write-wins — at most one).
 - An **`exit`** note is "where I left off", **appended on each Stop/Complete** in Focus Mode (the `exitNote` carried by `STOP_TASK_ENGAGEMENT` / `TOGGLE_TASK_COMPLETE`). Consecutive identical exits de-dupe. Binding the exit note to the close action gives one breadcrumb per work session — the trail *is* the reconstructed mental model across sessions.

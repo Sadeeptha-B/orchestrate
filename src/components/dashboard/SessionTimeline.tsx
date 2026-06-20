@@ -11,8 +11,9 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks/useTodoist';
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
-import { buildLinkedTaskMap, getLinkedTasksByIds } from '../../lib/tasks';
+import { buildLinkedTaskMap, getLinkedTasksByIds, unscheduledTasks } from '../../lib/tasks';
 import { getMissedInstanceIds, habitKindOf } from '../../lib/habits';
+import { useTaskPlacement, readTaskDragPayload, writeTaskDragPayload } from '../../hooks/useTaskPlacement';
 import { EngagementTimer } from './EngagementTimer';
 import { openSegment } from '../../lib/engagement';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
@@ -88,17 +89,25 @@ interface TaskRowProps {
     linkedTask: LinkedTask;
     title: string;
     isStale: boolean;
-    sessionId: string;
-    drag: ReturnType<typeof useTaskDrag>;
+    /** Session this row is rendered under, or `null` for the Anytime tray. */
+    sessionId: string | null;
+    /** Within-session reorder drag. Omitted in the Anytime tray (no order there). */
+    drag?: ReturnType<typeof useTaskDrag>;
     scheduledRange: string | null;
 }
 
 function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
-    const { dispatch } = useDayPlan();
+    const { plan, dispatch } = useDayPlan();
+    const { moveTask } = useTaskPlacement();
     const navigate = useNavigate();
     const { completeTask, reopenTask } = useTodoistActions();
-    const isDragging = drag.dragId === linkedTask.todoistId;
-    const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
+    const [menuOpen, setMenuOpen] = useState(false);
+    // Within-session reorder is only available when rendered under a session with a drag controller.
+    const canReorder = drag != null && sessionId != null;
+    // In the Anytime tray (no session), the row is instead a cross-session drag source (→ a block).
+    const isAnytimeSource = sessionId === null;
+    const isDragging = canReorder && drag!.dragId === linkedTask.todoistId;
+    const isDragOver = canReorder && drag!.dragOverId === linkedTask.todoistId && drag!.dragId !== linkedTask.todoistId;
     const isEngaged = linkedTask.status === 'engaged';
     const liveSegment = isEngaged ? openSegment(linkedTask.segments) : undefined;
     const [askFirstAction, setAskFirstAction] = useState(false);
@@ -147,31 +156,39 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
     return (
         <>
         <li
-            draggable
-            onDragStart={() => drag.handleDragStart(linkedTask.todoistId, sessionId)}
-            onDragOver={(e) => drag.handleDragOver(e, linkedTask.todoistId)}
-            onDrop={(e) => drag.handleDrop(e, linkedTask.todoistId, sessionId)}
-            onDragEnd={drag.handleDragEnd}
-            className={`flex items-center gap-2 px-2 py-1 rounded transition-all ${isDragging
+            draggable={canReorder || isAnytimeSource}
+            onDragStart={
+                canReorder
+                    ? () => drag!.handleDragStart(linkedTask.todoistId, sessionId!)
+                    : isAnytimeSource
+                        ? (e) => writeTaskDragPayload(e, { todoistId: linkedTask.todoistId, fromSessionId: null })
+                        : undefined
+            }
+            onDragOver={canReorder ? (e) => drag!.handleDragOver(e, linkedTask.todoistId) : undefined}
+            onDrop={canReorder ? (e) => drag!.handleDrop(e, linkedTask.todoistId, sessionId!) : undefined}
+            onDragEnd={canReorder ? drag!.handleDragEnd : undefined}
+            className={`flex items-center gap-2 px-2 py-1 rounded transition-all ${isAnytimeSource ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging
                 ? 'opacity-40'
                 : isDragOver
                     ? 'bg-accent-subtle/50 border-l-2 border-accent'
                     : ''
                 } ${isStale ? 'opacity-50' : ''}`}
         >
-            <span
-                className="cursor-grab active:cursor-grabbing text-text-light/40 hover:text-text-light select-none flex-shrink-0"
-                title="Drag to reorder"
-            >
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
-                    <circle cx="3.5" cy="2" r="1.2" />
-                    <circle cx="8.5" cy="2" r="1.2" />
-                    <circle cx="3.5" cy="6" r="1.2" />
-                    <circle cx="8.5" cy="6" r="1.2" />
-                    <circle cx="3.5" cy="10" r="1.2" />
-                    <circle cx="8.5" cy="10" r="1.2" />
-                </svg>
-            </span>
+            {canReorder && (
+                <span
+                    className="cursor-grab active:cursor-grabbing text-text-light/40 hover:text-text-light select-none flex-shrink-0"
+                    title="Drag to reorder"
+                >
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
+                        <circle cx="3.5" cy="2" r="1.2" />
+                        <circle cx="8.5" cy="2" r="1.2" />
+                        <circle cx="3.5" cy="6" r="1.2" />
+                        <circle cx="8.5" cy="6" r="1.2" />
+                        <circle cx="3.5" cy="10" r="1.2" />
+                        <circle cx="8.5" cy="10" r="1.2" />
+                    </svg>
+                </span>
+            )}
 
             {!linkedTask.completed && (
                 <button
@@ -242,6 +259,50 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
             >
                 {linkedTask.type}
             </span>
+
+            {/* Move to… — keyboard/mobile path for re-placing a task (same dispatch as drag-and-drop). */}
+            <div className="relative flex-shrink-0">
+                <button
+                    onClick={() => setMenuOpen((o) => !o)}
+                    className="w-5 h-5 flex items-center justify-center rounded text-text-light/60 hover:text-accent hover:bg-accent-subtle transition-colors cursor-pointer leading-none"
+                    aria-label="Move task to another session"
+                    title="Move to…"
+                >
+                    ⋯
+                </button>
+                {menuOpen && (
+                    <>
+                        <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+                        <div className="absolute right-0 top-6 z-30 min-w-[10rem] py-1 rounded-lg border border-border bg-card shadow-lg">
+                            <span className="block px-3 py-1 text-[10px] uppercase tracking-wider text-text-light">
+                                Move to
+                            </span>
+                            {sessionId !== null && (
+                                <button
+                                    onClick={() => { moveTask(linkedTask.todoistId, sessionId, null); setMenuOpen(false); }}
+                                    className="block w-full text-left px-3 py-1.5 text-sm text-text hover:bg-accent-subtle transition-colors cursor-pointer"
+                                >
+                                    Anytime
+                                </button>
+                            )}
+                            {plan.sessionSlots
+                                .filter((s) => s.id !== sessionId)
+                                .map((s) => (
+                                    <button
+                                        key={s.id}
+                                        onClick={() => { moveTask(linkedTask.todoistId, sessionId, s.id); setMenuOpen(false); }}
+                                        className="block w-full text-left px-3 py-1.5 text-sm text-text hover:bg-accent-subtle transition-colors cursor-pointer"
+                                    >
+                                        {s.name} <span className="text-text-light tabular-nums">{s.startTime}</span>
+                                    </button>
+                                ))}
+                            {plan.sessionSlots.filter((s) => s.id !== sessionId).length === 0 && sessionId !== null && (
+                                <span className="block px-3 py-1.5 text-xs text-text-light">No other sessions</span>
+                            )}
+                        </div>
+                    </>
+                )}
+            </div>
         </li>
         <Modal open={askFirstAction} onClose={() => setAskFirstAction(false)} title="First concrete action">
             <div className="space-y-3">
@@ -537,6 +598,7 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
     const { plan, life, settings } = useDayPlan();
     const { currentSession } = useCurrentSession(plan.sessionSlots);
     const { taskMap } = useTodoistData();
+    const { moveTask } = useTaskPlacement();
 
     // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps live in their own panel.
     const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
@@ -556,6 +618,96 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
             missedInstanceIds={missedInstanceIds}
             timelineStartMinutes={settings.timelineStartMinutes}
             timelineEndMinutes={settings.timelineEndMinutes}
+            onMoveTask={moveTask}
         />
+    );
+}
+
+// ---- AnytimeTray: linked tasks committed for today but not placed in any session ----
+
+export function AnytimeTray() {
+    const { plan } = useDayPlan();
+    const { taskMap } = useTodoistData();
+    const { moveTask } = useTaskPlacement();
+    const [isDragOver, setIsDragOver] = useState(false);
+
+    const intentionMap = useMemo(
+        () => new Map(plan.intentions.map((i) => [i.id, i])),
+        [plan.intentions],
+    );
+
+    const tasks = useMemo(() => unscheduledTasks(plan.linkedTasks), [plan.linkedTasks]);
+
+    // Group by intention, preserving plan intention order (mirrors SessionCard).
+    const tasksByIntention = useMemo(() => {
+        const map = new Map<string, LinkedTask[]>();
+        for (const lt of tasks) {
+            if (lt.intentionId === undefined) continue;
+            const list = map.get(lt.intentionId) ?? [];
+            list.push(lt);
+            map.set(lt.intentionId, list);
+        }
+        return map;
+    }, [tasks]);
+
+    // Hidden when empty — unless something is being dragged over it (so it can become a drop target).
+    if (tasks.length === 0 && !isDragOver) return null;
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        const payload = readTaskDragPayload(e);
+        if (payload) moveTask(payload.todoistId, payload.fromSessionId, null);
+    };
+
+    return (
+        <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                Anytime today
+            </h3>
+            <Card
+                onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={handleDrop}
+                className={isDragOver ? 'ring-2 ring-accent/40 border-accent/40' : ''}
+            >
+                <p className="text-[11px] text-text-light mb-2">
+                    Committed for today, not tied to a session. Drag onto a session, or use ⋯ to place it.
+                </p>
+                {tasksByIntention.size > 0 ? (
+                    <div className="space-y-3">
+                        {[...tasksByIntention.entries()].map(([intId, intTasks]) => {
+                            const groupTitle = intentionMap.get(intId)?.title ?? 'Unknown';
+                            return (
+                                <div key={intId}>
+                                    <span className="text-[10px] font-medium text-text-light uppercase tracking-wider px-2">
+                                        {groupTitle}
+                                    </span>
+                                    <ul className="space-y-1.5 mt-1">
+                                        {intTasks.map((lt) => {
+                                            const todoistTask = taskMap.get(lt.todoistId);
+                                            const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
+                                            const isStale = !todoistTask && !lt.completed;
+                                            return (
+                                                <TaskRow
+                                                    key={lt.todoistId}
+                                                    linkedTask={lt}
+                                                    title={title}
+                                                    isStale={isStale}
+                                                    sessionId={null}
+                                                    scheduledRange={getScheduledRange(todoistTask)}
+                                                />
+                                            );
+                                        })}
+                                    </ul>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <p className="text-xs text-text-light">Drop a task here to set it aside for anytime today.</p>
+                )}
+            </Card>
+        </div>
     );
 }

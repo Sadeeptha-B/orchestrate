@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
-import { CurrentSession, SessionTimeline } from './SessionTimeline';
+import { CurrentSession, SessionTimeline, AnytimeTray } from './SessionTimeline';
+import { SessionEditorTimeline } from '../ui/SessionEditorTimeline';
 import { HistorySidebar, type HistoryTab } from './HistorySidebar';
 import { DigitalClock } from './DigitalClock';
 import { CheckInModal } from '../checkin/CheckInModal';
@@ -59,6 +60,8 @@ export function Dashboard() {
     const [saveName, setSaveName] = useState('');
     const [panelOpen, setPanelOpen] = useState(false);
     const [panelTab, setPanelTab] = useState<HistoryTab>('sessions');
+    // v7.x: in-dashboard session adjustment for day-drift (reuses the wizard's editor; templates stay in the wizard).
+    const [adjustingDay, setAdjustingDay] = useState(false);
     const backlogCount = life.backlog?.length ?? 0;
     // Shared between the timeline (click to pin) and the carousel (prev/next, ↩ to unpin).
     const [pinnedSessionId, setPinnedSessionId] = useState<string | null>(null);
@@ -187,15 +190,43 @@ export function Dashboard() {
                         <SeasonContextCard variant="inline" />
 
                         <section>
-                            <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                Today
-                            </h3>
+                            <div className="flex items-center justify-between gap-3">
+                                <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                    Today
+                                </h3>
+                                <button
+                                    onClick={() => setAdjustingDay((a) => !a)}
+                                    className={`hidden md:inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${adjustingDay
+                                        ? 'border-accent bg-accent/10 text-accent'
+                                        : 'border-border bg-card text-text-light hover:text-accent hover:border-accent'}`}
+                                    title="Move, resize, or add/remove today's sessions"
+                                >
+                                    {adjustingDay ? '✓ Done adjusting' : '✎ Adjust day'}
+                                </button>
+                            </div>
 
                             <div className="mt-6 hidden md:block border border-border rounded-xl overflow-hidden px-4 py-1">
-                                <SessionTimeline
-                                    pinnedSessionId={pinnedSessionId}
-                                    onSelectSession={setPinnedSessionId}
-                                />
+                                {adjustingDay ? (
+                                    <div className="py-3">
+                                        <SessionEditorTimeline
+                                            slots={plan.sessionSlots}
+                                            onAdd={(session) => dispatch({ type: 'ADD_DAY_SESSION', session })}
+                                            onUpdate={(session) => dispatch({ type: 'UPDATE_DAY_SESSION', session })}
+                                            onRemove={(sessionId) => dispatch({ type: 'REMOVE_DAY_SESSION', sessionId })}
+                                            timelineStartMinutes={settings.timelineStartMinutes}
+                                            timelineEndMinutes={settings.timelineEndMinutes}
+                                        />
+                                        <p className="mt-2 text-[11px] text-text-light">
+                                            Drag to add a block, drag a block to move, drag edges to resize, click to rename or delete.
+                                            Removing a session sends its tasks to Anytime. Templates live in Edit Plan.
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <SessionTimeline
+                                        pinnedSessionId={pinnedSessionId}
+                                        onSelectSession={setPinnedSessionId}
+                                    />
+                                )}
                             </div>
 
                             {nextSessionStartsWithin(60) && (
@@ -216,6 +247,9 @@ export function Dashboard() {
                                         onPinnedChange={setPinnedSessionId}
                                     />
                                 </div>
+
+                                {/* Anytime today — committed tasks not tied to a session */}
+                                <AnytimeTray />
 
                                 {/* Task Manager (Todoist) — collapsible */}
                                 <CollapsibleSection title="Task Manager">
