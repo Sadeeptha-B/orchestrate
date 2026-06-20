@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import type { SessionSlot } from '../types';
 
 /** Convert "HH:mm" to total minutes since midnight. */
 export function timeToMinutes(time: string): number {
@@ -40,4 +41,23 @@ export function formatDuration(minutes: number): string {
     if (h === 0) return `${m}m`;
     if (m === 0) return `${h}h`;
     return `${h}h ${m}m`;
+}
+
+/**
+ * v7.4: pick the best session to drop a Quick Start task into, given the current time-of-day
+ * (`nowMinutes` = minutes since midnight). Pure — mirrors `useCurrentSession` selection logic so
+ * the reducer can call it. Prefers the session whose [start, end) window contains now; else the
+ * nearest upcoming session; else the first session. Returns undefined for an empty slot list.
+ */
+export function pickSessionIdForTime(slots: SessionSlot[], nowMinutes: number): string | undefined {
+    if (slots.length === 0) return undefined;
+    const current = slots.find(
+        (s) => nowMinutes >= timeToMinutes(s.startTime) && nowMinutes < timeToMinutes(s.endTime),
+    );
+    if (current) return current.id;
+    const upcoming = slots
+        .filter((s) => timeToMinutes(s.startTime) > nowMinutes)
+        .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))[0];
+    if (upcoming) return upcoming.id;
+    return slots[0].id;
 }

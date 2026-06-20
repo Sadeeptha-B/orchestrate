@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useDayPlan } from '../hooks/useDayPlan';
@@ -6,6 +6,7 @@ import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Logo } from './ui/Logo';
 import { HeaderControls } from './ui/HeaderControls';
+import { QuickStart } from './QuickStart';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../data/wizardSteps';
 import { findActiveSeason } from '../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../lib/habits';
@@ -21,6 +22,7 @@ export function Welcome() {
     const { plan, history, life } = useDayPlan();
     const navigate = useNavigate();
     const aboutTriggerRef = useRef<(() => void) | null>(null);
+    const [quickStartOpen, setQuickStartOpen] = useState(false);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
@@ -64,9 +66,17 @@ export function Welcome() {
                             <p className="text-sm text-text-light">{todayStatus}</p>
                         </div>
 
-                        <Button size="lg" className="w-full" onClick={goPlan}>
-                            {isResuming ? 'Resume Planning' : 'Plan Your Day'}
-                        </Button>
+                        <div className="space-y-2">
+                            <Button size="lg" className="w-full" onClick={goPlan}>
+                                {isResuming ? 'Resume Planning' : 'Plan Your Day'}
+                            </Button>
+                            <button
+                                onClick={() => setQuickStartOpen(true)}
+                                className="w-full text-xs text-text-light hover:text-accent transition-colors cursor-pointer py-1"
+                            >
+                                ⚡ Quick start — skip planning, drop into Focus
+                            </button>
+                        </div>
 
                         {/* Step timeline */}
                         <div className="flex items-start w-full">
@@ -226,7 +236,7 @@ export function Welcome() {
                 </div>
             </div>
 
-
+            <QuickStart open={quickStartOpen} onClose={() => setQuickStartOpen(false)} />
         </div>
     );
 }

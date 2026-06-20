@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../ui/Card';
+import { Modal } from '../ui/Modal';
+import { Button } from '../ui/Button';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { SessionCapacityBadge } from './SessionCapacityBadge';
 import { SessionCapacityBanner } from './SessionCapacityBanner';
@@ -99,6 +101,8 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
     const isDragOver = drag.dragOverId === linkedTask.todoistId && drag.dragId !== linkedTask.todoistId;
     const isEngaged = linkedTask.status === 'engaged';
     const liveSegment = isEngaged ? openSegment(linkedTask.segments) : undefined;
+    const [askFirstAction, setAskFirstAction] = useState(false);
+    const [firstActionDraft, setFirstActionDraft] = useState('');
 
     const handleToggle = () => {
         dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title });
@@ -109,20 +113,39 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
         }
     };
 
-    const handleEngagementToggle = () => {
-        const nowISO = new Date().toISOString();
-        dispatch({
-            type: isEngaged ? 'STOP_TASK_ENGAGEMENT' : 'START_TASK_ENGAGEMENT',
-            todoistId: linkedTask.todoistId,
-            now: nowISO,
-        });
+    const startEngagement = () => {
+        dispatch({ type: 'START_TASK_ENGAGEMENT', todoistId: linkedTask.todoistId, now: new Date().toISOString() });
         // v7: starting engagement on a task drops into Focus Mode (one task, timer, optional pomodoro).
-        if (!isEngaged) {
+        navigate('/focus', { state: { todoistId: linkedTask.todoistId } });
+    };
+
+    const handleEngagementToggle = () => {
+        // v7.4 Phase 2: never Stop inline — Stop is gated on a next-step note, which lives in Focus.
+        // An already-engaged task re-opens Focus (where the timer + Stop control are).
+        if (isEngaged) {
             navigate('/focus', { state: { todoistId: linkedTask.todoistId } });
+            return;
         }
+        // v7.4 Phase 2: don't start a task with no context — require a first concrete action first.
+        const hasContext = (linkedTask.contextTrail?.length ?? 0) > 0;
+        if (!hasContext) {
+            setFirstActionDraft('');
+            setAskFirstAction(true);
+            return;
+        }
+        startEngagement();
+    };
+
+    const confirmFirstAction = () => {
+        const text = firstActionDraft.trim();
+        if (!text) return;
+        dispatch({ type: 'UPSERT_TASK_ENTRY_NOTE', todoistId: linkedTask.todoistId, text, at: new Date().toISOString() });
+        setAskFirstAction(false);
+        startEngagement();
     };
 
     return (
+        <>
         <li
             draggable
             onDragStart={() => drag.handleDragStart(linkedTask.todoistId, sessionId)}
@@ -157,8 +180,8 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
                         ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300'
                         : 'text-text-light/60 hover:text-accent hover:bg-accent-subtle'
                         }`}
-                    aria-label={isEngaged ? 'Stop engagement timer' : 'Start engagement timer'}
-                    title={isEngaged ? 'Stop' : 'Start'}
+                    aria-label={isEngaged ? 'Open Focus to stop' : 'Start engagement timer'}
+                    title={isEngaged ? 'Open Focus to stop' : 'Start'}
                 >
                     {isEngaged ? '■' : '▶'}
                 </button>
@@ -179,10 +202,17 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
                 )}
             </button>
 
-            <span className={`flex-1 text-sm ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
-                {linkedTask.completed && <span className="mr-1">🎉</span>}
-                {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
-                {title}
+            <span className="flex-1 min-w-0">
+                <span className={`block text-sm truncate ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
+                    {linkedTask.completed && <span className="mr-1">🎉</span>}
+                    {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
+                    {title}
+                </span>
+                {!linkedTask.completed && linkedTask.contextTrail?.at(-1) && (
+                    <span className="block text-[11px] text-text-light truncate" title={linkedTask.contextTrail.at(-1)!.text}>
+                        ↩ {linkedTask.contextTrail.at(-1)!.text}
+                    </span>
+                )}
             </span>
 
             {liveSegment && (
@@ -213,6 +243,32 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
                 {linkedTask.type}
             </span>
         </li>
+        <Modal open={askFirstAction} onClose={() => setAskFirstAction(false)} title="First concrete action">
+            <div className="space-y-3">
+                <p className="text-sm text-text-light">
+                    Before you start, name the concrete entry point — the specific first move, not the whole task.
+                    This is what you'll see when you return.
+                </p>
+                <input
+                    autoFocus
+                    type="text"
+                    value={firstActionDraft}
+                    onChange={(e) => setFirstActionDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && firstActionDraft.trim()) confirmFirstAction();
+                    }}
+                    placeholder="e.g. open auth.ts, add the middleware stub"
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card focus:border-accent focus:outline-none transition-colors"
+                />
+                <div className="flex justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setAskFirstAction(false)}>Cancel</Button>
+                    <Button size="sm" disabled={!firstActionDraft.trim()} onClick={confirmFirstAction}>
+                        Start working
+                    </Button>
+                </div>
+            </div>
+        </Modal>
+        </>
     );
 }
 

@@ -22,6 +22,36 @@ export interface EngagementSegment {
 }
 
 /**
+ * v7.4 Phase 2: one re-entry breadcrumb on a `LinkedTask.contextTrail`. The trail is cumulative:
+ * an `entry` note is the concrete entry point written at refine time (one, last-write-wins); an
+ * `exit` note is "where I left off", appended on each Stop/Complete. The latest note is the task's
+ * current "start here". Replaces the v7.4-Phase-1 `firstAction`/`reentryNote` scalars.
+ */
+export interface ContextNote {
+    at: string;                   // ISO — when the note was written
+    text: string;
+    kind: 'entry' | 'exit';
+}
+
+/**
+ * v7.4 Phase 2: a finalized (closed) engagement segment, archived durably to
+ * `LifeContext.engagementHistory` so the day's behavioral record survives rollover. Write-through:
+ * today's live segments still live on the plan; each segment is copied here when it closes. Keyed by
+ * a **durable** source id (task `todoistId` / habit `Habit.id`) so re-entry latency and streaks span
+ * days. Pruned to a rolling window (see `lib/engagementHistory.ts`).
+ */
+export interface EngagementRecord {
+    id: string;                            // uuid for this record
+    sourceKind: 'task' | 'habit' | 'micro-gap';
+    sourceId: string;                      // durable id: LinkedTask.todoistId, or Habit.id (NOT the per-day instance id)
+    title: string;                         // titleSnapshot at archive time
+    date: string;                          // YYYY-MM-DD (local) of startedAt — prune + rollup key
+    startedAt: string;                     // ISO
+    endedAt: string;                       // ISO — only closed segments are archived
+    gapBeforeMinutes?: number;             // minutes since the prior record of same sourceId ended = re-entry latency
+}
+
+/**
  * v6.4: one entry in a habit instance's reschedule history. Surfaced in the dashboard
  * engagement log as a "Rescheduled … → HH:mm" row. Captured on every reschedule,
  * whether or not the instance was engaged.
@@ -45,6 +75,7 @@ export interface LinkedTask {
     segments?: EngagementSegment[];                       // v6.4: explicit Start/Stop engagement segments
     rescheduledFromTodoistId?: string;                    // v6.3: predecessor LinkedTask's todoistId when restored from a backlog entry with engagement
     rescheduledAt?: string;                               // v6.3: ISO timestamp of the restore
+    contextTrail?: ContextNote[];                         // v7.4 Phase 2: cumulative re-entry breadcrumbs (replaces firstAction/reentryNote). Latest note = current "start here"
 }
 
 export interface SessionSlot {
@@ -283,6 +314,7 @@ export interface LifeContext {
     restCues?: RestCue[];                // user-customized list; undefined = use built-in defaults
     backlog?: BacklogEntry[];            // v6.2: parked intentions awaiting reuse; undefined = treated as []
     sessionTemplates?: SessionTemplate[]; // v7.1: reusable session presets; undefined = treated as []
+    engagementHistory?: EngagementRecord[]; // v7.4 Phase 2: durable, pruned archive of closed engagement segments; undefined = treated as []
 }
 
 /**
@@ -304,4 +336,5 @@ export interface BacklogEntry {
     taskSnapshots?: Record<string, string>;  // todoistId → titleSnapshot for pending tasks
     completedTaskTitles?: string[];          // titles of tasks already completed at archive time (context-only)
     unfinishedTaskRecords?: Record<string, EngagementSegment[]>;  // v6.3/v6.4: todoistId → engagement segments at archive time
+    contextTrails?: Record<string, ContextNote[]>;  // v7.4 Phase 2: todoistId → re-entry breadcrumbs at archive time, restored on bring-to-today
 }
