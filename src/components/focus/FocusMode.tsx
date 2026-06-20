@@ -12,11 +12,22 @@ import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 import { computeFocusPlan, findActiveFocusTask, resolveBlockAt } from '../../lib/focus';
 import { openSegment, formatClock } from '../../lib/engagement';
+import { lastEndedFor } from '../../lib/engagementHistory';
 import { getTaskTitle } from '../../lib/tasks';
 import { playChime } from '../../lib/sound';
 import type { LinkedTask } from '../../types';
 
 const POMODORO_KEY = 'orchestrate-focus-pomodoro';
+const RAMP_MIN_KEY = 'orchestrate-focus-ramp-min';
+const RAMP_PRESETS = [5, 10];
+
+/** Compact "time since" for the re-entry hint: minutes → hours → days. */
+function formatAgo(minutes: number): string {
+    if (minutes < 60) return `${minutes}m ago`;
+    const h = Math.round(minutes / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+}
 
 export function FocusMode() {
     const { plan } = useDayPlan();
@@ -41,7 +52,7 @@ export function FocusMode() {
             <main className="flex-1 px-6 py-8">
                 <div className="max-w-5xl mx-auto">
                     {activeTask ? (
-                        <FocusActive task={activeTask} />
+                        <FocusActive key={activeTask.todoistId} task={activeTask} />
                     ) : (
                         <Card className="text-center py-12">
                             <p className="text-text-light mb-4">No task is being focused right now.</p>
@@ -57,7 +68,7 @@ export function FocusMode() {
 }
 
 function FocusActive({ task }: { task: LinkedTask }) {
-    const { plan, settings, dispatch } = useDayPlan();
+    const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const { completeTask } = useTodoistActions();
     const { sendNotification } = useNotifications();
@@ -121,17 +132,78 @@ function FocusActive({ task }: { task: LinkedTask }) {
         }
     }, [pomodoroOn, focusPlan.singleSession, pos.index, pos.done, pos.kind, sendNotification, settings.notificationPreference]);
 
+    // ── Re-entry context trail (v7.4 Phase 2) ────────────────────────────────
+    // The trail is the task's cumulative breadcrumb history (read live from the prop). The "Next
+    // step" input holds a draft (seeded from the last exit note); "+ Add" appends a breadcrumb
+    // mid-session, and Stop/Complete commits the current draft as one exit note (deduped).
+    const trail = task.contextTrail ?? [];
+    // Re-entry moment: how long since this task was last worked (problem-statement §15 P5).
+    const [lastWorkedMinutes] = useState<number | null>(() => {
+        const prevEnd = lastEndedFor(life.engagementHistory, task.todoistId);
+        if (!prevEnd) return null;
+        const mins = Math.round((Date.now() - Date.parse(prevEnd)) / 60000);
+        return mins >= 1 ? mins : null;
+    });
+    const [note, setNote] = useState(() => {
+        const lastExit = [...(task.contextTrail ?? [])].reverse().find((n) => n.kind === 'exit');
+        return lastExit?.text ?? '';
+    });
+
+    const addNote = () => {
+        const text = note.trim();
+        if (!text) return;
+        dispatch({ type: 'APPEND_TASK_CONTEXT_NOTE', todoistId: task.todoistId, text, at: new Date().toISOString() });
+    };
+
     const handleStop = () => {
-        dispatch({ type: 'STOP_TASK_ENGAGEMENT', todoistId: task.todoistId, now: new Date().toISOString() });
+        if (!note.trim()) return; // Stop is gated on a next-step note
+        dispatch({ type: 'STOP_TASK_ENGAGEMENT', todoistId: task.todoistId, now: new Date().toISOString(), exitNote: note });
     };
 
     const handleComplete = () => {
-        dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: task.todoistId, titleSnapshot: title });
+        dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: task.todoistId, titleSnapshot: title, exitNote: note });
         completeTask(task.todoistId);
         navigate('/');
     };
 
     const pomoActive = pomodoroOn && !focusPlan.singleSession;
+
+    // ── Bounded activation ramp (v7.4) ───────────────────────────────────────
+    // A deliberate, *closing* pre-work window — engagement keeps running alongside.
+    const [rampMin, setRampMin] = useState(() => {
+        try {
+            const v = parseInt(localStorage.getItem(RAMP_MIN_KEY) ?? '', 10);
+            return RAMP_PRESETS.includes(v) ? v : RAMP_PRESETS[0];
+        } catch { return RAMP_PRESETS[0]; }
+    });
+    const [rampEndsAt, setRampEndsAt] = useState<number | null>(null);
+    const [rampNow, setRampNow] = useState(() => Date.now());
+
+    const startRamp = (minutes: number) => {
+        setRampMin(minutes);
+        try { localStorage.setItem(RAMP_MIN_KEY, String(minutes)); } catch { /* ignore */ }
+        const now = new Date().getTime();
+        setRampNow(now);
+        setRampEndsAt(now + minutes * 60_000);
+    };
+    const cancelRamp = () => setRampEndsAt(null);
+
+    useEffect(() => {
+        if (rampEndsAt == null) return;
+        const id = setInterval(() => {
+            const now = Date.now();
+            if (now >= rampEndsAt) {
+                setRampEndsAt(null);
+                playChime('work');
+                sendNotification('Ramp over', 'Begin your work block.', settings.notificationPreference);
+            } else {
+                setRampNow(now);
+            }
+        }, 1000);
+        return () => clearInterval(id);
+    }, [rampEndsAt, sendNotification, settings.notificationPreference]);
+
+    const rampRemaining = rampEndsAt != null ? Math.max(0, (rampEndsAt - rampNow) / 1000) : 0;
 
     return (
         <div className="grid lg:grid-cols-[1fr_260px] gap-6 items-start">
@@ -153,6 +225,58 @@ function FocusActive({ task }: { task: LinkedTask }) {
                         )}
                     </div>
 
+                    {/* Re-entry context trail (v7.4 Phase 2) */}
+                    <div className="space-y-2">
+                        {(trail.length > 0 || lastWorkedMinutes != null) && (
+                            <div className="rounded-lg border border-accent/30 bg-accent/[0.04] px-3 py-2 space-y-1.5">
+                                <span className="text-[10px] font-medium text-accent uppercase tracking-wider">
+                                    Re-entry context
+                                    {lastWorkedMinutes != null && (
+                                        <span className="normal-case font-normal text-text-light">
+                                            {' '}· last worked {formatAgo(lastWorkedMinutes)}
+                                        </span>
+                                    )}
+                                </span>
+                                {trail.length > 0 ? (
+                                    <ul className="space-y-1">
+                                        {trail.map((n, i) => (
+                                            <li
+                                                key={`${n.at}-${i}`}
+                                                className={`flex gap-1.5 text-sm ${i === trail.length - 1 ? 'text-text' : 'text-text-light'}`}
+                                            >
+                                                <span aria-hidden className="flex-shrink-0">{n.kind === 'entry' ? '▸' : '↩'}</span>
+                                                <span className="min-w-0">{n.text}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-sm text-text-light">No notes yet — add your first step below.</p>
+                                )}
+                            </div>
+                        )}
+                        <label className="block">
+                            <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
+                                Next step — where you're leaving off
+                            </span>
+                            <div className="mt-1 flex gap-2">
+                                <input
+                                    type="text"
+                                    value={note}
+                                    onChange={(e) => setNote(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' && note.trim()) addNote(); }}
+                                    placeholder="e.g. wired the reducer, next: hook up the Focus input"
+                                    className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-card focus:border-accent focus:outline-none transition-colors"
+                                />
+                                <Button variant="secondary" size="sm" disabled={!note.trim()} onClick={addNote}>
+                                    + Add
+                                </Button>
+                            </div>
+                            <span className="block text-[11px] text-text-light mt-1">
+                                Committed on Stop / Complete. Use “+ Add” to drop a breadcrumb mid-session.
+                            </span>
+                        </label>
+                    </div>
+
                     {/* Timer zone */}
                     <div className="py-8 text-center">
                         {pomoActive ? (
@@ -168,6 +292,43 @@ function FocusActive({ task }: { task: LinkedTask }) {
                                     <span className="text-6xl font-light tracking-tight tabular-nums">0:00</span>
                                 )}
                                 <p className="text-xs text-text-light mt-2 uppercase tracking-wider">Time on task</p>
+                            </>
+                        )}
+                    </div>
+
+                    {/* Ramp (v7.4): a bounded, closing pre-work window */}
+                    <div className="rounded-lg border border-border bg-subtle/30 px-3 py-2 flex items-center gap-3 flex-wrap">
+                        {rampEndsAt != null ? (
+                            <>
+                                <span className="inline-flex items-center gap-1.5 text-sm text-accent tabular-nums">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" aria-hidden />
+                                    Ramp {formatClock(rampRemaining)}
+                                </span>
+                                <span className="text-xs text-text-light">one video / tea, then begin</span>
+                                <button
+                                    onClick={cancelRamp}
+                                    className="ml-auto text-xs text-text-light hover:text-text cursor-pointer"
+                                >
+                                    End now
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <span className="text-xs text-text-light">Ramp in:</span>
+                                {RAMP_PRESETS.map((m) => (
+                                    <button
+                                        key={m}
+                                        onClick={() => startRamp(m)}
+                                        className={`px-2.5 py-1 text-xs rounded-full border transition-colors cursor-pointer ${
+                                            m === rampMin
+                                                ? 'border-accent text-accent'
+                                                : 'border-border text-text-light hover:border-accent hover:text-accent'
+                                        }`}
+                                    >
+                                        {m}m
+                                    </button>
+                                ))}
+                                <span className="text-[11px] text-text-light">Bounded warm-up; the timer keeps running.</span>
                             </>
                         )}
                     </div>
@@ -192,7 +353,13 @@ function FocusActive({ task }: { task: LinkedTask }) {
                             Pomodoro
                         </button>
                         <div className="flex items-center gap-2">
-                            <Button variant="ghost" size="sm" onClick={handleStop}>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={!note.trim()}
+                                onClick={handleStop}
+                                title={!note.trim() ? 'Add a next step before stopping' : undefined}
+                            >
                                 ■ Stop
                             </Button>
                             <Button size="sm" onClick={handleComplete}>

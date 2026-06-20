@@ -10,6 +10,7 @@ import {
     buildEngagementLog,
     formatLocalTimeOfDay,
 } from '../../lib/engagementLog';
+import { computeReentryStats } from '../../lib/engagementHistory';
 import { openSegment, totalEngagedSeconds } from '../../lib/engagement';
 import { EngagementTimer } from './EngagementTimer';
 import { HabitTimeEditor } from './HabitTimeEditor';
@@ -287,11 +288,13 @@ export function MicroGapCard() {
  * on the right rail; hidden entirely until there's something to show.
  */
 export function EngagementLogCard() {
-    const { plan, dispatch } = useDayPlan();
+    const { plan, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const [open, setOpen] = useState(true);
 
     const rows = buildEngagementLog(plan, taskMap);
+    // v7.4 Phase 2: re-entry metric over the durable archive (problem-statement §15 Principle 5).
+    const reentry = computeReentryStats(life.engagementHistory, { windowDays: 7 });
     if (rows.length === 0) return null;
 
     const deleteRow = (row: (typeof rows)[number]) => {
@@ -323,6 +326,11 @@ export function EngagementLogCard() {
                 </svg>
                 Engagement Log
             </button>
+            {reentry.resumeCount > 0 && (
+                <p className="text-[11px] text-text-light tabular-nums">
+                    Re-entry · ~{reentry.medianGapMinutes}m to resume · {reentry.resumeCount} {reentry.resumeCount === 1 ? 'resume' : 'resumes'} (7d)
+                </p>
+            )}
             {open && <Card className="py-2 px-2">
                 <div className="max-h-[24rem] overflow-y-auto scrollbar-subtle -mr-1 pr-1">
                     <ul className="space-y-0.5">

@@ -74,6 +74,12 @@ export function UserGuide() {
       + Manual background  → Small today-only nudges inside an intention
       + True Rest          → Recovery cues with zero tracking overhead
       + Capacity           → Advisory math that tells you if you're overloaded`}</Flow>
+                        <Callout tone="info">
+                            Low on activation and the full plan feels like too much? Use{' '}
+                            <strong>⚡ Quick start</strong> on the home screen: pick or type one or two things and drop
+                            straight into Focus, skipping the wizard. It seeds a minimal "Today" plan behind you — you can
+                            flesh it out later with Edit Plan.
+                        </Callout>
                     </Section>
 
                     <Section id="layers" title="2. Where your data lives">
@@ -486,6 +492,30 @@ export function UserGuide() {
                             nudges you (banner + notification) and keeps reminding you every 30 minutes until you begin —
                             but only while the session still has unfinished work.
                         </Callout>
+                        <SubHeading>Re-entry breadcrumb</SubHeading>
+                        <p>
+                            The hardest part of deep work is usually <em>getting back in</em>. Every task carries a{' '}
+                            <strong>context trail</strong> — a running list of breadcrumbs you can see in Focus Mode under{' '}
+                            <strong>Re-entry context</strong> (with a <strong>last worked Xm ago</strong> line). Use the{' '}
+                            <strong>"Next step — where you're leaving off"</strong> line to jot one sentence; it's committed
+                            each time you <strong>Stop</strong> or <strong>Complete</strong>, and you can hit{' '}
+                            <strong>+ Add</strong> to drop an extra breadcrumb mid-session. The trail builds across work
+                            sessions so you skip rebuilding the whole mental model, and the latest note shows as a small{' '}
+                            <strong>↩</strong> preview on dashboard task rows.
+                        </p>
+                        <p>
+                            Two deliberate guardrails make this stick: you can't <strong>Start</strong> a fresh task without
+                            naming a <strong>first concrete action</strong> (the specific first move, not the whole task), and
+                            you can't <strong>Stop</strong> without leaving a next step. A little friction at the edges buys
+                            you a much cheaper return later.
+                        </p>
+                        <SubHeading>Activation ramp</SubHeading>
+                        <p>
+                            Low on activation? Tap <strong>Ramp in</strong> (5 or 10 min) for a deliberate, <em>bounded</em>{' '}
+                            warm-up — one video, tea, a quick skim — that <em>closes</em> with a chime and a "begin work"
+                            nudge. The point is to make stimulation intentional instead of ambient. Your time-on-task timer
+                            keeps running through the ramp.
+                        </p>
                     </Section>
 
                     <Section id="backlog" title="9a. Intentions Backlog — parking work for later">

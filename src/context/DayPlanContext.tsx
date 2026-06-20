@@ -22,9 +22,11 @@ import type {
     TodaysHabitInstance,
     EngagementSegment,
     RescheduleEventEntry,
+    ContextNote,
+    EngagementRecord,
 } from '../types';
 import { defaultSessionSlots } from '../data/sessions';
-import { todayISO } from '../lib/time';
+import { todayISO, minutesOfDay, pickSessionIdForTime } from '../lib/time';
 import { DEFAULT_SESSION_BUFFER_MINUTES, DEFAULT_TASK_CAPS } from '../lib/capacity';
 import { restCues as defaultRestCues } from '../data/restCues';
 import {
@@ -32,6 +34,14 @@ import {
     harvestStalePlan,
     rebuildLinkedTasksForBacklogEntry,
 } from '../lib/backlog';
+import { SCHEMA_VERSION, isSupportedSchema, migrateToCurrent } from '../lib/schema';
+import { openSegment } from '../lib/engagement';
+import { habitKindOf } from '../lib/habits';
+import {
+    buildRecordFromClosedSegment,
+    appendEngagementRecord,
+    pruneEngagementHistory,
+} from '../lib/engagementHistory';
 
 // --------------- helpers ---------------
 
@@ -39,18 +49,6 @@ const STORAGE_KEY = 'orchestrate-day-plan';
 const SETTINGS_KEY = 'orchestrate-settings';
 const HISTORY_KEY = 'orchestrate-history';
 const LIFE_KEY = 'orchestrate-life-context';
-/**
- * Current schema. Persisted artifacts (plan / settings / life / saved-session plans) and full
- * backups are stamped with this. There is **no in-app migration** from older versions — anything
- * that isn't this exact version is rejected on load (treated as absent → fresh start) and on import
- * (refused). See `isCurrentSchema`. The historical v1→v7.1 migration chain lives in git history.
- */
-export const SCHEMA_VERSION = 7.1;
-
-/** True when a parsed, persisted/imported object carries the current schema stamp. */
-function isCurrentSchema(raw: { _schemaVersion?: unknown } | null | undefined): boolean {
-    return !!raw && raw._schemaVersion === SCHEMA_VERSION;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -61,7 +59,7 @@ function isCurrentSavedPlan(value: unknown): value is SavedDayPlan {
     if (typeof value.savedAt !== 'string' || typeof value.label !== 'string') return false;
     const plan = value.plan;
     return isRecord(plan)
-        && isCurrentSchema(plan)
+        && isSupportedSchema(plan)
         && Array.isArray((plan as { intentions?: unknown }).intentions);
 }
 
@@ -99,8 +97,8 @@ function seedSessionSlots(prevPlan: DayPlan | null | undefined, settings: AppSet
 }
 
 /**
- * Strip the persisted schema marker from an otherwise-current plan object. There is no migration:
- * the caller has already verified `_schemaVersion === SCHEMA_VERSION` via `isCurrentSchema`.
+ * Strip the persisted schema marker from a plan object. The caller has already guarded the version
+ * (`isSupportedSchema`) and brought it up to the current shape (`migrateToCurrent`).
  */
 function stripPlanMarkers(raw: Record<string, unknown>): DayPlan {
     const { _schemaVersion: _s, ...plan } = raw;
@@ -134,15 +132,30 @@ function loadSettings(): AppSettings {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY);
         if (!raw) return defaultSettings();
-        const parsed = JSON.parse(raw) as AppSettings & { _schemaVersion?: number };
-        // Schema guard: reject anything that isn't the current version (no migration).
-        if (!isCurrentSchema(parsed)) return defaultSettings();
-        const { _schemaVersion: _s, ...settings } = parsed;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        // Schema guard: reject below the floor; migrate supported-but-older forward.
+        if (!isSupportedSchema(parsed)) return defaultSettings();
+        const { _schemaVersion: _s, ...settings } = migrateToCurrent(parsed, 'settings');
         void _s;
-        return withSettingsDefaults(settings);
+        return withSettingsDefaults(settings as unknown as AppSettings);
     } catch {
         return defaultSettings();
     }
+}
+
+/**
+ * v7.4 Phase 2: bring a saved plan's embedded `plan` up to the current shape (saved plans share the
+ * plan migration) and re-stamp it. Shared by `loadHistory` + the import actions so both routes apply
+ * the same forward migration as the live loaders.
+ */
+function migrateSavedPlan(entry: SavedDayPlan): SavedDayPlan {
+    return {
+        ...entry,
+        plan: {
+            ...migrateToCurrent(entry.plan as unknown as Record<string, unknown>, 'plan'),
+            _schemaVersion: SCHEMA_VERSION,
+        } as unknown as DayPlan,
+    };
 }
 
 function loadHistory(): SavedDayPlan[] {
@@ -150,31 +163,34 @@ function loadHistory(): SavedDayPlan[] {
         const raw = localStorage.getItem(HISTORY_KEY);
         if (!raw) return [];
         const parsed = JSON.parse(raw) as SavedDayPlan[];
-        // Schema guard: keep only saved plans stamped with the current version.
-        return parsed.filter(isCurrentSavedPlan);
+        // Schema guard: keep saved plans whose stamp is in range, then migrate each plan forward.
+        return parsed.filter(isCurrentSavedPlan).map(migrateSavedPlan);
     } catch {
         return [];
     }
 }
 
 function emptyLifeContext(): LifeContext {
-    return { seasons: [], habits: [], activeSeasonId: null, backlog: [], sessionTemplates: [] };
+    return { seasons: [], habits: [], activeSeasonId: null, backlog: [], sessionTemplates: [], engagementHistory: [] };
 }
 
 function loadLifeContext(): LifeContext {
     try {
         const raw = localStorage.getItem(LIFE_KEY);
         if (!raw) return emptyLifeContext();
-        const parsed = JSON.parse(raw) as Partial<LifeContext> & { _schemaVersion?: number };
-        // Schema guard: reject anything that isn't the current version (no migration).
-        if (!isCurrentSchema(parsed)) return emptyLifeContext();
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        // Schema guard: reject below the floor; migrate supported-but-older forward.
+        if (!isSupportedSchema(parsed)) return emptyLifeContext();
+        const life = migrateToCurrent(parsed, 'life') as unknown as Partial<LifeContext>;
         return {
-            seasons: parsed.seasons ?? [],
-            habits: parsed.habits ?? [],
-            activeSeasonId: parsed.activeSeasonId ?? null,
-            restCues: parsed.restCues,
-            backlog: parsed.backlog ?? [],
-            sessionTemplates: parsed.sessionTemplates ?? [],
+            seasons: life.seasons ?? [],
+            habits: life.habits ?? [],
+            activeSeasonId: life.activeSeasonId ?? null,
+            restCues: life.restCues,
+            backlog: life.backlog ?? [],
+            sessionTemplates: life.sessionTemplates ?? [],
+            // v7.4 Phase 2: bound the durable engagement archive to its rolling window on load.
+            engagementHistory: pruneEngagementHistory(life.engagementHistory),
         };
     } catch {
         return emptyLifeContext();
@@ -183,16 +199,16 @@ function loadLifeContext(): LifeContext {
 
 /**
  * Read the persisted plan *without* the date-freshness gate (so `loadInitialState` can harvest a
- * stale plan before discarding it). Schema guard: anything not stamped with the current version is
- * treated as absent (no migration). Returns the plan with its schema markers stripped.
+ * stale plan before discarding it). Schema guard: anything stamped below the supported floor is
+ * treated as absent; supported-but-older is migrated forward. Returns the plan with markers stripped.
  */
 function loadPlan(): DayPlan | null {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw) as Record<string, unknown>;
-        if (!isCurrentSchema(parsed)) return null;
-        return stripPlanMarkers(parsed);
+        if (!isSupportedSchema(parsed)) return null;
+        return stripPlanMarkers(migrateToCurrent(parsed, 'plan'));
     } catch {
         return null;
     }
@@ -301,6 +317,76 @@ function closeEngagementSegment(segments: EngagementSegment[] | undefined, nowIS
     return [...segments.slice(0, -1), { ...last, endedAt: nowISO }];
 }
 
+/**
+ * v7.4 Phase 2: write-through archive. When an engagement segment closes, copy the now-finalized
+ * segment into the durable `life.engagementHistory` (keyed by a durable source id so re-entry
+ * latency spans days). `open` is the segment that was open *before* the close; pass `undefined` (or
+ * the result is a no-op) when nothing was engaged. Returns `life` unchanged if there's nothing to
+ * archive.
+ */
+function archiveClosedSegment(
+    life: LifeContext,
+    meta: { sourceKind: EngagementRecord['sourceKind']; sourceId: string; title: string },
+    open: EngagementSegment | undefined,
+    nowISO: string,
+): LifeContext {
+    if (!open) return life;
+    const record = buildRecordFromClosedSegment({
+        ...meta,
+        segment: { startedAt: open.startedAt, endedAt: nowISO },
+        history: life.engagementHistory,
+    });
+    if (!record) return life;
+    return {
+        ...life,
+        engagementHistory: appendEngagementRecord(life.engagementHistory, record, {
+            now: new Date(nowISO),
+        }),
+    };
+}
+
+/**
+ * v7.4 Phase 2: append an `exit` re-entry breadcrumb to a task's context trail. Skips empty text and
+ * de-dupes a no-op commit — when the Focus draft is seeded from the last exit note and left
+ * unchanged, the latest exit note is returned as-is rather than duplicated.
+ */
+function appendExitNote(trail: ContextNote[] | undefined, text: string | undefined, at: string): ContextNote[] | undefined {
+    const t = text?.trim();
+    if (!t) return trail;
+    const list = trail ?? [];
+    const last = list[list.length - 1];
+    if (last && last.kind === 'exit' && last.text === t) return list;
+    return [...list, { at, text: t, kind: 'exit' }];
+}
+
+/**
+ * v7.4 Phase 2: close a habit instance's open segment (Stop / Complete / Skip), archive it to the
+ * durable engagement history (under the durable `habitId` + resolved kind), and apply the terminal
+ * status transition. Shared by the three habit-close actions.
+ */
+function closeHabitInstance(
+    state: State,
+    instanceId: string,
+    nowISO: string,
+    apply: (i: TodaysHabitInstance) => TodaysHabitInstance,
+): State {
+    const target = state.plan.todaysHabits.find((i) => i.id === instanceId);
+    if (!target) return state;
+    const openSeg = openSegment(target.segments);
+    const todaysHabits = state.plan.todaysHabits.map((i) =>
+        i.id === instanceId
+            ? apply({ ...i, segments: closeEngagementSegment(i.segments, nowISO) })
+            : i,
+    );
+    const life = archiveClosedSegment(
+        state.life,
+        { sourceKind: habitKindOf(state.life, target), sourceId: target.habitId, title: target.titleSnapshot },
+        openSeg,
+        nowISO,
+    );
+    return { ...state, plan: { ...state.plan, todaysHabits }, life };
+}
+
 // v6: `backfillHabitsFromLegacy` was removed — the deprecated `isHabit` flag is no longer
 // readable from the type system. Any legacy data was already surfaced during v5.
 
@@ -317,9 +403,12 @@ type Action =
     | { type: 'UNLINK_TASK'; todoistId: string }
     | { type: 'CATEGORIZE_TASK'; todoistId: string; taskType: LinkedTask['type'] }
     | { type: 'SET_TASK_ESTIMATE'; todoistId: string; minutes: number }
+    | { type: 'UPSERT_TASK_ENTRY_NOTE'; todoistId: string; text: string; at: string }
+    | { type: 'APPEND_TASK_CONTEXT_NOTE'; todoistId: string; text: string; at: string }
+    | { type: 'QUICK_START'; intentionTitle: string; todoistIds: string[]; now: string }
     | { type: 'ASSIGN_TASK'; todoistId: string; sessionId: string }
     | { type: 'UNASSIGN_TASK'; todoistId: string; sessionId: string }
-    | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string; titleSnapshot?: string }
+    | { type: 'TOGGLE_TASK_COMPLETE'; todoistId: string; titleSnapshot?: string; exitNote?: string }
     | { type: 'SYNC_TASK_SNAPSHOTS'; snapshots: Record<string, string> }
     | { type: 'REORDER_SESSION_TASKS'; sessionId: string; taskIds: string[] }
     | { type: 'REORDER_INTENTION_TASKS'; intentionId: string; todoistIds: string[] }
@@ -374,7 +463,7 @@ type Action =
     | { type: 'RESCHEDULE_HABIT_INSTANCE'; instanceId: string; newTargetTime?: string; now: string }
     // ---- v6.3: Task engagement ----
     | { type: 'START_TASK_ENGAGEMENT'; todoistId: string; now: string }
-    | { type: 'STOP_TASK_ENGAGEMENT'; todoistId: string; now: string }
+    | { type: 'STOP_TASK_ENGAGEMENT'; todoistId: string; now: string; exitNote?: string }
     // ---- v6.4: Engagement log deletion ----
     | { type: 'DELETE_HABIT_ENGAGEMENT_SEGMENT'; instanceId: string; segmentStartedAt: string }
     | { type: 'DELETE_TASK_ENGAGEMENT_SEGMENT'; todoistId: string; segmentStartedAt: string }
@@ -511,6 +600,112 @@ function reducer(state: State, action: Action): State {
             return { ...state, plan: { ...plan, linkedTasks } };
         }
 
+        case 'UPSERT_TASK_ENTRY_NOTE': {
+            // v7.4 Phase 2: the concrete entry point captured at refine time — a single, last-write-wins
+            // `entry` note on the context trail. Empty → the entry note is removed (exit notes kept).
+            const text = action.text.trim();
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId) return lt;
+                const others = (lt.contextTrail ?? []).filter((n) => n.kind !== 'entry');
+                const trail = text
+                    ? [{ at: action.at, text, kind: 'entry' as const }, ...others]
+                    : others;
+                return { ...lt, contextTrail: trail.length > 0 ? trail : undefined };
+            });
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'APPEND_TASK_CONTEXT_NOTE': {
+            // v7.4 Phase 2: append an `exit` breadcrumb mid-session ("Add to trail" in Focus), so a
+            // multi-step session accumulates a visible trail without having to Stop. Dedups an
+            // identical consecutive note; empty text is a no-op.
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId) return lt;
+                const contextTrail = appendExitNote(lt.contextTrail, action.text, action.at);
+                return contextTrail ? { ...lt, contextTrail } : lt;
+            });
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'QUICK_START': {
+            // v7.4: low-friction entry — seed a minimal plan from a few tasks and mark setup complete.
+            // Atomic: one catch-all intention + a main LinkedTask per id, all assigned to the session
+            // covering `now`. The caller engages the first task + navigates to /focus separately.
+            const ids = action.todoistIds.filter((id, i) => action.todoistIds.indexOf(id) === i);
+            if (ids.length === 0) return state;
+
+            const slots = plan.sessionSlots.length > 0
+                ? plan.sessionSlots
+                : state.settings.sessionSlots.length > 0
+                    ? state.settings.sessionSlots
+                    : defaultSessionSlots;
+            const targetSessionId = pickSessionIdForTime(slots, minutesOfDay(new Date(action.now)));
+            const selectedIds = new Set(ids);
+
+            const intention: Intention = {
+                id: crypto.randomUUID(),
+                title: action.intentionTitle,
+                linkedTaskIds: ids,
+                completed: false,
+                brokenDown: false,
+            };
+
+            const intentions = plan.intentions.map((existing) => (
+                existing.linkedTaskIds.some((id) => selectedIds.has(id))
+                    ? {
+                        ...existing,
+                        linkedTaskIds: existing.linkedTaskIds.filter((id) => !selectedIds.has(id)),
+                    }
+                    : existing
+            ));
+
+            // Re-home any pre-existing linked tasks to the Quick Start intention so task ownership
+            // stays one-to-one. Normalize them to `main` and move them to the target session.
+            const linkedTasks = plan.linkedTasks.map((lt) => (
+                selectedIds.has(lt.todoistId)
+                    ? {
+                        ...setIntentionOwner(lt, intention.id),
+                        type: 'main' as const,
+                        assignedSessions: targetSessionId ? [targetSessionId] : [],
+                    }
+                    : lt
+            ));
+
+            // Append only ids not already present in the plan.
+            const existingIds = new Set(plan.linkedTasks.map((lt) => lt.todoistId));
+            const newTasks: LinkedTask[] = ids
+                .filter((id) => !existingIds.has(id))
+                .map((id) => ({
+                    todoistId: id,
+                    intentionId: intention.id,
+                    type: 'main',
+                    assignedSessions: targetSessionId ? [targetSessionId] : [],
+                    completed: false,
+                    estimatedMinutes: null,
+                    status: 'pending',
+                }));
+
+            const taskSessions = removeTaskIdsFromSessions(plan.taskSessions, ids);
+            if (targetSessionId) {
+                const current = taskSessions[targetSessionId] ?? [];
+                const merged = [...current];
+                for (const id of ids) if (!merged.includes(id)) merged.push(id);
+                taskSessions[targetSessionId] = merged;
+            }
+
+            return {
+                ...state,
+                plan: {
+                    ...plan,
+                    sessionSlots: slots,
+                    intentions: [...intentions, intention],
+                    linkedTasks: [...linkedTasks, ...newTasks],
+                    taskSessions,
+                    setupComplete: true,
+                },
+            };
+        }
+
         case 'ASSIGN_TASK': {
             const task = plan.linkedTasks.find((lt) => lt.todoistId === action.todoistId);
             if (!task) return state;
@@ -558,20 +753,37 @@ function reducer(state: State, action: Action): State {
 
         case 'TOGGLE_TASK_COMPLETE': {
             const nowISO = new Date().toISOString();
+            const target = plan.linkedTasks.find((lt) => lt.todoistId === action.todoistId);
+            const completing = target ? !target.completed : false;
+            // v7.4 Phase 2: completing closes any open segment — capture it to archive.
+            const openSeg = completing ? openSegment(target?.segments) : undefined;
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId) return lt;
                 const completed = !lt.completed;
-                // v6.4: completing closes any open engagement segment.
                 const segments = completed ? closeEngagementSegment(lt.segments, nowISO) : lt.segments;
+                const contextTrail = completed
+                    ? appendExitNote(lt.contextTrail, action.exitNote, nowISO)
+                    : lt.contextTrail;
                 return {
                     ...lt,
                     completed,
                     status: completed ? ('completed' as const) : ('pending' as const),
                     ...(segments ? { segments } : {}),
+                    ...(contextTrail ? { contextTrail } : {}),
                     ...(action.titleSnapshot ? { titleSnapshot: action.titleSnapshot } : {}),
                 };
             });
-            return { ...state, plan: { ...plan, linkedTasks } };
+            const life = archiveClosedSegment(
+                state.life,
+                {
+                    sourceKind: 'task',
+                    sourceId: action.todoistId,
+                    title: target?.titleSnapshot ?? action.titleSnapshot ?? action.todoistId,
+                },
+                openSeg,
+                nowISO,
+            );
+            return { ...state, plan: { ...plan, linkedTasks }, life };
         }
 
         case 'SYNC_TASK_SNAPSHOTS': {
@@ -719,7 +931,9 @@ function reducer(state: State, action: Action): State {
 
         case 'IMPORT_SESSIONS': {
             const existing = new Set(state.history.map((h) => h.savedAt));
-            const newEntries = action.sessions.filter((s) => !existing.has(s.savedAt));
+            const newEntries = action.sessions
+                .filter((s) => !existing.has(s.savedAt))
+                .map(migrateSavedPlan);
             return { ...state, history: [...newEntries, ...state.history] };
         }
 
@@ -894,34 +1108,28 @@ function reducer(state: State, action: Action): State {
         case 'STOP_HABIT_INSTANCE': {
             // v6.4: closes the open segment AND returns the instance to `planned` so the
             // toggle button flips back to ▶ Start. A subsequent Start opens a fresh segment.
-            const todaysHabits = plan.todaysHabits.map((i) => {
-                if (i.id !== action.instanceId) return i;
-                return { ...i, status: 'planned' as const, segments: closeEngagementSegment(i.segments, action.now) };
-            });
-            return { ...state, plan: { ...plan, todaysHabits } };
+            // v7.4 Phase 2: the closed segment is archived to life.engagementHistory.
+            return closeHabitInstance(state, action.instanceId, action.now, (i) => ({
+                ...i,
+                status: 'planned' as const,
+            }));
         }
 
         case 'COMPLETE_HABIT_INSTANCE': {
-            const todaysHabits = plan.todaysHabits.map((i) => {
-                if (i.id !== action.instanceId) return i;
-                return {
-                    ...i,
-                    status: 'completed' as const,
-                    completedAt: action.now,
-                    segments: closeEngagementSegment(i.segments, action.now),
-                };
-            });
-            return { ...state, plan: { ...plan, todaysHabits } };
+            return closeHabitInstance(state, action.instanceId, action.now, (i) => ({
+                ...i,
+                status: 'completed' as const,
+                completedAt: action.now,
+            }));
         }
 
         case 'SKIP_HABIT_INSTANCE': {
             // v6.4: close any open segment before the instance goes terminal, so an
             // in-flight engagement (Start then ✕ Skip without ■ Stop) is recorded.
-            const todaysHabits = plan.todaysHabits.map((i) => {
-                if (i.id !== action.instanceId) return i;
-                return { ...i, status: 'skipped' as const, segments: closeEngagementSegment(i.segments, action.now) };
-            });
-            return { ...state, plan: { ...plan, todaysHabits } };
+            return closeHabitInstance(state, action.instanceId, action.now, (i) => ({
+                ...i,
+                status: 'skipped' as const,
+            }));
         }
 
         case 'RESCHEDULE_HABIT_INSTANCE': {
@@ -973,14 +1181,31 @@ function reducer(state: State, action: Action): State {
         case 'STOP_TASK_ENGAGEMENT': {
             // v6.4: closes the open segment AND returns status to `pending` so the toggle
             // button flips back to ▶ Start. A subsequent Start opens a fresh segment.
+            // v7.4 Phase 2: archive the closed segment + append the Focus "next step" exit note.
+            const target = plan.linkedTasks.find((lt) => lt.todoistId === action.todoistId);
+            const openSeg = openSegment(target?.segments);
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId) return lt;
-                return { ...lt, status: 'pending' as const, segments: closeEngagementSegment(lt.segments, action.now) };
+                const contextTrail = appendExitNote(lt.contextTrail, action.exitNote, action.now);
+                return {
+                    ...lt,
+                    status: 'pending' as const,
+                    segments: closeEngagementSegment(lt.segments, action.now),
+                    ...(contextTrail ? { contextTrail } : {}),
+                };
             });
-            return { ...state, plan: { ...plan, linkedTasks } };
+            const life = archiveClosedSegment(
+                state.life,
+                { sourceKind: 'task', sourceId: action.todoistId, title: target?.titleSnapshot ?? action.todoistId },
+                openSeg,
+                action.now,
+            );
+            return { ...state, plan: { ...plan, linkedTasks }, life };
         }
 
         case 'DELETE_HABIT_ENGAGEMENT_SEGMENT': {
+            // Edits today's live record only. v7.4 Phase 2: the durable archive copy in
+            // life.engagementHistory is intentionally NOT retroactively removed here.
             const todaysHabits = plan.todaysHabits.map((i) => {
                 if (i.id !== action.instanceId) return i;
                 const segments = (i.segments ?? []).filter(
@@ -1071,7 +1296,8 @@ function reducer(state: State, action: Action): State {
             }
             if (action.life) {
                 // Merge by id — never overwrite existing entries; append new ones. The import is
-                // schema-guarded in DataManagement, so the payload is already current (no migration).
+                // schema-guarded in DataManagement (floor → current); life's only 7.4 addition is
+                // engagementHistory (defaulted below), and saved plans are migrated via migrateSavedPlan.
                 const incomingSeasons = Array.isArray(action.life.seasons) ? action.life.seasons : [];
                 const incomingHabits = Array.isArray(action.life.habits) ? action.life.habits : [];
                 const incomingBacklog = Array.isArray(action.life.backlog) ? action.life.backlog : [];
@@ -1081,10 +1307,14 @@ function reducer(state: State, action: Action): State {
                 const incomingRestCues = Array.isArray(action.life.restCues)
                     ? action.life.restCues
                     : undefined;
+                const incomingEngagement = Array.isArray(action.life.engagementHistory)
+                    ? action.life.engagementHistory
+                    : [];
                 const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
                 const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
                 const existingBacklogIds = new Set((state.life.backlog ?? []).map((e) => e.id));
                 const existingTemplateIds = new Set((state.life.sessionTemplates ?? []).map((t) => t.id));
+                const existingEngagementIds = new Set((state.life.engagementHistory ?? []).map((r) => r.id));
                 const mergedSeasons = [
                     ...state.life.seasons,
                     ...incomingSeasons.filter((s) => !existingSeasonIds.has(s.id)),
@@ -1110,11 +1340,16 @@ function reducer(state: State, action: Action): State {
                         ...(state.life.sessionTemplates ?? []),
                         ...incomingTemplates.filter((t) => !existingTemplateIds.has(t.id)),
                     ],
+                    // v7.4 Phase 2: preserve the local archive; merge imported records by id, then prune.
+                    engagementHistory: pruneEngagementHistory([
+                        ...(state.life.engagementHistory ?? []),
+                        ...incomingEngagement.filter((r) => !existingEngagementIds.has(r.id)),
+                    ]),
                 };
             }
             if (action.history) {
                 const existing = new Set(state.history.map((h) => h.savedAt));
-                const currentHistory = action.history.filter(isCurrentSavedPlan);
+                const currentHistory = action.history.filter(isCurrentSavedPlan).map(migrateSavedPlan);
                 next.history = [
                     ...state.history,
                     ...currentHistory.filter((h) => !existing.has(h.savedAt)),

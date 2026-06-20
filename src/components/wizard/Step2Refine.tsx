@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
@@ -239,10 +239,10 @@ export function Step2Refine() {
                                 <div
                                     key={intention.id}
                                     className={`rounded-lg border overflow-hidden transition-colors ${isSelected
-                                            ? 'border-accent/40 bg-card'
-                                            : complete
-                                                ? 'border-success/30 bg-success/5'
-                                                : 'border-border bg-card'
+                                        ? 'border-accent/40 bg-card'
+                                        : complete
+                                            ? 'border-success/30 bg-success/5'
+                                            : 'border-border bg-card'
                                         }`}
                                 >
                                     {/* Header row — always visible */}
@@ -319,6 +319,9 @@ export function Step2Refine() {
                                                         onSetEstimate={(minutes) =>
                                                             dispatch({ type: 'SET_TASK_ESTIMATE', todoistId: lt.todoistId, minutes })
                                                         }
+                                                        onSetFirstAction={(value) =>
+                                                            dispatch({ type: 'UPSERT_TASK_ENTRY_NOTE', todoistId: lt.todoistId, text: value, at: new Date().toISOString() })
+                                                        }
                                                         onUnlink={() =>
                                                             dispatch({ type: 'UNLINK_TASK', todoistId: lt.todoistId })
                                                         }
@@ -332,8 +335,8 @@ export function Step2Refine() {
                                                     onClick={() => handleDone(intention.id)}
                                                     disabled={!canDone}
                                                     className={`px-4 py-2 text-sm rounded-lg transition-colors cursor-pointer ${canDone
-                                                            ? 'bg-accent text-white hover:bg-accent/90'
-                                                            : 'bg-border text-text-light cursor-not-allowed'
+                                                        ? 'bg-accent text-white hover:bg-accent/90'
+                                                        : 'bg-border text-text-light cursor-not-allowed'
                                                         }`}
                                                 >
                                                     Done →
@@ -434,6 +437,7 @@ function TaskCard({
     backgroundCap,
     onCategorize,
     onSetEstimate,
+    onSetFirstAction,
     onUnlink,
     onOpenTaskPanel,
 }: {
@@ -443,13 +447,25 @@ function TaskCard({
     backgroundCap: number;
     onCategorize: (taskType: LinkedTask['type']) => void;
     onSetEstimate: (minutes: number) => void;
+    onSetFirstAction: (value: string) => void;
     onUnlink: () => void;
     onOpenTaskPanel: () => void;
 }) {
     const [customInput, setCustomInput] = useState('');
+    const entryNote = lt.contextTrail?.find((n) => n.kind === 'entry')?.text ?? '';
+    const [firstActionInput, setFirstActionInput] = useState(entryNote);
     const todoistTask = taskMap.get(lt.todoistId);
     const isStale = !todoistTask && !lt.completed;
     const title = todoistTask?.content ?? lt.titleSnapshot ?? lt.todoistId;
+
+    useEffect(() => {
+        setFirstActionInput(entryNote);
+    }, [entryNote]);
+
+    const commitFirstAction = useCallback(() => {
+        if (firstActionInput === entryNote) return;
+        onSetFirstAction(firstActionInput);
+    }, [entryNote, firstActionInput, onSetFirstAction]);
     const isBackground = lt.type === 'background';
 
     // Completed tasks: compact read-only display
@@ -498,8 +514,8 @@ function TaskCard({
                     key={opt.value}
                     onClick={() => onCategorize(opt.value)}
                     className={`px-2.5 py-1 text-xs rounded-full border transition-colors cursor-pointer ${lt.type === opt.value
-                            ? 'bg-accent text-white border-accent'
-                            : 'border-border text-text-light hover:border-accent hover:text-accent'
+                        ? 'bg-accent text-white border-accent'
+                        : 'border-border text-text-light hover:border-accent hover:text-accent'
                         }`}
                     title={opt.description}
                 >
@@ -544,10 +560,10 @@ function TaskCard({
                             onClick={() => handlePreset(minutes)}
                             disabled={disabled}
                             className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${disabled
-                                    ? 'border-border text-text-light/40 cursor-not-allowed'
-                                    : isPresetSelected(minutes)
-                                        ? 'bg-accent text-white border-accent'
-                                        : 'border-border text-text-light hover:border-accent hover:text-accent cursor-pointer'
+                                ? 'border-border text-text-light/40 cursor-not-allowed'
+                                : isPresetSelected(minutes)
+                                    ? 'bg-accent text-white border-accent'
+                                    : 'border-border text-text-light hover:border-accent hover:text-accent cursor-pointer'
                                 }`}
                         >
                             {minutes >= 60 ? `${minutes / 60}hr` : `${minutes}m`}
@@ -590,6 +606,27 @@ function TaskCard({
         </div>
     );
 
+    // v7.4: optional concrete entry point for main tasks — seeds the Focus Mode re-entry breadcrumb.
+    // Strictly optional: never gates advancing the wizard.
+    const firstActionSection = lt.type === 'main' && (
+        <label className="block space-y-1">
+            <span className="text-[10px] font-medium text-text-light uppercase tracking-wider">
+                ▸ First concrete action <span className="normal-case font-normal">(optional)</span>
+            </span>
+            <input
+                type="text"
+                value={firstActionInput}
+                onChange={(e) => setFirstActionInput(e.target.value)}
+                onBlur={commitFirstAction}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                }}
+                placeholder="e.g. open auth.ts, add the middleware stub"
+                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-border bg-card focus:border-accent focus:outline-none transition-colors"
+            />
+        </label>
+    );
+
     if (horizontal) {
         return (
             <div
@@ -621,6 +658,12 @@ function TaskCard({
                                 <>
                                     <div className="h-4 w-px bg-border flex-shrink-0" />
                                     {estimateSection}
+                                </>
+                            )}
+                            {firstActionSection && (
+                                <>
+                                    <div className="h-4 w-px bg-border flex-shrink-0" />
+                                    <div className="min-w-[12rem] flex-1">{firstActionSection}</div>
                                 </>
                             )}
                         </>
@@ -661,6 +704,7 @@ function TaskCard({
                     <>
                         {categoryPills}
                         {estimateSection}
+                        {firstActionSection}
                     </>
                 )}
             </div>

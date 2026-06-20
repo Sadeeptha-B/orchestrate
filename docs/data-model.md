@@ -23,6 +23,14 @@ A Todoist task surfaced inside the plan, always bound to an intention via `inten
 - **background** — Small nudge task. Can be assigned to multiple sessions. Cap: `taskCapDefaults.manualBackground` (default 30 min).
 - **unclassified** — Default after linking. Must be categorized before advancing past Step 2.
 
+**Execution-layer field (v7.4 Phase 2): `contextTrail?: ContextNote[]`** — a cumulative re-entry breadcrumb trail (replaces the Phase-1 `firstAction`/`reentryNote` scalars). Each `ContextNote` is `{ at, text, kind: 'entry' | 'exit' }`:
+- An **`entry`** note is the concrete entry point ("open auth.ts, add the middleware stub"), captured optionally on **main** tasks in Step 2 (`UPSERT_TASK_ENTRY_NOTE`, last-write-wins — at most one).
+- An **`exit`** note is "where I left off", **appended on each Stop/Complete** in Focus Mode (the `exitNote` carried by `STOP_TASK_ENGAGEMENT` / `TOGGLE_TASK_COMPLETE`). Consecutive identical exits de-dupe. Binding the exit note to the close action gives one breadcrumb per work session — the trail *is* the reconstructed mental model across sessions.
+
+Focus Mode renders the **whole trail** under a "Re-entry context" header (plus a "last worked Xm ago" line from the engagement archive) so the cross-session breadcrumbs are all visible; the latest note (`contextTrail.at(-1)`) is the task's current "start here", and the dashboard Current Session rows show it as a truncated `↩` preview. A **"+ Add"** affordance appends an `exit` breadcrumb mid-session (`APPEND_TASK_CONTEXT_NOTE`) so a multi-step session accumulates a visible trail without stopping. Captured into `BacklogEntry.contextTrails` on park, restored on bring-to-today.
+
+**Deliberate gates (v7.4 Phase 2).** Re-entry context is mandatory at the session boundaries: you **cannot Start** a task with an empty `contextTrail` (the dashboard ▶ opens a modal that captures a first concrete action via `UPSERT_TASK_ENTRY_NOTE`, then starts), and you **cannot Stop** in Focus without a next-step note (the Stop button is disabled until the input is non-empty). The dashboard ■ on an engaged task routes to Focus rather than stopping inline, so Stop is note-gated in one place.
+
 **Engagement model (v6.4 — segment list):** engagement is a list of `EngagementSegment` (`{ startedAt, endedAt? }`) on `LinkedTask.segments` / `TodaysHabitInstance.segments`. Each Start→Stop is **one individual segment** — not a cumulative accumulator. Named "segment" (not "session") to avoid clashing with the first-class work `Session`/`SessionSlot`. Duration is always *derived* (`endedAt − startedAt`, or `now − startedAt` while open); no stored minute/second totals.
 
 Lifecycle:
@@ -31,6 +39,8 @@ Lifecycle:
 3. Stop (`STOP_TASK_ENGAGEMENT`): close the open segment (`endedAt = now`), return `status` to `pending` so the ▶/■ button flips back. A subsequent Start pushes a **fresh** segment — the timer counts from 0:00 again, and each Start/Stop is a distinct log entry.
 4. Complete (`TOGGLE_TASK_COMPLETE`): close any open segment, `status = 'completed'`.
 5. Moved to backlog while engaged: the `segments` array is copied into `BacklogEntry.unfinishedTaskRecords`.
+
+**Durable archive (v7.4 Phase 2) — `LifeContext.engagementHistory: EngagementRecord[]`.** Today's live segments are ephemeral (lost at rollover). On **every segment close** (Stop / Complete / Skip, for tasks *and* habit instances), the finalized segment is **written through** to a durable, cross-day archive — `archiveClosedSegment` in the reducer builds an `EngagementRecord` (`{ id, sourceKind, sourceId, title, date, startedAt, endedAt, gapBeforeMinutes? }`) and appends it. Keyed by a **durable** `sourceId` — task `todoistId` or `Habit.id` (*not* the per-day `TodaysHabitInstance.id`) — so re-entry latency and streaks span days. `gapBeforeMinutes` is the minutes since the same source's prior record ended = **re-entry latency**, the input to the re-entry metric (`computeReentryStats`, surfaced in the `EngagementLogCard` header). The archive is bounded by a **90-day rolling prune** (`RETENTION_DAYS` in [`lib/engagementHistory.ts`](../src/lib/engagementHistory.ts)), applied on load and on every append — a transitional measure under localStorage (see §5 + [roadmap/persistence_and_backend_migration.md](roadmap/persistence_and_backend_migration.md)). The `DELETE_*_ENGAGEMENT_SEGMENT` actions edit only today's live record; the archive copy is **not** retroactively removed. Pure helpers (build / append / prune / stats / `lastEndedFor`) live in `lib/engagementHistory.ts`.
 
 **Display — [`<EngagementTimer>`](../src/components/dashboard/EngagementTimer.tsx) + [`lib/engagement.ts`](../src/lib/engagement.ts):** the timer renders one segment as `M:SS` (or `H:MM:SS` past an hour), ticking once per second while the segment is open (no `endedAt`). Card rows (`HabitInstanceCard` / `SessionTimeline`) show only the **open** segment while engaged — counting from 0:00, gone when stopped. The engagement-log view renders **one row per segment** (`segmentSeconds`). Glance surfaces that want a rounded total (timeline-lane badge, backlog memo) derive it via `totalEngagedSeconds(segments)`.
 
@@ -60,7 +70,7 @@ A habit's manifestation for today (both kinds). Lives on `DayPlan.todaysHabits`,
 - **engagement rows** — **one per `EngagementSegment`** across all habit instances + tasks (individual, not cumulative — a Start/Stop/Start produces two rows). Each carries the `segment`; the row renders the ticking `<EngagementTimer>` (live while the segment is open).
 - **reschedule rows** — one per `rescheduleHistory` entry, rendered as "⤴ {title} · {from} → {to} · Rescheduled" at the clock time it happened.
 
-The dashboard renders this in a dedicated **`EngagementLogCard`** (a self-headed sibling of `HabitInstanceCard` on the right rail — the two are independent surfaces, each hidden when empty; both exported from `HabitInstanceCard.tsx`). It is the in-day record of "what actually happened today", and the read interface a future durable `life.engagementHistory` would feed (see [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)) — a flat list of segments harvested across days; the helper signature stays stable so the upgrade swaps the input source, not the consumer. The `HabitInstanceCard` ("Today's Habits") shows no "rescheduled" tag — reschedules live in the log. Closed (non-live) rows are individually deletable from the card via `DELETE_TASK_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_RESCHEDULE_ENTRY`.
+The dashboard renders this in a dedicated **`EngagementLogCard`** (a self-headed sibling of `HabitInstanceCard` on the right rail — the two are independent surfaces, each hidden when empty; both exported from `HabitInstanceCard.tsx`). It is the in-day record of "what actually happened today"; its header now also surfaces the **re-entry metric** (`computeReentryStats` over the durable `life.engagementHistory` — see the Engagement-model archive note above and [roadmap/engagement_record_strategy.md](roadmap/engagement_record_strategy.md)). The log rows themselves still derive from *today's* plan segments (`buildEngagementLog`), so the across-day archive and the in-day view stay separate inputs. The `HabitInstanceCard` ("Today's Habits") shows no "rescheduled" tag — reschedules live in the log. Closed (non-live) rows are individually deletable from the card via `DELETE_TASK_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_ENGAGEMENT_SEGMENT` / `DELETE_HABIT_RESCHEDULE_ENTRY`.
 
 **Refresh merge (`REFRESH_TODAYS_HABITS`):** Called on Step 1 mount and whenever habits / Todoist cache change. For each habit:
 - If no existing instance → append the computed one.
@@ -164,7 +174,7 @@ Not a Habit — no completion semantics, no logging, no streak. Pure prompt data
 
 ### LifeContext
 
-Persistent state slice holding multi-day entities: `seasons`, `habits`, `activeSeasonId`, `restCues`, `backlog`, `sessionTemplates` (v7.1). Persisted to `orchestrate-life-context` localStorage key.
+Persistent state slice holding multi-day entities: `seasons`, `habits`, `activeSeasonId`, `restCues`, `backlog`, `sessionTemplates` (v7.1), `engagementHistory` (v7.4 Phase 2 — the durable, 90-day-pruned archive of closed engagement segments; see the Engagement-model archive note in §3.2). Persisted to `orchestrate-life-context` localStorage key.
 
 ---
 
@@ -210,13 +220,16 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `UNLINK_TASK` | `todoistId` | Removes the LinkedTask, cleans up `linkedTaskIds` and `taskSessions` |
 | `CATEGORIZE_TASK` | `todoistId, taskType` | Sets `type` to main / background / unclassified |
 | `SET_TASK_ESTIMATE` | `todoistId, minutes` | Sets `estimatedMinutes` |
+| `UPSERT_TASK_ENTRY_NOTE` | `todoistId, text, at` | v7.4 Phase 2: sets the single `entry` note on `contextTrail` (trimmed; empty → removed; exit notes preserved) |
+| `APPEND_TASK_CONTEXT_NOTE` | `todoistId, text, at` | v7.4 Phase 2: appends an `exit` breadcrumb to `contextTrail` mid-session ("+ Add" in Focus). Dedups an identical consecutive note; empty text is a no-op. |
+| `QUICK_START` | `intentionTitle, todoistIds, now` | v7.4: atomic low-friction entry. Appends one "Today" intention + a `main` LinkedTask per id (assigned to the session covering `now` via `pickSessionIdForTime`; seeds `sessionSlots` from `settings` if empty), sets `setupComplete`. Caller engages the first task + navigates to `/focus`. Free-typed lines are created as Todoist tasks beforehand. |
 | `ASSIGN_TASK` | `todoistId, sessionId` | Main: exclusive (removes from other sessions first). Background: additive. Updates both `taskSessions` and `assignedSessions`. |
 | `UNASSIGN_TASK` | `todoistId, sessionId` | Removes task from the specified session |
-| `TOGGLE_TASK_COMPLETE` | `todoistId, titleSnapshot?` | Toggles `completed` + `status`. Optionally stores title snapshot. Closes any open engagement. |
+| `TOGGLE_TASK_COMPLETE` | `todoistId, titleSnapshot?, exitNote?` | Toggles `completed` + `status`. Optionally stores title snapshot. Closes any open engagement (archived to `engagementHistory`); on complete, appends `exitNote` to `contextTrail`. |
 | `SYNC_TASK_SNAPSHOTS` | `snapshots` | Batch-updates `titleSnapshot` when Todoist titles change |
 | `REORDER_SESSION_TASKS` | `sessionId, taskIds` | Replaces task order within a session |
 | `START_TASK_ENGAGEMENT` | `todoistId, now` | Sets `status = 'engaged'`. Pushes a new open segment `{ startedAt: now }` to `segments` (no-op if one is open). |
-| `STOP_TASK_ENGAGEMENT` | `todoistId, now` | Closes the open segment (`endedAt = now`), returns `status` to `'pending'`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
+| `STOP_TASK_ENGAGEMENT` | `todoistId, now, exitNote?` | Closes the open segment (`endedAt = now`), returns `status` to `'pending'`. v7.4 Phase 2: archives the closed segment to `engagementHistory` + appends `exitNote` to `contextTrail`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
 | `DELETE_TASK_ENGAGEMENT_SEGMENT` | `todoistId, segmentStartedAt` | Removes the matching segment from a LinkedTask (deletes one Engagement Log row). If it was the open segment and none remain open, returns `status` to `'pending'`. |
 
 ### 3.3 Habit Instance Actions
@@ -225,9 +238,9 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 |---|---|---|
 | `REFRESH_TODAYS_HABITS` | `instances` | **Value-stable merge by `habitId`** (not a blind append): new habits are appended; an existing `planned` instance has its `targetTime`/`durationMinutes`/`titleSnapshot` refreshed from the compute helper (preserving a user-chosen time when `rescheduledAt` is set); engaged/completed/skipped instances are left alone. Returns the same state object when nothing changed, so re-firing is a true no-op (no render loop). See §1 *Refresh merge*. |
 | `START_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'engaged'`. Pushes a new open segment `{ startedAt: now }` (no-op if one is open). |
-| `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes the open segment, returns `status` to `'planned'`. A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
-| `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes any open segment. Caller completes Todoist task. |
-| `SKIP_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'skipped'`. Terminal. Closes any open segment so an in-flight engagement (Start then ✕ Skip) is recorded. Caller (v6.4) posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task, then fires `completeTask` so the recurrence engine advances. |
+| `STOP_HABIT_INSTANCE` | `instanceId, now` | Closes the open segment, returns `status` to `'planned'`. v7.4 Phase 2: archives the closed segment to `engagementHistory` (under `Habit.id` + resolved kind). A subsequent Start pushes a fresh segment (timer from 0:00; distinct log row). |
+| `COMPLETE_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'completed'`, `completedAt = now`, closes any open segment (archived). Caller completes Todoist task. |
+| `SKIP_HABIT_INSTANCE` | `instanceId, now` | Sets `status = 'skipped'`. Terminal. Closes any open segment (archived) so an in-flight engagement (Start then ✕ Skip) is recorded. Caller (v6.4) posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task, then fires `completeTask` so the recurrence engine advances. |
 | `RESCHEDULE_HABIT_INSTANCE` | `instanceId, newTargetTime?, now` | **v6.4: always in-place.** Updates `targetTime`, stamps `rescheduledAt`, appends a `RescheduleEventEntry` to `rescheduleHistory`. Keeps `id`/`status`/`segments` (engaged instances keep their open segment running). Logged regardless of engagement. No clone, no Todoist write. |
 | `DELETE_HABIT_ENGAGEMENT_SEGMENT` | `instanceId, segmentStartedAt` | Removes the matching segment from a `TodaysHabitInstance` (deletes one Engagement Log row). If it was the open segment and none remain open, returns `status` to `'planned'`. |
 | `DELETE_HABIT_RESCHEDULE_ENTRY` | `instanceId, rescheduleAt` | Removes the matching `RescheduleEventEntry` from `rescheduleHistory` (deletes one reschedule row from the Engagement Log). Does not restore `targetTime`. |
@@ -237,8 +250,8 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 
 | Action | Payload | Effect |
 |---|---|---|
-| `MOVE_INTENTION_TO_BACKLOG` | `intentionId, reason?` | Scrubs intention + LinkedTasks from plan. Builds BacklogEntry (captures each engaged task's `segments`). Appends to `life.backlog`. Caller handles Todoist unschedule. |
-| `RESTORE_FROM_BACKLOG` | `backlogId, taskCache, now?` | Pulls entry off backlog. Appends intention to plan. Rebuilds fresh LinkedTasks for pending IDs (unclassified, no estimate). Stamps reschedule fields on previously-engaged tasks. |
+| `MOVE_INTENTION_TO_BACKLOG` | `intentionId, reason?` | Scrubs intention + LinkedTasks from plan. Builds BacklogEntry (captures each engaged task's `segments` + v7.4-Phase-2 `contextTrails`). Appends to `life.backlog`. Caller handles Todoist unschedule. |
+| `RESTORE_FROM_BACKLOG` | `backlogId, taskCache, now?` | Pulls entry off backlog. Appends intention to plan. Rebuilds fresh LinkedTasks for pending IDs (unclassified, no estimate). Stamps reschedule fields on previously-engaged tasks; restores captured `contextTrail`. |
 | `DELETE_BACKLOG_ENTRY` | `backlogId` | Removes entry. Caller handles Todoist unschedule. |
 
 ### 3.5 Wizard & Global Actions
@@ -313,25 +326,38 @@ Operate on `LifeContext.sessionTemplates` (mirrors the Habit/RestCue CRUD patter
 
 ## 4. Schema Version & Compatibility
 
-Current schema: **7.1**. Every persisted slice (plan / settings / life) and every saved-session plan
-is stamped with `_schemaVersion` on write. **There is no in-app migration** — the historical v1→v7.1
-chain (and the `_wizardSteps` step-remap) was removed; it lives in git history.
+Current schema: `SCHEMA_VERSION` = **7.4** (v7.4 Phase 2 — the first bump since 7.1). Every persisted
+slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` on write.
+The posture is a **supported floor**, `MIN_SUPPORTED_SCHEMA` = **7.1** (both constants + gate helpers in
+`src/lib/schema.ts`): artifacts stamped within `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` are accepted and
+**migrated forward**; older ones are rejected. The deep v1→7.1 chain (and the `_wizardSteps` step-remap)
+was deleted for cost reasons and lives in git history.
 
-**Hard guard (7.1 only).** A single helper, `isCurrentSchema(raw)` (`raw._schemaVersion === SCHEMA_VERSION`),
-gates every read:
-- **Load.** `loadPlan` / `loadSettings` / `loadLifeContext` reject anything not stamped `7.1` and fall back
-  to a fresh/default value (the app starts clean rather than crashing). `loadHistory` keeps only saved
-  plans stamped `7.1`. Plan markers are stripped via `stripPlanMarkers` before use.
-- **Import.** `DataManagement` refuses a Full Backup whose top-level `_schemaVersion !== 7.1`, rejects malformed nested slices, and rejects saved sessions whose plans aren't `7.1` (`validateSessions`), surfacing an error instead of dispatching.
+**7.1 → 7.4 migration** (`migrateToCurrent`): **plan** — fold each `LinkedTask.firstAction`/`reentryNote`
+into a single `contextTrail` (entry/exit `ContextNote`s) and drop the scalars; **life** — default
+`engagementHistory` to `[]`. Saved plans in history (and imported sessions/backups) run through the same
+plan step via `migrateSavedPlan`, then re-stamp.
+
+**Floor-and-migrate guard.** `isSupportedSchemaVersion(v)` (`v >= MIN_SUPPORTED_SCHEMA && v <= SCHEMA_VERSION`,
+exported) is the shared numeric gate; `migrateToCurrent(raw, slice)` is the forward-migration seam:
+- **Load.** `loadPlan` / `loadSettings` / `loadLifeContext` reject anything below the floor (fall back to a
+  fresh/default value so the app starts clean rather than crashing) and run supported-but-older artifacts
+  through `migrateToCurrent`. `loadHistory` keeps saved plans whose stamp is in range. Plan markers are
+  stripped via `stripPlanMarkers` after migration.
+- **Import.** `DataManagement` gates Full Backups and saved sessions (`validateSessions`) with the same
+  `isSupportedSchemaVersion` predicate, rejecting malformed nested slices and out-of-range stamps with an
+  error instead of dispatching.
 - **Restore.** `RESTORE_DAY` trusts history (already guarded) and just strips markers + re-dates to today.
 
-This is safe for in-place data because the live app already persists every slice in 7.1 shape with the
-marker. Because there's no migration, the author re-exports a fresh session + Full Backup once on this
-change; those become the canonical 7.1 artifacts going forward.
+This is safe for in-place data because the live app persists every slice in current shape with the marker.
 
-**Adding a future migration.** Bump `SCHEMA_VERSION`, then either (a) re-introduce a `migrate*()` step
-branching on the stamped version, or (b) keep the hard guard and re-export. The `_schemaVersion` stamp is
-the anchor for either path.
+**Making a non-additive change.** This is a first-class option, not a last resort — bump `SCHEMA_VERSION`
+and add a single forward step (e.g. the `if (from < 7.4) …` block) inside `migrateToCurrent`, keyed on the
+parsed stamp. Compat is retained from `MIN_SUPPORTED_SCHEMA` upward only; when an old step gets too
+expensive, **raise `MIN_SUPPORTED_SCHEMA`** and delete the dead steps. A *plan* migration must also reach
+kept history entries and imported saved sessions — route them through `migrateSavedPlan` (as `loadHistory`
+/ `IMPORT_SESSIONS` / `IMPORT_BACKUP` do). Prefer additive when the existing shape already fits; bump when
+it doesn't.
 
 ---
 
@@ -342,7 +368,7 @@ the anchor for either path.
 | `orchestrate-day-plan` | Serialized `DayPlan` + `_schemaVersion` marker | Marker read by the load-time schema guard only |
 | `orchestrate-settings` | Serialized `AppSettings` + `_schemaVersion` | No token here — the Todoist token is server-side in KV |
 | `orchestrate-history` | `SavedDayPlan[]` | Each entry's `plan` carries its own `_schemaVersion`; non-`7.1` entries are dropped on load |
-| `orchestrate-life-context` | Serialized `LifeContext` + `_schemaVersion` | Seasons, habits, backlog, rest cues, session templates (v7.1) |
+| `orchestrate-life-context` | Serialized `LifeContext` + `_schemaVersion` | Seasons, habits, backlog, rest cues, session templates (v7.1), engagementHistory (v7.4 Phase 2 — 90-day-pruned archive; ~1 MB worst case) |
 | `orchestrate-todoist-cache` | `{ tasks, projects, sections, fetchedAt }` | Stale-while-revalidate (5min hydration / 30s focus) |
 | `orchestrate-cf-secret` | Shared secret guarding the Worker endpoints | Installation-specific; never backed up |
 | `orchestrate-theme` | `"light"` or `"dark"` | Written by `useTheme` |

@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { downloadJSON } from '../../lib/download';
-import { SCHEMA_VERSION } from '../../context/DayPlanContext';
+import { SCHEMA_VERSION, isSupportedSchemaVersion } from '../../lib/schema';
 import type { AppSettings, LifeContext, SavedDayPlan } from '../../types';
 
 interface FullBackup {
@@ -29,8 +29,8 @@ function validateSessions(data: unknown): SavedDayPlan[] | null {
             typeof (item as SavedDayPlan).label !== 'string' ||
             !(item as SavedDayPlan).plan ||
             !Array.isArray((item as SavedDayPlan).plan?.intentions) ||
-            // Schema guard: only accept current-version saved plans (no migration).
-            (item as unknown as { plan: { _schemaVersion?: number } }).plan?._schemaVersion !== SCHEMA_VERSION
+            // Schema guard: accept saved plans within the supported range (floor → current).
+            !isSupportedSchemaVersion((item as unknown as { plan: { _schemaVersion?: number } }).plan?._schemaVersion)
         ) {
             return null;
         }
@@ -42,7 +42,8 @@ function validateBackup(data: unknown): FullBackup | null {
     if (!isRecord(data) || (!data.settings && !data.life && !data.history)) {
         return null;
     }
-    if (data._schemaVersion !== SCHEMA_VERSION) {
+    // Schema guard: accept backups within the supported range (floor → current).
+    if (!isSupportedSchemaVersion(data._schemaVersion)) {
         return null;
     }
     if (data.settings !== undefined && !isRecord(data.settings)) {
@@ -59,7 +60,7 @@ function validateBackup(data: unknown): FullBackup | null {
         life: data.life as LifeContext | undefined,
         history: data.history as SavedDayPlan[] | undefined,
         _backupVersion: typeof data._backupVersion === 'number' ? data._backupVersion : undefined,
-        _schemaVersion: data._schemaVersion,
+        _schemaVersion: typeof data._schemaVersion === 'number' ? data._schemaVersion : undefined,
     };
 }
 
@@ -150,10 +151,10 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     setImportError('File is not a recognised Orchestrate full backup.');
                     return;
                 }
-                // Schema guard: refuse backups that aren't the current version (no migration).
-                if (parsed._schemaVersion !== SCHEMA_VERSION) {
+                // Schema guard: refuse backups outside the supported range (floor → current).
+                if (!isSupportedSchemaVersion(parsed._schemaVersion)) {
                     setImportError(
-                        `Backup is from an unsupported version (expected schema ${SCHEMA_VERSION}). Only current backups can be imported.`,
+                        `Backup is from an unsupported version (expected schema ${SCHEMA_VERSION} or a supported predecessor). Only supported backups can be imported.`,
                     );
                     return;
                 }
