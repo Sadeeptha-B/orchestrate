@@ -84,7 +84,7 @@ export function QuickStart({ open, onClose }: QuickStartProps) {
 
             reset();
             onClose();
-            navigate('/focus', { state: { todoistId: todoistIds[0] } });
+            navigate('/focus');
         } finally {
             setBusy(false);
         }

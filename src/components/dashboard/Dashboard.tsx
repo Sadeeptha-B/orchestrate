@@ -20,7 +20,7 @@ import { HeaderControls } from '../ui/HeaderControls';
 import { CollapsibleSection } from '../ui/CollapsibleSection';
 import { ActiveSeasonBadge } from '../life/ActiveSeasonBadge';
 import { SeasonContextCard } from '../life/SeasonContextCard';
-import { HabitInstanceCard, MicroGapCard, EngagementLogCard } from './HabitInstanceCard';
+import { HabitInstanceCard, MicroGapCard } from './HabitInstanceCard';
 import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 
@@ -120,6 +120,9 @@ export function Dashboard() {
                         <Button variant="ghost" size="sm" onClick={() => navigate('/life')}>
                             Life
                         </Button>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/focus')} title="Enter Focus Mode">
+                            ◎ Focus
+                        </Button>
                         <Button
                             variant="ghost"
                             size="sm"
@@ -194,15 +197,32 @@ export function Dashboard() {
                                 <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
                                     Today
                                 </h3>
-                                <button
-                                    onClick={() => setAdjustingDay((a) => !a)}
-                                    className={`hidden md:inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${adjustingDay
-                                        ? 'border-accent bg-accent/10 text-accent'
-                                        : 'border-border bg-card text-text-light hover:text-accent hover:border-accent'}`}
-                                    title="Move, resize, or add/remove today's sessions"
-                                >
-                                    {adjustingDay ? '✓ Done adjusting' : '✎ Adjust day'}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {/* v7.5: Focus Mode strictness — when strict, the first-action note (start) and
+                                        the next-step note (Stop / Exit) are required; relaxed makes them optional. */}
+                                    <button
+                                        onClick={() =>
+                                            dispatch({ type: 'UPDATE_SETTINGS', settings: { focusStrict: !(settings.focusStrict ?? true) } })
+                                        }
+                                        className={`hidden md:inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${(settings.focusStrict ?? true)
+                                            ? 'border-accent bg-accent/10 text-accent'
+                                            : 'border-border bg-card text-text-light hover:text-accent hover:border-accent'}`}
+                                        title={(settings.focusStrict ?? true)
+                                            ? 'Focus is strict: a first-action note and a next-step note are required. Click to relax.'
+                                            : 'Focus is relaxed: start/next-step notes are optional. Click to make them required.'}
+                                    >
+                                        {(settings.focusStrict ?? true) ? '🔒 Focus: Strict' : '🔓 Focus: Relaxed'}
+                                    </button>
+                                    <button
+                                        onClick={() => setAdjustingDay((a) => !a)}
+                                        className={`hidden md:inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${adjustingDay
+                                            ? 'border-accent bg-accent/10 text-accent'
+                                            : 'border-border bg-card text-text-light hover:text-accent hover:border-accent'}`}
+                                        title="Move, resize, or add/remove today's sessions"
+                                    >
+                                        {adjustingDay ? '✓ Done adjusting' : '✎ Adjust day'}
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="mt-6 hidden md:block border border-border rounded-xl overflow-hidden px-4 py-1">
@@ -269,8 +289,6 @@ export function Dashboard() {
                                         <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
                                     </div>
                                 </CollapsibleSection>
-
-                                <EngagementLogCard />
                             </div>
 
                             <aside className="lg:w-96 lg:flex-shrink-0 space-y-6">

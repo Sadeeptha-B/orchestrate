@@ -1,8 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../ui/Card';
-import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
 import { SessionTimelineBar } from '../ui/SessionTimelineBar';
 import { SessionCapacityBadge } from './SessionCapacityBadge';
 import { SessionCapacityBanner } from './SessionCapacityBanner';
@@ -97,7 +95,7 @@ interface TaskRowProps {
 }
 
 function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }: TaskRowProps) {
-    const { plan, dispatch } = useDayPlan();
+    const { plan, settings, dispatch } = useDayPlan();
     const { moveTask } = useTaskPlacement();
     const navigate = useNavigate();
     const { completeTask, reopenTask } = useTodoistActions();
@@ -110,8 +108,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
     const isDragOver = canReorder && drag!.dragOverId === linkedTask.todoistId && drag!.dragId !== linkedTask.todoistId;
     const isEngaged = linkedTask.status === 'engaged';
     const liveSegment = isEngaged ? openSegment(linkedTask.segments) : undefined;
-    const [askFirstAction, setAskFirstAction] = useState(false);
-    const [firstActionDraft, setFirstActionDraft] = useState('');
+    const strict = settings.focusStrict ?? true;
 
     const handleToggle = () => {
         dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title });
@@ -122,39 +119,36 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
         }
     };
 
-    const startEngagement = () => {
+    const openFocus = () => navigate('/focus');
+    const startInPlace = () =>
         dispatch({ type: 'START_TASK_ENGAGEMENT', todoistId: linkedTask.todoistId, now: new Date().toISOString() });
-        // v7: starting engagement on a task drops into Focus Mode (one task, timer, optional pomodoro).
-        navigate('/focus', { state: { todoistId: linkedTask.todoistId } });
-    };
 
+    // ▶ / ■. Behaviour follows the strict toggle.
+    //  - engaged + strict → ■ opens Focus, where the required next-step note is captured before Stop.
+    //  - engaged + relaxed → ■ stops in place: no final note is recorded, so routing to Focus (v7.5)
+    //    was pointless friction (v7.6 fix). The segment closes right on the dashboard.
+    //  - not engaged + strict → start + land directly in Focus (first-action capture happens there).
+    //  - not engaged + relaxed → start the timer in place; the dashboard stays put.
     const handleEngagementToggle = () => {
-        // v7.4 Phase 2: never Stop inline — Stop is gated on a next-step note, which lives in Focus.
-        // An already-engaged task re-opens Focus (where the timer + Stop control are).
         if (isEngaged) {
-            navigate('/focus', { state: { todoistId: linkedTask.todoistId } });
+            if (strict) {
+                openFocus();
+            } else {
+                dispatch({ type: 'STOP_TASK_ENGAGEMENT', todoistId: linkedTask.todoistId, now: new Date().toISOString() });
+            }
             return;
         }
-        // v7.4 Phase 2: don't start a task with no context — require a first concrete action first.
-        const hasContext = (linkedTask.contextTrail?.length ?? 0) > 0;
-        if (!hasContext) {
-            setFirstActionDraft('');
-            setAskFirstAction(true);
-            return;
-        }
-        startEngagement();
+        startInPlace();
+        if (strict) openFocus();
     };
 
-    const confirmFirstAction = () => {
-        const text = firstActionDraft.trim();
-        if (!text) return;
-        dispatch({ type: 'UPSERT_TASK_ENTRY_NOTE', todoistId: linkedTask.todoistId, text, at: new Date().toISOString() });
-        setAskFirstAction(false);
-        startEngagement();
+    // ◎ : explicit Focus entry, shown in relaxed mode so the user can still choose the focused view.
+    const handleOpenFocus = () => {
+        if (!isEngaged) startInPlace();
+        openFocus();
     };
 
     return (
-        <>
         <li
             draggable={canReorder || isAnytimeSource}
             onDragStart={
@@ -197,10 +191,23 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
                         ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300'
                         : 'text-text-light/60 hover:text-accent hover:bg-accent-subtle'
                         }`}
-                    aria-label={isEngaged ? 'Open Focus to stop' : 'Start engagement timer'}
-                    title={isEngaged ? 'Open Focus to stop' : 'Start'}
+                    aria-label={isEngaged ? (strict ? 'Open Focus to stop' : 'Stop engagement timer') : strict ? 'Start in Focus Mode' : 'Start engagement timer'}
+                    title={isEngaged ? (strict ? 'Open Focus to stop' : 'Stop (no note needed in relaxed)') : strict ? 'Start — lands in Focus Mode' : 'Start working (timer stays here)'}
                 >
                     {isEngaged ? '■' : '▶'}
+                </button>
+            )}
+
+            {/* v7.5: in relaxed mode ▶ keeps the timer on the dashboard, so this ◎ is the explicit way
+                into the distraction-free Focus page. In strict mode ▶ already lands in Focus. */}
+            {!linkedTask.completed && !isEngaged && !strict && (
+                <button
+                    onClick={handleOpenFocus}
+                    className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer text-[11px] leading-none text-text-light/60 hover:text-accent hover:bg-accent-subtle"
+                    aria-label="Enter Focus Mode for this task"
+                    title="Enter Focus Mode"
+                >
+                    ◎
                 </button>
             )}
 
@@ -220,16 +227,13 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
             </button>
 
             <span className="flex-1 min-w-0">
+                {/* v7.6: the re-entry breadcrumb preview moved to the Focus picker — it's execution-level
+                    metadata, surfaced where you choose what to work on, not on the planning dashboard. */}
                 <span className={`block text-sm truncate ${linkedTask.completed ? 'line-through text-text-light' : ''} ${isStale ? 'italic' : ''}`}>
                     {linkedTask.completed && <span className="mr-1">🎉</span>}
                     {isStale && <span className="mr-1" title="Task not found in Todoist">⚠</span>}
                     {title}
                 </span>
-                {!linkedTask.completed && linkedTask.contextTrail?.at(-1) && (
-                    <span className="block text-[11px] text-text-light truncate" title={linkedTask.contextTrail.at(-1)!.text}>
-                        ↩ {linkedTask.contextTrail.at(-1)!.text}
-                    </span>
-                )}
             </span>
 
             {liveSegment && (
@@ -304,32 +308,6 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
                 )}
             </div>
         </li>
-        <Modal open={askFirstAction} onClose={() => setAskFirstAction(false)} title="First concrete action">
-            <div className="space-y-3">
-                <p className="text-sm text-text-light">
-                    Before you start, name the concrete entry point — the specific first move, not the whole task.
-                    This is what you'll see when you return.
-                </p>
-                <input
-                    autoFocus
-                    type="text"
-                    value={firstActionDraft}
-                    onChange={(e) => setFirstActionDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && firstActionDraft.trim()) confirmFirstAction();
-                    }}
-                    placeholder="e.g. open auth.ts, add the middleware stub"
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card focus:border-accent focus:outline-none transition-colors"
-                />
-                <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setAskFirstAction(false)}>Cancel</Button>
-                    <Button size="sm" disabled={!firstActionDraft.trim()} onClick={confirmFirstAction}>
-                        Start working
-                    </Button>
-                </div>
-            </div>
-        </Modal>
-        </>
     );
 }
 

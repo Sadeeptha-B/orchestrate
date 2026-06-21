@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
     open: boolean;
@@ -19,7 +20,9 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
 
     if (!open) return null;
 
-    return (
+    // Portal to <body> so the overlay can't inherit an ancestor's `opacity`/transform (e.g. a
+    // past-session card rendered at opacity-50), which would otherwise grey out the whole modal.
+    return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div
                 className="absolute inset-0 bg-black/30 backdrop-blur-sm"
@@ -45,6 +48,7 @@ export function Modal({ open, onClose, children, title }: ModalProps) {
                     {children}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }

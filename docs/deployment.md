@@ -139,7 +139,13 @@ The frontend dev server (`npm run dev`) does **not** run the Pages Functions, so
    GOOGLE_CLIENT_SECRET=...
    APP_SHARED_SECRET=...
    ```
-2. Build, then run Pages locally (serves `dist/` + `functions/` together on `http://localhost:8788`):
+2. Run the full stack locally with auto-reload — one command, no manual build loop, served on `http://localhost:8788`:
+   ```bash
+   npm run dev:full
+   ```
+   This runs `vite build --watch` alongside `wrangler pages dev dist --live-reload`: edit any source file → Vite rebuilds `dist/` → Wrangler reloads the browser. Changes under `functions/` are picked up automatically too. It's a **full-page reload after a ~1–2s rebuild**, not module-level HMR — the proxy/`--proxy` mode that gave true HMR is deprecated in Wrangler 4 and conflicts with `pages_build_output_dir` in `wrangler.toml`. For pure UI work where you don't need the Functions, `npm run dev` (plain Vite, instant HMR) is still the fastest loop.
+
+   To serve a one-off production build instead (e.g. to test the exact bundled output), build and point Wrangler at `dist/` manually:
    ```bash
    npm run build
    npx wrangler pages dev dist
