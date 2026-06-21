@@ -111,6 +111,7 @@ function withSettingsDefaults(s: AppSettings): AppSettings {
         ...s,
         taskCapDefaults: fillTaskCaps(s.taskCapDefaults),
         sessionBufferMinutes: s.sessionBufferMinutes ?? DEFAULT_SESSION_BUFFER_MINUTES,
+        focusStrict: s.focusStrict ?? true,
     };
 }
 
@@ -405,6 +406,7 @@ type Action =
     | { type: 'SET_TASK_ESTIMATE'; todoistId: string; minutes: number }
     | { type: 'UPSERT_TASK_ENTRY_NOTE'; todoistId: string; text: string; at: string }
     | { type: 'APPEND_TASK_CONTEXT_NOTE'; todoistId: string; text: string; at: string }
+    | { type: 'DELETE_TASK_CONTEXT_NOTE'; todoistId: string; at: string; kind: 'entry' | 'exit' }
     | { type: 'QUICK_START'; intentionTitle: string; todoistIds: string[]; now: string }
     | { type: 'ASSIGN_TASK'; todoistId: string; sessionId: string }
     | { type: 'UNASSIGN_TASK'; todoistId: string; sessionId: string }
@@ -623,6 +625,17 @@ function reducer(state: State, action: Action): State {
                 if (lt.todoistId !== action.todoistId) return lt;
                 const contextTrail = appendExitNote(lt.contextTrail, action.text, action.at);
                 return contextTrail ? { ...lt, contextTrail } : lt;
+            });
+            return { ...state, plan: { ...plan, linkedTasks } };
+        }
+
+        case 'DELETE_TASK_CONTEXT_NOTE': {
+            // v7.6: remove a single breadcrumb from the trail (matched by timestamp + kind), driven by
+            // the per-task focus timeline. The trail collapses to `undefined` when emptied.
+            const linkedTasks = plan.linkedTasks.map((lt) => {
+                if (lt.todoistId !== action.todoistId) return lt;
+                const trail = (lt.contextTrail ?? []).filter((n) => !(n.at === action.at && n.kind === action.kind));
+                return { ...lt, contextTrail: trail.length > 0 ? trail : undefined };
             });
             return { ...state, plan: { ...plan, linkedTasks } };
         }

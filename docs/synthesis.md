@@ -79,11 +79,13 @@ Life routes are always reachable (no `setupComplete` gate) — `setupComplete` i
 
 ### 3.3 Focus Mode (v7)
 
-Pressing **▶ Start** on a task in the Current Session card opens an engagement segment *and* navigates
-to `/focus` — a distraction-free page showing only the day timeline (reused `SessionTimeline`), the one
-engaged task, and a large count-up timer. The page derives its target via `findActiveFocusTask(plan)`
-(the engaged `LinkedTask` with an open segment), so it reflects Stop/Complete instantly and survives a
-reload. **Stop** closes the segment; **Complete** ticks the task in Todoist and returns to `/`.
+Pressing **▶ Start** on a task in the Current Session card opens an engagement segment. Where it lands
+follows the strict toggle (v7.5/7.6): **strict** drops straight into `/focus` (the first-action capture
+happens there); **relaxed** runs the timer **in place** on the dashboard row and exposes a **◎** icon to
+enter `/focus` on demand. Focus is a distraction-free page; its target is derived via
+`findActiveFocusTask(plan)` (the engaged `LinkedTask` with an open segment), so it reflects Stop/Complete
+instantly and survives a reload. **Stop** closes the segment; **Complete** ticks the task in Todoist and
+returns to `/`. See the v7.6 state machine below for the in-page flow.
 
 An optional **Pomodoro** engine (toggle persisted in `localStorage`) turns the task's estimate into a
 slot schedule via `computeFocusPlan(estimate)`: ≥45 min → 20-min work blocks with 5-min breaks; 30–44
@@ -91,10 +93,9 @@ min → 10-min blocks; <30 min or unestimated → a single session. The blocks r
 `FocusSlotPlan`, and when the engine runs (`resolveBlockAt`) it highlights the live block, counts it
 down, and fires a chime (`lib/sound.ts`) + notification at each work↔break boundary.
 
-Focus Mode is the app's **execution surface**, so the **music protocol** lives here: a collapsible
-"Music & Tips" panel (`FocusMusicPanel`, starts collapsed) wraps the shared `MusicProvider` and renders
-the `PlaylistSelector`, `SpotifyPlayer`, and the static `InsightCard` transition tips. The dashboard no
-longer carries the Spotify embed.
+Focus Mode is the app's **execution surface**, so the **music protocol** lives here: the shared
+`MusicProvider` wraps a card-less `PlaylistSelector` + `SpotifyPlayer` above the timer (v7.6). The
+dashboard no longer carries the Spotify embed. (The static transition-tips card was dropped in v7.6.)
 
 A separate **focus nudge** (`useFocusNudge`, wired in the Dashboard) notifies the user — browser
 notification + in-app banner — if they've been in an active session ≥10 min without engaging anything
@@ -118,12 +119,67 @@ it counts down, fires a chime + "begin work" notification at zero, and the engag
 running alongside. Ramp is still a local component feature (mirrors the Pomodoro toggle) — no
 schema/reducer change.
 
+**v7.5 — Focus entry + strictness config.** Starting a task no longer drops the user into Focus; **▶**
+starts the engagement timer in place and a separate **◎** row icon is the explicit way into `/focus`.
+The **first-concrete-action** modal now shows the task title, and (since `Modal` portals to `<body>`)
+it renders at full opacity even when the launching row sits inside a dimmed past-session card. A new
+`settings.focusStrict` flag (default **true**, toggled from a **🔒/🔓 Focus: Strict/Relaxed** pill in the
+dashboard *Today* header) governs the note gates: **strict** keeps the first-action note (on Start) and
+the next-step note (on Stop **and on leaving Focus**) *required*; **relaxed** makes both optional. The
+Focus header carries a **theme toggle**, and the **Exit** button is note-gated in strict mode — closing
+the prior escape hatch where Exit bypassed the Stop note (relaxed mode commits any draft as a breadcrumb
+on the way out). Additive settings field; no schema bump.
+
+**v7.6 — Focus Mode execution improvements.** This iteration turns Focus into a first-class execution
+surface built around an explicit state machine, and pushes execution-level metadata off the planning
+dashboard into Focus. There are two Focus surfaces:
+
+- **Selection — `FocusPicker`** (shown when nothing is engaged: fresh entry via the dashboard's **◎ Focus**
+  header button, or right after a Stop, so there's no "No task / Exit" dead-end). It lists today's
+  incomplete tasks grouped by intention (each with its latest `↩` breadcrumb — moved here from the
+  dashboard rows; **drag-to-reorder** within an intention via `REORDER_INTENTION_TASKS`), the
+  **day-context `SessionTimeline` bar** (moved out of the timer surface), and the **day-wide engagement
+  log** (`EngagementTimeline`, reusing `buildEngagementLog` — moved off the dashboard). Picking a task
+  engages it → the execution surface mounts.
+- **Execution — `FocusActive`**, a four-phase machine with exactly one phase owning the centre:
+  **`firstAction` → `ramp` → `working` ⇄ `stopping`**. `firstAction` (strict-only, when the trail has no
+  `entry` note) captures the concrete first move *inline in the card* (the old dashboard modal is gone) via
+  `UPSERT_TASK_ENTRY_NOTE`. `ramp` is the **default entry phase** (we always ease in before the timer)
+  and centres the activation-ramp countdown with the task timer de-emphasised beside it; Begin/Skip →
+  `working`, **Stop** → `stopping`. `working` centres the task count-up (or the Pomodoro block display).
+  Both `ramp` and `working` carry a **bottom action bar** (Stop / Complete; Pomodoro toggle while working).
+  **Stop** swaps the centre for `stopping` — the next-step input — where **Continue** returns without
+  committing, **+ Add breadcrumb** appends an `exit` note mid-session (`APPEND_TASK_CONTEXT_NOTE`), and
+  **Stop** closes the segment (→ back to the picker). The in-card **`PhaseStepper`** shows machine position
+  (drops `firstAction` in relaxed mode) and is **clickable to navigate** — backwards to re-contextualize, or
+  forwards (e.g. `ramp` → Focused / Wrap up), the only gate being you can't skip *out* of `firstAction`.
+  Toggling the **strict/relaxed pill** mid-`firstAction` advances the machine in the same handler so it
+  never strands.
+
+The timer is an **ambient surface** (no hard card) at dashboard width (`max-w-5xl`), with a compact music
+panel on top. **The card body (`TimerTaskList`) is the intention's vertical task list**: the focused task
+expands to host the state machine, the others are compact rows (click to **switch focus** — `switchTo`,
+note-gated in strict). The header carries the intention name, an **intention carousel** (prev/next browses
+intentions *without* engaging — "moving out of the task outside the stop flow"), and an **✎ Edit toggle**
+that drops the list into a **drag-to-reorder** view (`REORDER_INTENTION_TASKS`). Beside the timer, the
+**`EngagementTimeline`** is the *same* day-wide log shown on the picker (shared `TimelineFrame`/`TimelineRow`
+primitives), reused here with the **currently-executing task's cards highlighted**. Each engagement is its
+**own bordered card** (parent intention · title · duration); `entry`/`exit` notes sit **outside** the card
+and are **deletable** (`DELETE_TASK_CONTEXT_NOTE`). The list behaves like a **transcript** — it sticks to the
+latest engagement at the bottom and shows a **jump-to-latest** affordance when scrolled up; hovering a card
+**portals a popover** (so the scroll container can't clip it) with that intention's tasks in order. The
+header surfaces the **re-entry metric** (`computeReentryStats`). A **back arrow** **peeks** the picker (router
+`state.pick`) without ending the engagement (timer keeps running; chooser hidden while peeking). Dashboard
+tidy-up: in **relaxed** mode the engaged **■** **stops in place** instead of routing to Focus (strict still
+routes to capture the required note); the low-value transition-tips card is gone. One small reducer add
+(`DELETE_TASK_CONTEXT_NOTE`); otherwise view/local-state — no schema change.
+
 **v7.4 Phase 2 — durable engagement history.** Every segment close (Stop/Complete/Skip, tasks +
 habits) is **written through** to `LifeContext.engagementHistory` — a durable `EngagementRecord[]`
 keyed by a durable source id (`todoistId` / `Habit.id`) so re-entry latency and streaks survive
-rollover. Bounded by a **90-day rolling prune** (transitional under localStorage). The
-`EngagementLogCard` header surfaces the **re-entry metric** (`computeReentryStats`) — making the v7.4
-success metric (re-entry rate) actually measurable. Pure helpers in `lib/engagementHistory.ts`.
+rollover. Bounded by a **90-day rolling prune** (transitional under localStorage). The **re-entry metric**
+(`computeReentryStats`) is computed from this history. Pure helpers in `lib/engagementHistory.ts`. (v7.6:
+the day's engagement log itself moved off the dashboard into the Focus picker as `DayEngagementTimeline`.)
 
 ---
 
@@ -214,7 +270,7 @@ The operational view for the rest of the day (`Dashboard.tsx`):
   5b. **Anytime today** (`AnytimeTray`) -- linked, still-open tasks committed for today but in no session (`assignedSessions.length === 0`, via `unscheduledTasks`), grouped by intention; also a drop target for "set aside for anytime". Hidden when empty.
   6. **Task Manager** -- collapsible `TodoistPanel`, defaulting to "Linked Tasks" filter.
   7. **Calendar** -- collapsible Google Calendar embed.
-  8. **Engagement Log** (`EngagementLogCard`) -- a scrollable, time-ordered record: one row per engagement segment (individual Start→Stop, across habits + micro-gaps + tasks) plus reschedule events; see [`lib/engagementLog.ts`](../src/lib/engagementLog.ts).
+  - *(v7.6: the **Engagement Log** moved off the dashboard into the Focus picker as `DayEngagementTimeline` — same `buildEngagementLog` data, redrawn in the shared focus-timeline visual.)*
 - **Right rail** (`HabitInstanceCard.tsx` exports both): independent, self-headed cards, each hidden when empty:
   - **Today's Habits** (`HabitInstanceCard`) -- today's **'habit'-kind** instances: timed (Scheduled) + untimed (Anytime), with per-row Start/Stop/Complete/Skip/Reschedule. Engaged rows show a live **m:s timer** (`<EngagementTimer>`, ticks once/sec, counts the current open segment from 0:00).
   - **Micro-gaps** (`MicroGapCard`, v6.7) -- today's **'micro-gap'-kind** instances: ▶ Start / ■ Stop only (repeatable), with a rep-count + total-time badge. No Todoist, no terminal complete.

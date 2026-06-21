@@ -214,6 +214,9 @@ export interface AppSettings {
     habitsTodoistProjectId?: string;    // v6.1: Todoist project all habit-tasks live under; lazily created on first habit save
     timelineStartMinutes?: number;      // minutes since midnight; default 270 (4:30 am)
     timelineEndMinutes?: number;        // minutes since midnight; default 1440 (midnight)
+    // v7.5: Focus Mode strictness. When true (default), the first-concrete-action note (on start) and
+    // the next-step note (on Stop / on leaving Focus) are *required*; when false they're optional.
+    focusStrict?: boolean;
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────

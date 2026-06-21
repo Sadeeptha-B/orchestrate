@@ -507,19 +507,40 @@ export function UserGuide() {
 
                     <Section id="focus-mode" title="9b. Focus Mode — one task, one timer">
                         <p>
-                            When you press <strong>▶ Start</strong> on a task in the Current Session, Orchestrate drops
-                            into <strong>Focus Mode</strong> — a stripped-down page with just the day timeline, the one
-                            task you're working on, and a large timer counting your time on it. It's the antidote to the
-                            busy dashboard: one thing, in front of you, with the clock running. <strong>Stop</strong>{' '}
-                            pauses; <strong>Complete</strong> ticks the task off and returns you home. <strong>Exit</strong>{' '}
-                            leaves the timer running and goes back to the dashboard.
+                            Pressing <strong>▶ Start</strong> on a task in the Current Session begins its timer — where you
+                            land depends on the <strong>Strict / Relaxed</strong> toggle. In <strong>Strict</strong> you go
+                            straight into <strong>Focus Mode</strong>; in <strong>Relaxed</strong> the timer runs{' '}
+                            <em>in place</em> on the dashboard row and a <strong>◎</strong> icon lets you enter Focus when
+                            you want it. You can also jump in any time with the <strong>◎ Focus</strong> button in the
+                            dashboard header. Focus is the antidote to the busy dashboard: one task, a large timer, your
+                            music above it, and — beside the timer — a <strong>per-task timeline</strong> of your start/stop
+                            segments for the thing you're on (you can delete stale notes there). There's a{' '}
+                            <strong>theme toggle</strong> and the strict pill right in the header. <strong>Complete</strong>{' '}
+                            ticks the task off and returns home; <strong>Exit</strong> goes back with the timer running.
+                        </p>
+                        <p>
+                            Focus is a place you can <em>stay</em>. An <strong>intention carousel</strong> above the timer lets
+                            you flip through the day's intentions and <strong>click any task to switch focus</strong> straight
+                            to it. And when nothing's running (a fresh open, or right after you Stop), Focus shows a{' '}
+                            <strong>picker</strong> — today's open tasks to choose from, the day's shape, and the full{' '}
+                            <strong>engagement log</strong> of everything you've worked on — instead of bouncing back to the
+                            dashboard.
+                        </p>
+                        <p>
+                            Inside, Focus is a small <strong>state machine</strong> that walks you through a work session.{' '}
+                            <strong>1) First move</strong> (Strict only) — name the concrete entry point right in the card.{' '}
+                            <strong>2) Ease in</strong> — an optional bounded warm-up takes centre stage while your task timer
+                            ticks quietly beside it. <strong>3) Working</strong> — the task timer is front and centre, with
+                            your re-entry breadcrumbs listed below. <strong>4) Stopping</strong> — hitting{' '}
+                            <strong>Stop</strong> swaps in the "where you're leaving off" box; <strong>Continue</strong> drops
+                            you back into the timer if you're not done after all.
                         </p>
                         <SubHeading>Pomodoro pacing</SubHeading>
                         <p>
                             Toggle <strong>Pomodoro mode</strong> to work in slots instead of one long stretch. Orchestrate
                             sizes the slots from the task's estimate: <strong>45 min or more</strong> → 20-minute work
                             blocks with 5-minute breaks; <strong>around 30 min</strong> → 10-minute blocks; anything
-                            shorter is a single session. The slots show as a vertical plan on the right; while the engine
+                            shorter is a single session. The slots show as a vertical plan below the timer; while the engine
                             runs it highlights the current block, counts it down, and chimes (plus a notification) each
                             time you switch between work and break.
                         </p>
@@ -532,25 +553,29 @@ export function UserGuide() {
                         <p>
                             The hardest part of deep work is usually <em>getting back in</em>. Every task carries a{' '}
                             <strong>context trail</strong> — a running list of breadcrumbs you can see in Focus Mode under{' '}
-                            <strong>Re-entry context</strong> (with a <strong>last worked Xm ago</strong> line). Use the{' '}
-                            <strong>"Next step — where you're leaving off"</strong> line to jot one sentence; it's committed
-                            each time you <strong>Stop</strong> or <strong>Complete</strong>, and you can hit{' '}
-                            <strong>+ Add</strong> to drop an extra breadcrumb mid-session. The trail builds across work
-                            sessions so you skip rebuilding the whole mental model, and the latest note shows as a small{' '}
-                            <strong>↩</strong> preview on dashboard task rows.
+                            <strong>Re-entry context</strong> (with a <strong>last worked Xm ago</strong> line). When you{' '}
+                            <strong>Stop</strong>, the <strong>"where you're leaving off"</strong> box appears — jot one
+                            sentence and it's committed; <strong>+ Add breadcrumb</strong> there drops an extra note without
+                            ending the session. The trail builds across work sessions so you skip rebuilding the whole
+                            mental model, and the latest note shows as a small <strong>↩</strong> preview on dashboard task
+                            rows.
                         </p>
                         <p>
-                            Two deliberate guardrails make this stick: you can't <strong>Start</strong> a fresh task without
-                            naming a <strong>first concrete action</strong> (the specific first move, not the whole task), and
-                            you can't <strong>Stop</strong> without leaving a next step. A little friction at the edges buys
-                            you a much cheaper return later.
+                            Two deliberate guardrails make this stick: naming a <strong>first concrete action</strong> (the
+                            specific first move, not the whole task) when you Start, and leaving a <strong>next step</strong>{' '}
+                            when you Stop or leave Focus. How firmly these bite is up to you: the{' '}
+                            <strong>🔒 Focus: Strict / 🔓 Relaxed</strong> pill in the dashboard <em>Today</em> header. In{' '}
+                            <strong>Strict</strong> (the default) both notes are required — and <strong>Exit</strong> won't
+                            let you slip out of an engaged task without one. In <strong>Relaxed</strong> both are optional.
+                            A little friction at the edges buys you a much cheaper return later.
                         </p>
                         <SubHeading>Activation ramp</SubHeading>
                         <p>
-                            Low on activation? Tap <strong>Ramp in</strong> (5 or 10 min) for a deliberate, <em>bounded</em>{' '}
-                            warm-up — one video, tea, a quick skim — that <em>closes</em> with a chime and a "begin work"
-                            nudge. The point is to make stimulation intentional instead of ambient. Your time-on-task timer
-                            keeps running through the ramp.
+                            Low on activation? The <strong>Ease in</strong> step (5 or 10 min) is a deliberate,{' '}
+                            <em>bounded</em> warm-up — one video, tea, a quick skim — that <em>closes</em> with a chime and a
+                            "begin work" nudge. In Strict mode it's offered right after you name your first move; any time
+                            you're working you can tap <strong>◷ Ease in</strong> to take another. The point is to make
+                            stimulation intentional instead of ambient — and your time-on-task timer keeps running through it.
                         </p>
                     </Section>
 
