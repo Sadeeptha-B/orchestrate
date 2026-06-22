@@ -347,17 +347,20 @@ function archiveClosedSegment(
 }
 
 /**
- * v7.4 Phase 2: append an `exit` re-entry breadcrumb to a task's context trail. Skips empty text and
- * de-dupes a no-op commit — when the Focus draft is seeded from the last exit note and left
- * unchanged, the latest exit note is returned as-is rather than duplicated.
+ * v7.4 Phase 2 / v7.6: append a re-entry breadcrumb (`entry` or `exit`) to a task's context trail.
+ * Skips empty text and de-dupes a no-op commit against the most recent note of the same kind — so a
+ * Focus draft seeded from the last note and left unchanged is returned as-is rather than duplicated.
  */
-function appendExitNote(trail: ContextNote[] | undefined, text: string | undefined, at: string): ContextNote[] | undefined {
+function appendNote(trail: ContextNote[] | undefined, text: string | undefined, at: string, kind: 'entry' | 'exit'): ContextNote[] | undefined {
     const t = text?.trim();
     if (!t) return trail;
     const list = trail ?? [];
     const last = list[list.length - 1];
-    if (last && last.kind === 'exit' && last.text === t) return list;
-    return [...list, { at, text: t, kind: 'exit' }];
+    if (last && last.kind === kind && last.text === t) return list;
+    return [...list, { at, text: t, kind }];
+}
+function appendExitNote(trail: ContextNote[] | undefined, text: string | undefined, at: string): ContextNote[] | undefined {
+    return appendNote(trail, text, at, 'exit');
 }
 
 /**
@@ -404,7 +407,7 @@ type Action =
     | { type: 'UNLINK_TASK'; todoistId: string }
     | { type: 'CATEGORIZE_TASK'; todoistId: string; taskType: LinkedTask['type'] }
     | { type: 'SET_TASK_ESTIMATE'; todoistId: string; minutes: number }
-    | { type: 'UPSERT_TASK_ENTRY_NOTE'; todoistId: string; text: string; at: string }
+    | { type: 'APPEND_TASK_ENTRY_NOTE'; todoistId: string; text: string; at: string }
     | { type: 'APPEND_TASK_CONTEXT_NOTE'; todoistId: string; text: string; at: string }
     | { type: 'DELETE_TASK_CONTEXT_NOTE'; todoistId: string; at: string; kind: 'entry' | 'exit' }
     | { type: 'QUICK_START'; intentionTitle: string; todoistIds: string[]; now: string }
@@ -602,17 +605,14 @@ function reducer(state: State, action: Action): State {
             return { ...state, plan: { ...plan, linkedTasks } };
         }
 
-        case 'UPSERT_TASK_ENTRY_NOTE': {
-            // v7.4 Phase 2: the concrete entry point captured at refine time — a single, last-write-wins
-            // `entry` note on the context trail. Empty → the entry note is removed (exit notes kept).
-            const text = action.text.trim();
+        case 'APPEND_TASK_ENTRY_NOTE': {
+            // v7.6: append an `entry` first-move note per engagement (committed in Focus `firstAction`),
+            // so entries accumulate across engagements just like exits — one per Start. Dedups an
+            // identical consecutive entry; empty text is a no-op.
             const linkedTasks = plan.linkedTasks.map((lt) => {
                 if (lt.todoistId !== action.todoistId) return lt;
-                const others = (lt.contextTrail ?? []).filter((n) => n.kind !== 'entry');
-                const trail = text
-                    ? [{ at: action.at, text, kind: 'entry' as const }, ...others]
-                    : others;
-                return { ...lt, contextTrail: trail.length > 0 ? trail : undefined };
+                const contextTrail = appendNote(lt.contextTrail, action.text, action.at, 'entry');
+                return contextTrail ? { ...lt, contextTrail } : lt;
             });
             return { ...state, plan: { ...plan, linkedTasks } };
         }

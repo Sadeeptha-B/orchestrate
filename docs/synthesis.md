@@ -109,7 +109,7 @@ renders the **whole trail** under a "Re-entry context" header plus a **"last wor
 from the durable engagement archive (the re-entry moment surfaced at return). The "Next step" input
 holds a draft committed as one **`exit` note on Stop/Complete** (carried by `STOP_TASK_ENGAGEMENT` /
 `TOGGLE_TASK_COMPLETE`), and a **"+ Add"** affordance appends a breadcrumb mid-session
-(`APPEND_TASK_CONTEXT_NOTE`); the Step 2 entry point is an **`entry` note** (`UPSERT_TASK_ENTRY_NOTE`).
+(`APPEND_TASK_CONTEXT_NOTE`); the Step 2 entry point is an **`entry` note** (`APPEND_TASK_ENTRY_NOTE`, v7.6 — accumulates per engagement).
 Dashboard Current Session rows show a truncated `↩` preview of the latest note. **Deliberate gates:**
 you can't **Start** a task with an empty trail (dashboard ▶ prompts for a first concrete action first),
 can't **Stop** in Focus without a next-step note (Stop disabled until non-empty), and the dashboard ■
@@ -147,7 +147,8 @@ dashboard into Focus. There are two Focus surfaces:
   `UPSERT_TASK_ENTRY_NOTE`. `ramp` is the **default entry phase** (we always ease in before the timer)
   and centres the activation-ramp countdown with the task timer de-emphasised beside it; Begin/Skip →
   `working`, **Stop** → `stopping`. `working` centres the task count-up (or the Pomodoro block display).
-  Both `ramp` and `working` carry a **bottom action bar** (Stop / Complete; Pomodoro toggle while working).
+  A **shared bottom action bar** runs across `firstAction`/`ramp`/`working` (one Stop button → `stopping`;
+  Complete on ramp/working; Pomodoro toggle only while working) — so the first-move step can Stop too.
   **Stop** swaps the centre for `stopping` — the next-step input — where **Continue** returns without
   committing, **+ Add breadcrumb** appends an `exit` note mid-session (`APPEND_TASK_CONTEXT_NOTE`), and
   **Stop** closes the segment (→ back to the picker). The in-card **`PhaseStepper`** shows machine position
@@ -162,12 +163,16 @@ expands to host the state machine, the others are compact rows (click to **switc
 note-gated in strict). The header carries the intention name, an **intention carousel** (prev/next browses
 intentions *without* engaging — "moving out of the task outside the stop flow"), and an **✎ Edit toggle**
 that drops the list into a **drag-to-reorder** view (`REORDER_INTENTION_TASKS`). Beside the timer, the
-**`EngagementTimeline`** is the *same* day-wide log shown on the picker (shared `TimelineFrame`/`TimelineRow`
-primitives), reused here with the **currently-executing task's cards highlighted**. Each engagement is its
-**own bordered card** (parent intention · title · duration); `entry`/`exit` notes sit **outside** the card
-and are **deletable** (`DELETE_TASK_CONTEXT_NOTE`). The list behaves like a **transcript** — it sticks to the
-latest engagement at the bottom and shows a **jump-to-latest** affordance when scrolled up; hovering a card
-**portals a popover** (so the scroll container can't clip it) with that intention's tasks in order. The
+**`EngagementTimeline`** is the *same* day-wide log shown on the picker (shared `TimelineFrame` primitive),
+reused here with the **currently-executing task's cards highlighted**. It's laid out as an **hourly grid**
+bounded by the settings day-limits (`timelineStart/EndMinutes`): each engaged hour is a labelled row (runs
+of empty hours **collapse** into a compact `⋯` gap row) and each Start→Stop is **one card** (one segment =
+one card) placed in the hour it started, with its **start time pinned to the top and end time to the bottom** (open segments read "in progress"; closed durations break
+into hours — "2h 36m"). `entry`/`exit` notes — now **accumulated per engagement** and correlated to each
+segment by timestamp window — sit **outside** the card and are **deletable** (`DELETE_TASK_CONTEXT_NOTE`).
+The grid behaves like a **transcript** — it anchors to the latest engaged hour (a `[data-latest]` row, not
+the empty future) and shows a **jump-to-latest** affordance when scrolled away; hovering a card **portals a
+popover** (so the scroll container can't clip it) with that intention's tasks in order. The
 header surfaces the **re-entry metric** (`computeReentryStats`). A **back arrow** **peeks** the picker (router
 `state.pick`) without ending the engagement (timer keeps running; chooser hidden while peeking). Dashboard
 tidy-up: in **relaxed** mode the engaged **■** **stops in place** instead of routing to Focus (strict still
