@@ -320,7 +320,7 @@ export function Step2Refine() {
                                                             dispatch({ type: 'SET_TASK_ESTIMATE', todoistId: lt.todoistId, minutes })
                                                         }
                                                         onSetFirstAction={(value) =>
-                                                            dispatch({ type: 'UPSERT_TASK_ENTRY_NOTE', todoistId: lt.todoistId, text: value, at: new Date().toISOString() })
+                                                            dispatch({ type: 'APPEND_TASK_ENTRY_NOTE', todoistId: lt.todoistId, text: value, at: new Date().toISOString() })
                                                         }
                                                         onUnlink={() =>
                                                             dispatch({ type: 'UNLINK_TASK', todoistId: lt.todoistId })
@@ -452,7 +452,8 @@ function TaskCard({
     onOpenTaskPanel: () => void;
 }) {
     const [customInput, setCustomInput] = useState('');
-    const entryNote = lt.contextTrail?.find((n) => n.kind === 'entry')?.text ?? '';
+    // v7.6: entry notes accumulate (APPEND_TASK_ENTRY_NOTE) — seed from the latest so re-edits dedup-no-op.
+    const entryNote = [...(lt.contextTrail ?? [])].reverse().find((n) => n.kind === 'entry')?.text ?? '';
     const [firstActionInput, setFirstActionInput] = useState(entryNote);
     const todoistTask = taskMap.get(lt.todoistId);
     const isStale = !todoistTask && !lt.completed;

@@ -3,10 +3,11 @@ import type { TodoistTask } from '../hooks/useTodoist';
 import { formatTimeOfDay } from './time';
 
 /**
- * v6.4: flattened rows for the dashboard engagement log — a time-ordered record of
- * "what actually happened today". Two row kinds:
+ * v6.4: flattened rows for the engagement log — a time-ordered record of "what actually happened today".
+ * (v7.6: consumed by the Focus `EngagementTimeline`, which buckets these rows into an hourly grid.)
+ * Two row kinds:
  *  - **engagement** — one per Start→Stop segment on a habit instance or task (individual,
- *    not cumulative: a Start/Stop/Start sequence produces two rows).
+ *    not cumulative: a Start/Stop/Start sequence produces two rows — i.e. two cards).
  *  - **reschedule** — a habit instance was moved to a different target time.
  *
  * Both are sorted together by `sortAt` (the segment's `startedAt` or the reschedule's `at`).

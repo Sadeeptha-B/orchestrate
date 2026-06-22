@@ -19,7 +19,7 @@ import { buildEngagementLog } from '../../lib/engagementLog';
 import { computeReentryStats } from '../../lib/engagementHistory';
 import { getTaskTitle } from '../../lib/tasks';
 import { playChime } from '../../lib/sound';
-import type { EngagementSegment, Intention, LinkedTask } from '../../types';
+import type { ContextNote, EngagementSegment, Intention, LinkedTask } from '../../types';
 
 const POMODORO_KEY = 'orchestrate-focus-pomodoro';
 const RAMP_MIN_KEY = 'orchestrate-focus-ramp-min';
@@ -134,6 +134,39 @@ const fmtTime = (iso: string) => format(parseISO(iso), 'h:mma').toLowerCase();
 const segMinutes = (seg: EngagementSegment, now: number) =>
     Math.max(0, Math.round(((seg.endedAt ? Date.parse(seg.endedAt) : now) - Date.parse(seg.startedAt)) / 60000));
 
+/** Legible duration: minutes broken into hours where it helps (e.g. 156 → "2h 36m", 60 → "1h", 7 → "7m"). */
+function formatDurationMinutes(min: number): string {
+    if (min < 1) return '<1m';
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    if (h === 0) return `${m}m`;
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/** 24h hour index → "8 AM" / "12 PM" / "11 PM". */
+function hourLabel(h: number): string {
+    const hh = ((h % 24) + 24) % 24;
+    const period = hh < 12 ? 'AM' : 'PM';
+    const display = hh % 12 === 0 ? 12 : hh % 12;
+    return `${display} ${period}`;
+}
+
+/**
+ * Correlate a task's entry/exit notes to one of its segments by timestamp window `[segStart, nextStart)`.
+ * The first segment also absorbs any pre-engagement (e.g. wizard-planned) entry note that predates it.
+ * Latest matching note of each kind wins.
+ */
+function notesForSegment(trail: ContextNote[], segStart: string, nextStart: string | undefined, isFirst: boolean): { entry?: ContextNote; exit?: ContextNote } {
+    let entry: ContextNote | undefined;
+    let exit: ContextNote | undefined;
+    for (const n of trail) {
+        const inWindow = n.at >= segStart && (!nextStart || n.at < nextStart);
+        if (n.kind === 'entry' && (inWindow || (isFirst && n.at < segStart))) entry = n;
+        if (n.kind === 'exit' && inWindow) exit = n;
+    }
+    return { entry, exit };
+}
+
 /** An intention's linked tasks in `linkedTaskIds` order, with any unlisted (e.g. completed) ones appended. */
 function orderedIntentionTasks(intention: Intention, linkedTasks: LinkedTask[]): LinkedTask[] {
     const order = intention.linkedTaskIds;
@@ -145,42 +178,29 @@ function orderedIntentionTasks(intention: Intention, linkedTasks: LinkedTask[]):
     });
 }
 
-function timelineDot(kind: 'entry' | 'open' | 'closed') {
-    if (kind === 'entry') return <span className="w-2.5 h-2.5 rounded-full bg-accent flex-shrink-0" />;
-    return (
-        <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${kind === 'open' ? 'border-accent bg-accent animate-pulse' : 'border-accent/70 bg-card'
-            }`} />
-    );
-}
-
-function TimelineRow({ time, dot, last, children }: { time: ReactNode; dot: ReactNode; last: boolean; children: ReactNode }) {
-    return (
-        <li className="flex gap-2.5">
-            <span className="w-12 flex-shrink-0 text-right text-[10px] text-text-light tabular-nums pt-0.5">{time}</span>
-            <div className="flex flex-col items-center self-stretch">
-                {dot}
-                {!last && <span className="w-px flex-1 bg-border mt-0.5" />}
-            </div>
-            <div className="flex-1 min-w-0 pb-4">{children}</div>
-        </li>
-    );
-}
-
-function TimelineFrame({ title, right, subtitle, scroll, rows, empty }: {
+function TimelineFrame({ title, right, subtitle, scroll, rows, empty, revision }: {
     title: string; right?: ReactNode; subtitle?: ReactNode; scroll?: boolean; rows: ReactNode[]; empty: string;
+    /** Bumps when the underlying content changes, so the view re-anchors to the latest engagement. */
+    revision?: number;
 }) {
-    // Transcript behaviour (v7.6): stick to the latest engagement at the bottom; if the user scrolls up,
-    // surface a "jump to latest" affordance. `stick` tracks whether we're pinned to the bottom.
+    // Transcript behaviour (v7.6): anchor to the latest engagement (a `[data-latest]` row) — for the
+    // hourly view that's the current/last engaged hour, not the empty future. `stick` tracks whether
+    // we're parked there; scrolling away reveals a "jump to latest" affordance.
     const listRef = useRef<HTMLOListElement>(null);
     const stick = useRef(true);
     const [showJump, setShowJump] = useState(false);
-    const rowCount = rows.length;
+
+    const anchorToLatest = () => {
+        const el = listRef.current;
+        if (!el) return;
+        const target = el.querySelector('[data-latest]') as HTMLElement | null;
+        el.scrollTop = target ? Math.max(0, target.offsetTop - el.clientHeight / 2) : el.scrollHeight;
+    };
 
     useEffect(() => {
         if (!scroll) return;
-        const el = listRef.current;
-        if (el && stick.current) el.scrollTop = el.scrollHeight;
-    }, [scroll, rowCount]);
+        if (stick.current) anchorToLatest();
+    }, [scroll, revision, rows.length]);
 
     const onScroll = () => {
         const el = listRef.current;
@@ -190,8 +210,7 @@ function TimelineFrame({ title, right, subtitle, scroll, rows, empty }: {
         setShowJump(!atBottom);
     };
     const jumpToLatest = () => {
-        const el = listRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
+        anchorToLatest();
         stick.current = true;
         setShowJump(false);
     };
@@ -208,7 +227,7 @@ function TimelineFrame({ title, right, subtitle, scroll, rows, empty }: {
                 <ol
                     ref={listRef}
                     onScroll={scroll ? onScroll : undefined}
-                    className={scroll ? 'max-h-[420px] overflow-y-auto scrollbar-subtle pr-1' : undefined}
+                    className={`relative space-y-2 ${scroll ? 'max-h-[420px] overflow-y-auto scrollbar-subtle pr-1' : ''}`}
                 >
                     {rows}
                 </ol>
@@ -253,9 +272,9 @@ function NoteLine({ text, at, kind, onDelete }: { text: string; at: string; kind
  * One engagement card in the timeline — a bordered task chip (intention · title · duration). Hovering
  * portals a popover (so the scroll container can't clip it) showing the intention and its tasks in order.
  */
-function EngagementCard({ highlight, intentionTitle, title, duration, currentId, sibInfo }: {
-    highlight: boolean; intentionTitle?: string; title: string; duration: ReactNode;
-    currentId: string; sibInfo: { id: string; title: string; completed: boolean }[];
+function EngagementCard({ highlight, intentionTitle, title, startTime, endTime, duration, currentId, sibInfo }: {
+    highlight: boolean; intentionTitle?: string; title: string; startTime: string; endTime?: string;
+    duration: ReactNode; currentId: string; sibInfo: { id: string; title: string; completed: boolean }[];
 }) {
     const ref = useRef<HTMLDivElement>(null);
     const [rect, setRect] = useState<DOMRect | null>(null);
@@ -267,11 +286,16 @@ function EngagementCard({ highlight, intentionTitle, title, duration, currentId,
             onMouseLeave={() => setRect(null)}
             className={`rounded-lg border px-3 py-1.5 ${highlight ? 'border-accent bg-accent/5' : 'border-border bg-card'}`}
         >
+            {/* Start time pinned to the top of the card; end time to the bottom — one engagement, one card. */}
+            <span className="block text-[10px] text-text-light/70 tabular-nums">▸ {startTime}</span>
             {intentionTitle && (
-                <span className="block text-[9px] font-medium text-text-light uppercase tracking-wider truncate">{intentionTitle}</span>
+                <span className="block text-[9px] font-medium text-text-light uppercase tracking-wider truncate mt-0.5">{intentionTitle}</span>
             )}
             <span className="block text-sm text-text truncate">{title}</span>
             <span className="block text-[11px] text-text-light tabular-nums">{duration}</span>
+            <span className={`block text-[10px] tabular-nums ${endTime ? 'text-text-light/70' : 'text-accent'}`}>
+                {endTime ? `■ ${endTime}` : '• in progress'}
+            </span>
             {rect && createPortal(
                 <div
                     style={{ position: 'fixed', top: rect.top, left: rect.left - 8, transform: 'translateX(-100%)' }}
@@ -303,14 +327,13 @@ function EngagementCard({ highlight, intentionTitle, title, duration, currentId,
 }
 
 /**
- * Engagement timeline (v7.6) — the day's engagement record, spanning every task + habit engaged today
- * (reuses `buildEngagementLog`). Each engagement is its **own bordered card** (parent intention + title +
- * duration); the entry/exit breadcrumb notes sit **outside** that card, on the timeline. Used on both the
- * picker and the timer surface; on the timer surface, cards for the currently-executing task are
- * **highlighted** via `highlightTaskId`. Reschedules render as a muted moved-target line.
+ * Engagement timeline (v7.6) — the day's engagement record laid out as an **hourly grid** bounded by the
+ * settings day-limits (`timelineStart/EndMinutes`). Each Start→Stop is one card placed in the hour it
+ * started; entry/exit breadcrumbs (now accumulated per engagement) sit outside the card. Used on both the
+ * picker and the timer surface; on the timer surface, the focused task's cards are **highlighted**.
  */
 function EngagementTimeline({ highlightTaskId }: { highlightTaskId?: string }) {
-    const { plan, life, dispatch } = useDayPlan();
+    const { plan, settings, life, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const [nowSnapshot] = useState(() => Date.now());
     const log = useMemo(() => buildEngagementLog(plan, taskMap), [plan, taskMap]);
@@ -322,69 +345,116 @@ function EngagementTimeline({ highlightTaskId }: { highlightTaskId?: string }) {
     const deleteNote = (todoistId: string, at: string, kind: 'entry' | 'exit') =>
         dispatch({ type: 'DELETE_TASK_CONTEXT_NOTE', todoistId, at, kind });
 
-    const seen = new Set<string>(); // first occurrence of a task's sourceId carries its `entry` note
-    const rows = log.map((r, i) => {
-        const last = i === log.length - 1;
+    // Build one card per log entry, then bucket cards into the hour they started.
+    const startHour = Math.floor((settings.timelineStartMinutes ?? 270) / 60);
+    const endHour = Math.min(24, Math.ceil((settings.timelineEndMinutes ?? 1440) / 60));
+    const clampHour = (h: number) => Math.min(endHour - 1, Math.max(startHour, h));
+    const byHour = new Map<number, ReactNode[]>();
+    const push = (h: number, node: ReactNode) => {
+        const k = clampHour(h);
+        (byHour.get(k) ?? byHour.set(k, []).get(k)!).push(node);
+    };
+
+    for (const r of log) {
         if (r.entryType === 'reschedule') {
-            return (
-                <TimelineRow key={r.key} time={fmtTime(r.at)} dot={timelineDot('closed')} last={last}>
+            push(new Date(r.at).getHours(), (
+                <div key={r.key} className="rounded-lg border border-border bg-card/60 px-3 py-1.5">
+                    <span className="block text-[10px] text-text-light/70 tabular-nums">⌁ {fmtTime(r.at)}</span>
                     <span className="block text-sm text-text truncate">{r.title}</span>
                     <span className="block text-[11px] text-text-light">moved {r.fromTime ?? '—'} → {r.toTime ?? '—'}</span>
-                </TimelineRow>
-            );
+                </div>
+            ));
+            continue;
         }
         const open = !r.segment.endedAt;
         const lt = r.kind === 'task' ? taskById.get(r.sourceId) : undefined;
         const intention = lt?.intentionId ? plan.intentions.find((x) => x.id === lt.intentionId) : undefined;
-        const intentionTitle = intention?.title;
         const siblings = intention ? orderedIntentionTasks(intention, plan.linkedTasks) : [];
-        const isFirst = !seen.has(r.sourceId);
-        seen.add(r.sourceId);
-        const entry = isFirst ? (lt?.contextTrail ?? []).find((n) => n.kind === 'entry') : undefined;
-        let exit: { at: string; text: string } | undefined;
+        let entry: ContextNote | undefined;
+        let exit: ContextNote | undefined;
         if (lt) {
             const sorted = [...(lt.segments ?? [])].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-            const idx = sorted.findIndex((s) => s.startedAt === r.segment.startedAt);
-            const nextStart = idx >= 0 ? sorted[idx + 1]?.startedAt : undefined;
-            exit = (lt.contextTrail ?? []).filter((n) => n.kind === 'exit')
-                .find((e) => e.at >= r.segment.startedAt && (!nextStart || e.at < nextStart));
+            const segIdx = sorted.findIndex((s) => s.startedAt === r.segment.startedAt);
+            const nextStart = segIdx >= 0 ? sorted[segIdx + 1]?.startedAt : undefined;
+            ({ entry, exit } = notesForSegment(lt.contextTrail ?? [], r.segment.startedAt, nextStart, segIdx === 0));
         }
-        const highlight = highlightTaskId != null && r.sourceId === highlightTaskId;
-        return (
-            <TimelineRow key={r.key} time={fmtTime(r.segment.startedAt)} dot={timelineDot(open ? 'open' : 'closed')} last={last}>
+        const minutes = segMinutes(r.segment, nowSnapshot);
+        push(new Date(r.segment.startedAt).getHours(), (
+            <div key={r.key} className="space-y-1">
                 {entry && (
-                    <div className="mb-1">
-                        <NoteLine text={entry.text} at={entry.at} kind="entry" onDelete={() => deleteNote(r.sourceId, entry!.at, 'entry')} />
-                    </div>
+                    <NoteLine text={entry.text} at={entry.at} kind="entry" onDelete={() => deleteNote(r.sourceId, entry!.at, 'entry')} />
                 )}
                 <EngagementCard
-                    highlight={highlight}
-                    intentionTitle={intentionTitle}
+                    highlight={highlightTaskId != null && r.sourceId === highlightTaskId}
+                    intentionTitle={intention?.title}
                     title={r.title}
-                    duration={<>{open ? <EngagementTimer segment={r.segment} /> : `${segMinutes(r.segment, nowSnapshot)} min`}{r.kind === 'habit' && <span> · habit</span>}</>}
+                    startTime={fmtTime(r.segment.startedAt)}
+                    endTime={r.segment.endedAt ? fmtTime(r.segment.endedAt) : undefined}
+                    duration={<>{open ? <EngagementTimer segment={r.segment} /> : formatDurationMinutes(minutes)}{r.kind === 'habit' && <span> · habit</span>}</>}
                     currentId={r.sourceId}
                     sibInfo={siblings.map((s) => ({ id: s.todoistId, title: getTaskTitle(s.todoistId, plan.linkedTasks, taskMap), completed: !!s.completed }))}
                 />
                 {exit && (
-                    <div className="mt-1">
-                        <NoteLine text={exit.text} at={exit.at} kind="exit" onDelete={() => deleteNote(r.sourceId, exit!.at, 'exit')} />
-                    </div>
+                    <NoteLine text={exit.text} at={exit.at} kind="exit" onDelete={() => deleteNote(r.sourceId, exit!.at, 'exit')} />
                 )}
-            </TimelineRow>
+            </div>
+        ));
+    }
+
+    // The hour to anchor the transcript to: the last hour with engagements, else the current hour.
+    let latestEngagedHour = -1;
+    for (const h of byHour.keys()) if (h > latestEngagedHour) latestEngagedHour = h;
+    const anchorHour = latestEngagedHour >= 0 ? latestEngagedHour : clampHour(new Date(nowSnapshot).getHours());
+
+    // Render engaged hours as full rows; collapse runs of empty hours into one compact "gap" row.
+    const rows: ReactNode[] = [];
+    let emptyStart = -1;
+    const flushGap = (endExclusive: number) => {
+        if (emptyStart < 0) return;
+        const from = emptyStart;
+        const to = endExclusive - 1;
+        rows.push(
+            <li key={`gap-${from}`} className="flex gap-2">
+                <span className="w-12 flex-shrink-0" />
+                <div className="flex-1 min-w-0 border-l border-border/30 pl-3">
+                    <span className="block text-[10px] text-text-light/40 py-1">
+                        ⋯ {from === to ? hourLabel(from) : `${hourLabel(from)} – ${hourLabel(to)}`}
+                    </span>
+                </div>
+            </li>,
         );
-    });
+        emptyStart = -1;
+    };
+    for (let h = startHour; h < endHour; h++) {
+        const cards = byHour.get(h);
+        if (!cards) {
+            if (emptyStart < 0) emptyStart = h;
+            continue;
+        }
+        flushGap(h);
+        rows.push(
+            <li key={h} data-latest={h === anchorHour ? '' : undefined} className="flex gap-2">
+                <span className="w-12 flex-shrink-0 text-right text-[10px] text-text-light/70 uppercase tracking-wider pt-1.5">{hourLabel(h)}</span>
+                <div className="flex-1 min-w-0 border-l border-border pl-3 pb-1 space-y-2">
+                    {cards}
+                </div>
+            </li>,
+        );
+    }
+    flushGap(endHour);
 
     return (
         <TimelineFrame
             title="Today's engagement"
-            right={totalMinutes >= 1 ? <span className="text-[10px] text-text-light tabular-nums">{Math.round(totalMinutes)}m total</span> : undefined}
+            right={totalMinutes >= 1 ? <span className="text-[10px] text-text-light tabular-nums">{formatDurationMinutes(Math.round(totalMinutes))} total</span> : undefined}
             subtitle={reentry.resumeCount > 0 ? (
                 <span className="text-[10px] text-text-light tabular-nums">
                     Re-entry · ~{reentry.medianGapMinutes}m to resume · {reentry.resumeCount} {reentry.resumeCount === 1 ? 'resume' : 'resumes'} (7d)
                 </span>
             ) : undefined}
             scroll
-            rows={rows}
+            rows={log.length > 0 ? rows : []}
+            revision={log.length}
             empty="Nothing logged yet today — pick a task to start."
         />
     );
@@ -722,13 +792,14 @@ function FocusActive({ task }: { task: LinkedTask }) {
     const focusPlan = useMemo(() => computeFocusPlan(task.estimatedMinutes), [task.estimatedMinutes]);
 
     const trail = task.contextTrail ?? [];
-    const hasEntryNote = trail.some((n) => n.kind === 'entry');
     const strict = settings.focusStrict ?? true;
+    // v7.6: entry notes accumulate per engagement (like exits), so the gate is *this engagement's* first
+    // move — does the open segment already have an `entry` note? (committed at/after the segment start).
+    const hasEntryThisEngagement = !!segment && trail.some((n) => n.kind === 'entry' && n.at >= segment.startedAt);
 
     // ── State machine ─────────────────────────────────────────────────────────
-    // Strict entry with no first move → capture it; otherwise begin at the **ease-in** ramp (v7.6: we
-    // always warm up before the timer rather than dropping straight into `working`).
-    const [phase, setPhase] = useState<FocusPhase>(strict && !hasEntryNote ? 'firstAction' : 'ramp');
+    // Strict entry with no first move *for this engagement* → capture it; otherwise ease in (v7.6).
+    const [phase, setPhase] = useState<FocusPhase>(strict && !hasEntryThisEngagement ? 'firstAction' : 'ramp');
 
     // The in-Focus pill is the only way strictness flips while mounted; advance past the now-optional
     // `firstAction` gate in the same handler so the machine never strands on a step that no longer applies.
@@ -810,7 +881,8 @@ function FocusActive({ task }: { task: LinkedTask }) {
     const commitFirstAction = () => {
         const text = firstActionDraft.trim();
         if (!text) return;
-        dispatch({ type: 'UPSERT_TASK_ENTRY_NOTE', todoistId: task.todoistId, text, at: new Date().toISOString() });
+        // v7.6: append (accumulate per engagement) rather than overwrite a single entry note.
+        dispatch({ type: 'APPEND_TASK_ENTRY_NOTE', todoistId: task.todoistId, text, at: new Date().toISOString() });
         setPhase('ramp');
     };
 
@@ -891,8 +963,9 @@ function FocusActive({ task }: { task: LinkedTask }) {
         setRampEndsAt(now + minutes * 60_000);
     };
     const endRamp = () => { setRampEndsAt(null); setPhase('working'); };
-    // v7.6: you can stop straight from the ease-in view — cancel the ramp and go capture the wrap-up note.
-    const stopFromRamp = () => { setRampEndsAt(null); setPhase('stopping'); };
+    // v7.6: shared Stop across phases (first move / ease-in / working) — cancel any ramp and go capture
+    // the wrap-up note. The `stopping` phase owns the actual segment close.
+    const goStop = () => { setRampEndsAt(null); setPhase('stopping'); };
 
     useEffect(() => {
         if (rampEndsAt == null) return;
@@ -1126,8 +1199,8 @@ function FocusActive({ task }: { task: LinkedTask }) {
                                 <FocusSlotPlan plan={focusPlan} activeIndex={pos.index} done={pos.done} />
                             )}
 
-                            {/* Bottom action bar — present while easing in or working */}
-                            {(phase === 'working' || phase === 'ramp') && (
+                            {/* Bottom action bar — shared across first move / ease-in / working; `stopping` owns its own */}
+                            {phase !== 'stopping' && (
                                 <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
                                     {phase === 'working' ? (
                                         <button
@@ -1147,12 +1220,14 @@ function FocusActive({ task }: { task: LinkedTask }) {
                                         </button>
                                     ) : <span />}
                                     <div className="flex items-center gap-2">
-                                        <Button variant="ghost" size="sm" onClick={phase === 'ramp' ? stopFromRamp : () => setPhase('stopping')}>
+                                        <Button variant="ghost" size="sm" onClick={goStop}>
                                             ■ Stop
                                         </Button>
-                                        <Button size="sm" onClick={handleComplete}>
-                                            ✓ Complete
-                                        </Button>
+                                        {phase !== 'firstAction' && (
+                                            <Button size="sm" onClick={handleComplete}>
+                                                ✓ Complete
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
                             )}
