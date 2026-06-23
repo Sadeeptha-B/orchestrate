@@ -9,8 +9,10 @@ import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
+import { useDayCalendarEvents } from '../../hooks/useDayCalendarEvents';
+import { useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
 import { TodoistPanel } from '../todoist/TodoistPanel';
-import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
+import { RenderedCalendar } from '../todoist/RenderedCalendar';
 import { formatDuration, minutesOfDay, timeToMinutes } from '../../lib/time';
 import { computeAllSessionCapacities } from '../../lib/capacity';
 import { compareHabitInstancesByTime, getMissedInstanceIds, habitKindOf, isHabitInstanceMissed } from '../../lib/habits';
@@ -34,6 +36,8 @@ export function Step3Schedule() {
     const nowMinutes = minutesOfDay(new Date());
     const isPastSession = (s: SessionSlot) => timeToMinutes(s.endTime) <= nowMinutes;
     const { taskMap } = useTodoistData();
+    const { events: externalEvents, refetch: refetchEvents } = useDayCalendarEvents(plan.date);
+    const { isConnected: gcalConnected } = useGoogleCalendarData();
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [phase, setPhase] = useState<'assign' | 'time'>('assign');
     const [intentionsOpen, setIntentionsOpen] = useState(true);
@@ -208,6 +212,7 @@ export function Step3Schedule() {
                     {/* ── Timeline ── */}
                     <SessionCapacityBanner sessions={remainingSessions} capacities={capacities} />
                     <SessionTimelineBar
+                        dateISO={plan.date}
                         sessions={allSessions}
                         taskSessions={plan.taskSessions}
                         linkedTasks={plan.linkedTasks}
@@ -220,6 +225,8 @@ export function Step3Schedule() {
                         missedInstanceIds={missedInstanceIds}
                         timelineStartMinutes={settings.timelineStartMinutes}
                         timelineEndMinutes={settings.timelineEndMinutes}
+                        externalEvents={externalEvents}
+                        onRefreshEvents={gcalConnected ? refetchEvents : undefined}
                     />
 
                     {/* v6.3: Habit instances panel — reschedule is available from planning. */}
@@ -528,7 +535,7 @@ export function Step3Schedule() {
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col">
                             <h3 className="text-sm font-medium text-text-light mb-2">Calendar</h3>
-                            <GoogleCalendarEmbed height={500} />
+                            <RenderedCalendar height={500} />
                         </div>
                     </div>
                 </div>

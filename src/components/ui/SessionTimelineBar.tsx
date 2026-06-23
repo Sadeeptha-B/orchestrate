@@ -5,12 +5,14 @@ import {
     DEFAULT_TIMELINE_END_MINUTES,
     formatHour,
 } from '../../lib/timeline';
-import { getTaskTitle } from '../../lib/tasks';
+import { getTaskTitle, unscheduledTasks } from '../../lib/tasks';
 import { writeTaskDragPayload, readTaskDragPayload } from '../../hooks/useTaskPlacement';
 import { openSegment, segmentSeconds, totalEngagedSeconds } from '../../lib/engagement';
+import type { CalendarEvent } from '../../lib/googleCalendarApi';
 import type { EngagementSegment, LinkedTask, SessionSlot, TodaysHabitInstance } from '../../types';
 import type { SessionCapacity } from '../../lib/capacity';
 import { SessionCapacityBadge } from '../dashboard/SessionCapacityBadge';
+import './sessionTimelineBar.css';
 
 /** v6.4: rounded engaged minutes across a habit instance's segments (glance badge — not live). */
 function engagedMinutes(i: TodaysHabitInstance): number {
@@ -65,24 +67,24 @@ function habitPillClass(status: DisplayStatus): string {
  */
 function habitPillIcon(status: DisplayStatus): string {
     switch (status) {
-        case 'engaged':    return '⏵';   // playing
-        case 'completed':  return '🎉';
-        case 'skipped':    return '⤼';
-        case 'missed':     return '⏰';   // v6.8: window elapsed
+        case 'engaged': return '⏵';   // playing
+        case 'completed': return '🎉';
+        case 'skipped': return '⤼';
+        case 'missed': return '⏰';   // v6.8: window elapsed
         case 'planned':
-        default:           return '🔁';
+        default: return '🔁';
     }
 }
 
 /** v6.4: human-readable status word for the pill tooltip. */
 function habitStatusLabel(status: DisplayStatus): string {
     switch (status) {
-        case 'engaged':    return 'engaged';
-        case 'completed':  return 'completed';
-        case 'skipped':    return 'skipped';
-        case 'missed':     return 'missed';
+        case 'engaged': return 'engaged';
+        case 'completed': return 'completed';
+        case 'skipped': return 'skipped';
+        case 'missed': return 'missed';
         case 'planned':
-        default:           return 'planned';
+        default: return 'planned';
     }
 }
 
@@ -240,10 +242,83 @@ function packLaneMarkers(markers: LaneMarker[], dayStart: number, totalMinutes: 
     return { placed, rowCount: rowsLastLeft.length };
 }
 
+// ── External calendar events (read-only overlay) ───────────────────────────
+// Block-shaped (start+end) like sessions and positioned with the same percent-of-day math, so they
+// render as faded full-height bars *inside the session band* (behind the opaque session blocks) for
+// day context — not in a lane of their own. Row-packing here only spreads overlapping events' labels
+// across rows so they don't collide; the bars themselves are contextual and never editable on the bar.
+
+interface PlacedEvent {
+    event: CalendarEvent;
+    left: number;   // % from lane start
+    width: number;  // % of the lane
+    row: number;    // stacking row index
+}
+
+/** Local minutes-of-day window an event occupies on the rendered date, clamped to [dayStart, dayEnd]. */
+function eventWindowMinutes(
+    event: CalendarEvent,
+    windowStart: Date,
+    windowEnd: Date,
+    dayStart: number,
+    dayEnd: number,
+): [number, number] | null {
+    const start = new Date(event.start);
+    const end = new Date(event.end);
+    const overlapStart = new Date(Math.max(start.getTime(), windowStart.getTime()));
+    const overlapEnd = new Date(Math.min(end.getTime(), windowEnd.getTime()));
+    if (overlapEnd <= overlapStart) return null;
+
+    const clamp = (m: number) => Math.max(dayStart, Math.min(m, dayEnd));
+    const startMinutes = clamp(minutesOfDay(overlapStart));
+    const endMinutes = overlapEnd.getTime() === windowEnd.getTime()
+        ? dayEnd
+        : clamp(minutesOfDay(overlapEnd));
+    return endMinutes > startMinutes ? [startMinutes, endMinutes] : null;
+}
+
+/** Position + greedily row-pack events so time-overlapping ones never share a row. */
+function packExternalEvents(
+    events: CalendarEvent[],
+    dateISO: string,
+    dayStart: number,
+    dayEnd: number,
+    totalMinutes: number,
+): { placed: PlacedEvent[]; rowCount: number } {
+    const windowStart = new Date(`${dateISO}T00:00:00`);
+    const windowEnd = new Date(windowStart);
+    windowEnd.setDate(windowEnd.getDate() + 1);
+
+    const items = events
+        .filter((event) => !event.allDay) // all-day events have no time-of-day position on the bar
+        .map((event) => {
+            const window = eventWindowMinutes(event, windowStart, windowEnd, dayStart, dayEnd);
+            return window ? { event, startM: window[0], endM: window[1] } : null;
+        })
+        .filter((it): it is { event: CalendarEvent; startM: number; endM: number } => it !== null)
+        .sort((a, b) => a.startM - b.startM);
+
+    const rowEnds: number[] = []; // last endM placed in each row
+    const placed = items.map((it) => {
+        let row = 0;
+        while (row < rowEnds.length && rowEnds[row] > it.startM) row++;
+        rowEnds[row] = it.endM;
+        return {
+            event: it.event,
+            left: ((it.startM - dayStart) / totalMinutes) * 100,
+            width: ((it.endM - it.startM) / totalMinutes) * 100,
+            row,
+        };
+    });
+    return { placed, rowCount: rowEnds.length };
+}
+
 // Re-exported for callers that historically imported these from here (e.g. CapacitySettings).
 export { DEFAULT_TIMELINE_START_MINUTES, DEFAULT_TIMELINE_END_MINUTES };
 
 interface SessionTimelineBarProps {
+    /** Local date being rendered on the bar ("YYYY-MM-DD"). */
+    dateISO: string;
     /** Session slots to display on the timeline. */
     sessions: SessionSlot[];
     /** Map of sessionId → assigned todoist task IDs. */
@@ -276,9 +351,16 @@ interface SessionTimelineBarProps {
     /** When provided, task pills become draggable and session blocks become drop targets, so a task
      * can be re-placed between sessions (and to/from the Anytime tray). `from`/`to` null = Anytime. */
     onMoveTask?: (todoistId: string, fromSessionId: string | null, toSessionId: string | null) => void;
+    /** Read-only external calendar events (from the timeline-visible Google calendars), rendered as
+     * faded bars inside the session band for day context. All-day events are excluded (no time-of-day);
+     * editing happens in the rendered calendar view, not on the bar. */
+    externalEvents?: CalendarEvent[];
+    /** When provided, shows a ↻ control that re-fetches the external calendar events on demand. */
+    onRefreshEvents?: () => void;
 }
 
 export function SessionTimelineBar({
+    dateISO,
     sessions,
     taskSessions,
     linkedTasks,
@@ -293,6 +375,8 @@ export function SessionTimelineBar({
     timelineStartMinutes,
     timelineEndMinutes,
     onMoveTask,
+    externalEvents,
+    onRefreshEvents,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -376,23 +460,51 @@ export function SessionTimelineBar({
     const { placed: laneMarkers, rowCount: laneRowCount } =
         packLaneMarkers(buildLaneMarkers(todaysHabits ?? []), dayStart, totalMinutes);
 
+    // Anytime *tasks* share the same rail as anytime habits — open linked tasks not committed to any
+    // session (mirrors the dashboard's Anytime tray). Draggable into a session when the bar is editable.
+    const anytimeTasks = useMemo(() => unscheduledTasks(linkedTasks), [linkedTasks]);
+
+    // Read-only external calendar events, row-packed so overlapping events' labels don't collide.
+    // They render *inside* the session band (behind the session blocks), so the bars share the same
+    // vertical area as sessions rather than taking a lane of their own.
+    const { placed: placedEvents } = useMemo(
+        () => packExternalEvents(externalEvents ?? [], dateISO, dayStart, dayEnd, totalMinutes),
+        [externalEvents, dateISO, dayStart, dayEnd, totalMinutes],
+    );
+
     return (
         <div className="relative space-y-1 pt-5">
-            {/* View toggle: full day ⇆ remaining part of the day. */}
-            {canShowRemaining && (
-                <button
-                    type="button"
-                    onClick={() => setViewMode((m) => (m === 'remaining' ? 'full' : 'remaining'))}
-                    className="absolute top-0 right-0 z-20 text-[10px] px-2 py-0.5 rounded-full border border-border bg-card text-text-light hover:text-accent hover:border-accent transition-colors cursor-pointer inline-flex items-center gap-1"
-                    title={useRemaining ? 'Switch to the full-day view' : 'Switch to the remaining part of the day'}
-                >
-                    <span aria-hidden>⇆</span>
-                    {useRemaining ? 'Remaining' : 'Full day'}
-                </button>
+            {/* Top-right controls: refresh external events ↻ and the full-day ⇆ remaining view toggle. */}
+            {(onRefreshEvents || canShowRemaining) && (
+                <div className="absolute top-0 right-0 z-20 flex items-center gap-1">
+                    {onRefreshEvents && (
+                        <button
+                            type="button"
+                            onClick={onRefreshEvents}
+                            className="text-[10px] px-1.5 py-0.5 rounded-full border border-border bg-card text-text-light hover:text-accent hover:border-accent transition-colors cursor-pointer inline-flex items-center"
+                            title="Refresh calendar events"
+                            aria-label="Refresh calendar events"
+                        >
+                            <span aria-hidden>↻</span>
+                        </button>
+                    )}
+                    {canShowRemaining && (
+                        <button
+                            type="button"
+                            onClick={() => setViewMode((m) => (m === 'remaining' ? 'full' : 'remaining'))}
+                            className="text-[10px] px-2 py-0.5 rounded-full border border-border bg-card text-text-light hover:text-accent hover:border-accent transition-colors cursor-pointer inline-flex items-center gap-1"
+                            title={useRemaining ? 'Switch to the full-day view' : 'Switch to the remaining part of the day'}
+                        >
+                            <span aria-hidden>⇆</span>
+                            {useRemaining ? 'Remaining' : 'Full day'}
+                        </button>
+                    )}
+                </div>
             )}
 
-            {/* v6.3: "Anytime today" cluster — untimed habit instances surface above the time-axis. */}
-            {anytimeHabits.length > 0 && (
+            {/* v6.3 / v7.7: "Anytime today" cluster — untimed habit instances and uncommitted (anytime)
+                tasks surface above the time-axis. Tasks are draggable into a session when editable. */}
+            {(anytimeHabits.length > 0 || anytimeTasks.length > 0) && (
                 <div className="flex flex-wrap items-center gap-1 mb-1">
                     <span className="text-[9px] uppercase tracking-wider text-text-light/70 mr-1">Anytime</span>
                     {anytimeHabits.map((i) => {
@@ -411,6 +523,21 @@ export function SessionTimelineBar({
                                         {engaged}m
                                     </span>
                                 )}
+                            </span>
+                        );
+                    })}
+                    {anytimeTasks.map((lt) => {
+                        const title = titleFor(lt.todoistId);
+                        return (
+                            <span
+                                key={lt.todoistId}
+                                draggable={canMove}
+                                onDragStart={canMove ? (e) => writeTaskDragPayload(e, { todoistId: lt.todoistId, fromSessionId: null }) : undefined}
+                                className={`px-1.5 py-0.5 text-[9px] rounded-full leading-tight inline-flex items-center gap-1 max-w-[12rem] ${canMove ? 'cursor-grab active:cursor-grabbing' : ''} ${lt.type === 'background' ? 'bg-surface-dark text-text-light' : 'bg-accent/15 text-accent'}`}
+                                title={`${title} · anytime${lt.estimatedMinutes != null ? ` · ${lt.estimatedMinutes}m` : ''}`}
+                            >
+                                <span aria-hidden>○</span>
+                                <span className="truncate">{title}</span>
                             </span>
                         );
                     })}
@@ -469,8 +596,38 @@ export function SessionTimelineBar({
             )}
 
             {/* Session blocks — single-cell grid so the cell auto-sizes to the tallest block.
-                Each block layers in the same cell via grid-area, positioned horizontally by margin-left/width. */}
+                Each block layers in the same cell via grid-area, positioned horizontally by margin-left/width.
+                External calendar events render first (behind) as full-height faded bars sharing the same
+                band: sessions sit on top (opaque) and stay the only editable thing; events show through in
+                the gaps for day context. */}
             <div className="grid items-start" style={{ gridTemplateColumns: '1fr', minHeight: 80 }}>
+                {placedEvents.map(({ event, left, width, row }) => {
+                    const swatch = event.color ?? '#6b7280';
+                    return (
+                        <div
+                            key={`ev-${event.calendarId}-${event.id}`}
+                            className="timeline-event rounded-md overflow-hidden"
+                            style={{
+                                gridArea: '1 / 1',
+                                alignSelf: 'stretch',
+                                // --ml/--w drive position+width via CSS so :hover can expand to fit the title;
+                                // --ev is the calendar color (fill/border/solid-on-hover).
+                                ['--ml' as string]: `${left}%`,
+                                ['--w' as string]: `${width}%`,
+                                ['--ev' as string]: swatch,
+                            } as React.CSSProperties}
+                            title={`${event.summary} · ${isoLocalHHMM(event.start)}–${isoLocalHHMM(event.end)}`}
+                        >
+                            {/* Offset the label per packed row so overlapping events' labels don't collide. */}
+                            <span
+                                className="block truncate px-1 text-[9px] font-medium leading-none"
+                                style={{ marginTop: 2 + row * 11 }}
+                            >
+                                {event.summary}
+                            </span>
+                        </div>
+                    );
+                })}
                 {visibleSessions.map((session) => {
                     const { left, width } = slotPosition(session);
                     const isSelected = selectedSessionId === session.id;
@@ -485,12 +642,14 @@ export function SessionTimelineBar({
 
                     const blockClasses = [
                         'rounded-lg border p-2 text-left overflow-hidden transition-colors',
+                        // Opaque fills (bg-accent-subtle, not bg-accent/5) so an overlapping event bar
+                        // behind the block doesn't bleed through a translucent selected/current session.
                         isDropTarget
-                            ? 'border-accent ring-2 ring-accent/60 bg-accent/10'
+                            ? 'border-accent ring-2 ring-accent/60 bg-accent-subtle'
                             : isSelected
-                                ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
+                                ? 'border-accent bg-accent-subtle ring-1 ring-accent/30'
                                 : isCurrent
-                                    ? 'border-accent/40 bg-accent/5 ring-2 ring-accent/30'
+                                    ? 'border-accent/40 bg-accent-subtle ring-2 ring-accent/30'
                                     : 'border-border bg-card',
                         isInteractive ? 'cursor-pointer hover:border-accent/40' : '',
                     ].join(' ');
@@ -559,6 +718,7 @@ export function SessionTimelineBar({
                         marginLeft: `${left}%`,
                         width: `${width}%`,
                         minHeight: 70,
+                        zIndex: 1, // sit above the external-event context bars
                     } as const;
 
                     return isInteractive ? (

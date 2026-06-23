@@ -5,7 +5,9 @@ import { useDayPlan } from '../../hooks/useDayPlan';
 import { useGoogleCalendarData, useGoogleCalendarActions } from '../../hooks/useGoogleCalendar';
 import { Button } from '../ui/Button';
 import { inputClass } from '../ui/formStyles';
+import { isVisibleInCalendar, isVisibleOnTimeline, type CalendarSurface } from '../../lib/googleCalendar';
 import type { GoogleCalendarEntry } from '../../types';
+import type { GoogleCalendarListEntry } from '../../lib/googleCalendarApi';
 
 const GCAL_CALLBACK_ERRORS: Record<string, string> = {
     access_denied: 'Google sign-in was cancelled.',
@@ -21,7 +23,8 @@ const GCAL_CALLBACK_ERRORS: Record<string, string> = {
  * Google Calendar OAuth setup (server-mediated, option E2). The browser holds only a single shared
  * secret; the Cloudflare Worker holds the client secret + refresh token. Flow: enter the shared
  * secret → Connect (redirects to Google) → callback redirects back to /settings?gcal=connected.
- * Picking calendars writes the selected subset into `settings.googleCalendarIds` (consumed by the embed).
+ * Per-calendar visibility writes into `settings.googleCalendarIds` with independent `showOnTimeline` /
+ * `showInCalendar` flags (consumed by the SessionTimelineBar overlay and the RenderedCalendar view).
  */
 export function GoogleCalendarSetup() {
     const { settings, dispatch } = useDayPlan();
@@ -56,16 +59,44 @@ export function GoogleCalendarSetup() {
         ? (GCAL_CALLBACK_ERRORS[callbackErrorCode] ?? 'Sign-in failed. Please try connecting again.')
         : null;
 
-    const selectedIds = useMemo(
-        () => new Set((settings.googleCalendarIds ?? []).map((c) => c.id)),
+    const entriesById = useMemo(
+        () => new Map((settings.googleCalendarIds ?? []).map((c) => [c.id, c] as const)),
         [settings.googleCalendarIds],
     );
 
-    const toggleCalendar = (entry: GoogleCalendarEntry) => {
-        const selected = settings.googleCalendarIds ?? [];
-        const updated = selectedIds.has(entry.id)
-            ? selected.filter((c) => c.id !== entry.id)
-            : [...selected, entry];
+    // A calendar is "visible on a surface" only if it's tracked (in googleCalendarIds) AND its flag
+    // for that surface isn't explicitly off. Untracked calendars are off everywhere.
+    const isOn = (cal: GoogleCalendarListEntry, surface: CalendarSurface): boolean => {
+        const entry = entriesById.get(cal.id);
+        if (!entry) return false;
+        return surface === 'timeline' ? isVisibleOnTimeline(entry) : isVisibleInCalendar(entry);
+    };
+
+    // Flip one surface's visibility for a calendar. Adds the entry on first enable; drops it once both
+    // surfaces are off, so googleCalendarIds stays "the calendars I show somewhere".
+    const setSurface = (cal: GoogleCalendarListEntry, surface: CalendarSurface, on: boolean) => {
+        const list = settings.googleCalendarIds ?? [];
+        const existing = entriesById.get(cal.id);
+        // Fresh metadata from the live list; a brand-new entry starts with the other surface off.
+        const prevTimeline = existing ? isVisibleOnTimeline(existing) : false;
+        const prevCalendar = existing ? isVisibleInCalendar(existing) : false;
+        const next: GoogleCalendarEntry = {
+            id: cal.id,
+            name: cal.name,
+            color: cal.color,
+            primary: cal.primary,
+            showOnTimeline: surface === 'timeline' ? on : prevTimeline,
+            showInCalendar: surface === 'calendar' ? on : prevCalendar,
+        };
+        const keep = isVisibleOnTimeline(next) || isVisibleInCalendar(next);
+        let updated: GoogleCalendarEntry[];
+        if (existing) {
+            updated = list
+                .map((c) => (c.id === cal.id ? next : c))
+                .filter((c) => isVisibleOnTimeline(c) || isVisibleInCalendar(c));
+        } else {
+            updated = keep ? [...list, next] : list;
+        }
         dispatch({
             type: 'UPDATE_SETTINGS',
             settings: { googleCalendarIds: updated.length > 0 ? updated : undefined },
@@ -156,42 +187,49 @@ export function GoogleCalendarSetup() {
 
                             <div>
                                 <p className="text-xs text-text-light mb-2">
-                                    Choose which calendars to overlay in the weekly view.
+                                    Choose where each calendar appears — as faded context on the{' '}
+                                    <strong>Timeline</strong> bar, in the full <strong>Calendar</strong> view, or both.
                                 </p>
                                 {availableCalendars.length === 0 ? (
                                     <p className="text-xs text-text-light">No calendars found.</p>
                                 ) : (
-                                    <ul className="space-y-1.5">
+                                    <ul className="space-y-1">
+                                        {/* Column headings for the two surface toggles. */}
+                                        <li className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-text-light/70 pr-1">
+                                            <span className="flex-1" />
+                                            <span className="w-16 text-center">Timeline</span>
+                                            <span className="w-16 text-center">Calendar</span>
+                                        </li>
                                         {availableCalendars.map((cal) => (
                                             <li key={cal.id} className="flex items-center gap-2 text-sm">
-                                                <input
-                                                    type="checkbox"
-                                                    id={`gcal-${cal.id}`}
-                                                    checked={selectedIds.has(cal.id)}
-                                                    onChange={() =>
-                                                        toggleCalendar({
-                                                            id: cal.id,
-                                                            name: cal.name,
-                                                            color: cal.color,
-                                                            primary: cal.primary,
-                                                        })
-                                                    }
-                                                    className="cursor-pointer accent-accent"
-                                                />
                                                 <span
                                                     className="w-3 h-3 rounded-sm flex-shrink-0 border border-border"
                                                     style={{ backgroundColor: cal.color ?? 'transparent' }}
                                                 />
-                                                <label
-                                                    htmlFor={`gcal-${cal.id}`}
-                                                    className="flex-1 min-w-0 truncate cursor-pointer"
-                                                    title={cal.id}
-                                                >
+                                                <span className="flex-1 min-w-0 truncate" title={cal.id}>
                                                     {cal.name}
                                                     {cal.primary && (
                                                         <span className="ml-1.5 text-[10px] text-text-light">(primary)</span>
                                                     )}
-                                                </label>
+                                                </span>
+                                                <span className="w-16 flex justify-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Show ${cal.name ?? 'calendar'} on the timeline`}
+                                                        checked={isOn(cal, 'timeline')}
+                                                        onChange={(e) => setSurface(cal, 'timeline', e.target.checked)}
+                                                        className="cursor-pointer accent-accent"
+                                                    />
+                                                </span>
+                                                <span className="w-16 flex justify-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Show ${cal.name ?? 'calendar'} in the calendar view`}
+                                                        checked={isOn(cal, 'calendar')}
+                                                        onChange={(e) => setSurface(cal, 'calendar', e.target.checked)}
+                                                        className="cursor-pointer accent-accent"
+                                                    />
+                                                </span>
                                             </li>
                                         ))}
                                     </ul>

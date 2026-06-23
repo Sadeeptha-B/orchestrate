@@ -9,7 +9,7 @@ import { HistorySidebar, type HistoryTab } from './HistorySidebar';
 import { DigitalClock } from './DigitalClock';
 import { CheckInModal } from '../checkin/CheckInModal';
 import { TodoistPanel } from '../todoist/TodoistPanel';
-import { GoogleCalendarEmbed } from '../todoist/GoogleCalendarEmbed';
+import { RenderedCalendar } from '../todoist/RenderedCalendar';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
 import { useFocusNudge } from '../../hooks/useFocusNudge';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
@@ -286,7 +286,7 @@ export function Dashboard() {
                                 {/* Calendar (Google) — collapsible */}
                                 <CollapsibleSection title="Calendar">
                                     <div className="mt-3">
-                                        <GoogleCalendarEmbed height={400} onSetup={() => navigate('/settings?tab=integrations')} />
+                                        <RenderedCalendar height={400} onSetup={() => navigate('/settings?tab=integrations')} />
                                     </div>
                                 </CollapsibleSection>
                             </div>

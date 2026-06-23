@@ -1,0 +1,167 @@
+/*
+ * FullCalendar theming for Orchestrate. Maps FullCalendar v6's CSS variables onto the app's `@theme`
+ * tokens (see index.css) so the rendered calendar follows the same surfaces, accent, and borders as
+ * the rest of the app in both light and dark modes, plus a few overrides for a flatter, modern look.
+ * Scoped under `.rendered-calendar` so it never leaks into other FullCalendar usages.
+ */
+
+/* Subtle scrollbar inside FullCalendar's scrollers — matches the app's `.scrollbar-subtle`. */
+.rendered-calendar .fc-scroller {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+}
+.rendered-calendar .fc-scroller::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.rendered-calendar .fc-scroller::-webkit-scrollbar-track {
+    background: transparent;
+}
+.rendered-calendar .fc-scroller::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 4px;
+}
+
+.rendered-calendar .fc {
+    --fc-border-color: var(--color-border);
+    --fc-page-bg-color: var(--color-card);
+    --fc-neutral-bg-color: var(--color-surface-dark);
+    --fc-today-bg-color: var(--color-accent-subtle);
+    --fc-now-indicator-color: var(--color-accent);
+    --fc-event-bg-color: var(--color-accent);
+    --fc-event-border-color: var(--color-accent);
+    --fc-event-text-color: #ffffff;
+    --fc-list-event-hover-bg-color: var(--color-accent-subtle);
+    --fc-highlight-color: color-mix(in srgb, var(--color-accent) 16%, transparent);
+
+    font-family: inherit;
+    font-size: 0.78rem;
+    color: var(--color-text);
+}
+
+/* ── Toolbar ───────────────────────────────────────────────────────────── */
+.rendered-calendar .fc .fc-toolbar.fc-header-toolbar {
+    margin-bottom: 0.6rem;
+    padding: 0 0.1rem;
+}
+
+.rendered-calendar .fc .fc-toolbar-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.rendered-calendar .fc .fc-button {
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-light);
+    text-transform: none;
+    font-weight: 500;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 0.5rem;
+    box-shadow: none;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.rendered-calendar .fc .fc-button:hover {
+    background: var(--color-surface-dark);
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+}
+
+.rendered-calendar .fc .fc-button:focus,
+.rendered-calendar .fc .fc-button:focus-visible {
+    box-shadow: none;
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+    outline-offset: 1px;
+}
+
+.rendered-calendar .fc .fc-button-primary:not(:disabled):active,
+.rendered-calendar .fc .fc-button-primary:not(:disabled).fc-button-active {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: #ffffff;
+}
+
+.rendered-calendar .fc .fc-button:disabled {
+    opacity: 0.45;
+}
+
+/* Tighter gap between the prev/next button group. */
+.rendered-calendar .fc .fc-button-group > .fc-button {
+    border-radius: 0;
+}
+.rendered-calendar .fc .fc-button-group > .fc-button:first-child {
+    border-top-left-radius: 0.5rem;
+    border-bottom-left-radius: 0.5rem;
+}
+.rendered-calendar .fc .fc-button-group > .fc-button:last-child {
+    border-top-right-radius: 0.5rem;
+    border-bottom-right-radius: 0.5rem;
+}
+
+/* ── Column headers + axis ─────────────────────────────────────────────── */
+/* Softer, slightly tabbed day headers. */
+.rendered-calendar .fc .fc-col-header-cell {
+    border-radius: 8px 8px 0 0;
+    background: color-mix(in srgb, var(--color-surface-dark) 55%, transparent);
+}
+
+.rendered-calendar .fc .fc-col-header-cell-cushion {
+    color: var(--color-text-light);
+    font-weight: 500;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 6px 4px;
+    text-decoration: none;
+}
+
+.rendered-calendar .fc .fc-timegrid-slot-label-cushion,
+.rendered-calendar .fc .fc-timegrid-axis-cushion {
+    color: var(--color-text-light);
+    font-size: 0.64rem;
+}
+
+/* Softer slot lines: keep the on-the-hour line, fade the half-hour. */
+.rendered-calendar .fc .fc-timegrid-slot-minor {
+    border-top-style: dotted;
+    border-top-color: color-mix(in srgb, var(--color-border) 55%, transparent);
+}
+
+/* ── Events ────────────────────────────────────────────────────────────── */
+.rendered-calendar .fc .fc-event {
+    border-radius: 6px;
+    border: none;
+    padding: 1px 3px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+    cursor: pointer;
+}
+
+.rendered-calendar .fc .fc-event:hover {
+    filter: brightness(1.05);
+}
+
+.rendered-calendar .fc .fc-event-time {
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+/* ── List (Agenda) view ────────────────────────────────────────────────── */
+.rendered-calendar .fc .fc-list {
+    border-radius: 0;
+}
+.rendered-calendar .fc .fc-list-day-cushion {
+    background: var(--color-surface-dark);
+    color: var(--color-text);
+}
+.rendered-calendar .fc .fc-list-event:hover td {
+    background: var(--color-accent-subtle);
+}
+.rendered-calendar .fc .fc-list-empty {
+    background: var(--color-card);
+    color: var(--color-text-light);
+}
