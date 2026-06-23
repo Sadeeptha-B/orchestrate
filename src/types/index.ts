@@ -191,6 +191,11 @@ export interface GoogleCalendarEntry {
     name?: string;    // user-friendly label, e.g. "Work", "Todoist"
     color?: string;   // hex color for the embed, e.g. "#009688"
     primary?: boolean; // v7.2: the user's primary calendar (from the Calendar API list)
+    // v7.7: per-surface visibility. A calendar can be shown on the SessionTimelineBar (day context),
+    // in the rendered calendar view, or both — independently. `undefined` means visible (so entries
+    // saved before v7.7 keep showing on both surfaces without a migration).
+    showOnTimeline?: boolean;
+    showInCalendar?: boolean;
 }
 
 /** v6: per-kind defaults for habit-instance duration. Habits override via Habit.targetDurationMinutes (v6.1). */

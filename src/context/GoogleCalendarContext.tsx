@@ -13,10 +13,15 @@ import {
     createCalendarEvent,
     GoogleAuthError,
     listCalendars,
+    listEvents,
+    patchCalendarEvent,
+    type CalendarEvent,
     type CalendarEventInput,
+    type CalendarEventPatch,
     type CalendarEventResult,
     type GoogleCalendarListEntry,
 } from '../lib/googleCalendarApi';
+import { isVisibleOnSurface, type CalendarSurface } from '../lib/googleCalendar';
 
 // ─── Context shapes (mirrors the Todoist data/actions split) ───────────────────
 
@@ -47,6 +52,21 @@ export interface GoogleCalendarActionsValue {
     refreshCalendars: () => Promise<void>;
     /** Write plumbing: create an event. Returns null on failure (logged + authFailed routed). */
     createEvent: (calendarId: string, event: CalendarEventInput) => Promise<CalendarEventResult | null>;
+    /**
+     * Read plumbing: list timed events for a local day ("YYYY-MM-DD") across the calendars visible on
+     * the **timeline** surface, each stamped with its calendar's color. Returns [] when not connected /
+     * no timeline-visible calendars.
+     */
+    listDayEvents: (dateISO: string) => Promise<CalendarEvent[]>;
+    /** Like listDayEvents but for an explicit [timeMin, timeMax) range (RFC3339), filtered to the
+     *  calendars visible on the given surface (defaults to 'calendar' — the rendered view). */
+    listEventsInRange: (timeMinISO: string, timeMaxISO: string, surface?: CalendarSurface) => Promise<CalendarEvent[]>;
+    /** Patch an event's time/summary (rendered-view drag/resize). Returns null on failure. */
+    patchEvent: (
+        calendarId: string,
+        eventId: string,
+        patch: CalendarEventPatch,
+    ) => Promise<CalendarEventResult | null>;
 }
 
 const GoogleCalendarDataContext = createContext<GoogleCalendarDataValue | null>(null);
@@ -212,6 +232,58 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         [getAccessToken, handleError],
     );
 
+    const listEventsInRange = useCallback(
+        async (timeMinISO: string, timeMaxISO: string, surface: CalendarSurface = 'calendar'): Promise<CalendarEvent[]> => {
+            const calendars = (settings.googleCalendarIds ?? []).filter((c) => isVisibleOnSurface(c, surface));
+            if (calendars.length === 0) return [];
+            const token = await getAccessToken();
+            if (!token) return [];
+            try {
+                const perCalendar = await Promise.all(
+                    calendars.map(async (cal) => {
+                        const events = await listEvents(token, cal.id, timeMinISO, timeMaxISO);
+                        return events.map((e) => ({ ...e, color: cal.color }));
+                    }),
+                );
+                setError(null);
+                return perCalendar.flat();
+            } catch (e) {
+                handleError(e, 'Failed to list calendar events');
+                return [];
+            }
+        },
+        [settings.googleCalendarIds, getAccessToken, handleError],
+    );
+
+    const listDayEvents = useCallback(
+        (dateISO: string): Promise<CalendarEvent[]> => {
+            // Local day bounds → RFC3339 (UTC). `new Date("YYYY-MM-DDT00:00:00")` is parsed as local time.
+            const dayStart = new Date(`${dateISO}T00:00:00`);
+            const dayEnd = new Date(dayStart);
+            dayEnd.setDate(dayEnd.getDate() + 1);
+            return listEventsInRange(dayStart.toISOString(), dayEnd.toISOString(), 'timeline');
+        },
+        [listEventsInRange],
+    );
+
+    const patchEvent = useCallback(
+        async (
+            calendarId: string,
+            eventId: string,
+            patch: CalendarEventPatch,
+        ): Promise<CalendarEventResult | null> => {
+            const token = await getAccessToken();
+            if (!token) return null;
+            try {
+                return await patchCalendarEvent(token, calendarId, eventId, patch);
+            } catch (e) {
+                handleError(e, 'Failed to update calendar event');
+                return null;
+            }
+        },
+        [getAccessToken, handleError],
+    );
+
     useEffect(() => {
         tokenRef.current = null;
         setConnecting(false);
@@ -230,8 +302,28 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     );
 
     const actionsValue = useMemo<GoogleCalendarActionsValue>(
-        () => ({ setAppSecret, connect, disconnect, checkConnection, refreshCalendars, createEvent }),
-        [setAppSecret, connect, disconnect, checkConnection, refreshCalendars, createEvent],
+        () => ({
+            setAppSecret,
+            connect,
+            disconnect,
+            checkConnection,
+            refreshCalendars,
+            createEvent,
+            listDayEvents,
+            listEventsInRange,
+            patchEvent,
+        }),
+        [
+            setAppSecret,
+            connect,
+            disconnect,
+            checkConnection,
+            refreshCalendars,
+            createEvent,
+            listDayEvents,
+            listEventsInRange,
+            patchEvent,
+        ],
     );
 
     return (

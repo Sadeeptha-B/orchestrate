@@ -62,6 +62,68 @@ export async function listCalendars(token: string): Promise<GoogleCalendarListEn
     }));
 }
 
+/** An event instance from a calendar, normalized for the timeline overlay / rendered view. */
+export interface CalendarEvent {
+    id: string;
+    /** The calendar this event came from — stamped by the caller for source/color attribution. */
+    calendarId: string;
+    summary: string;
+    /** ISO dateTime for timed events, or a "YYYY-MM-DD" date for all-day events (see `allDay`). */
+    start: string;
+    end: string;
+    /** Hex color, stamped by the caller from the calendar's entry (events have no color of their own here). */
+    color?: string;
+    /** v7.7: all-day (date-only) event. Shown in the rendered calendar's all-day row; the timeline
+     *  overlay excludes these (they have no time-of-day position). */
+    allDay?: boolean;
+}
+
+interface EventsListResponse {
+    items?: Array<{
+        id: string;
+        status?: string;
+        summary?: string;
+        start?: { dateTime?: string; date?: string };
+        end?: { dateTime?: string; date?: string };
+    }>;
+}
+
+/**
+ * List events on a calendar within [timeMin, timeMax) (RFC3339). Recurring events are expanded to
+ * instances (`singleEvents=true`). Cancelled events are dropped. Both timed and all-day (date-only)
+ * events are returned — all-day ones carry `allDay: true` with date-only `start`/`end` (Google's end
+ * date is exclusive, which FullCalendar also expects). Requires the `calendar.events` scope.
+ */
+export async function listEvents(
+    token: string,
+    calendarId: string,
+    timeMinISO: string,
+    timeMaxISO: string,
+): Promise<CalendarEvent[]> {
+    const params = new URLSearchParams({
+        timeMin: timeMinISO,
+        timeMax: timeMaxISO,
+        singleEvents: 'true',
+        orderBy: 'startTime',
+        maxResults: '250',
+    });
+    const data = await calFetch<EventsListResponse>(
+        token,
+        `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+    );
+    const out: CalendarEvent[] = [];
+    for (const e of data.items ?? []) {
+        if (e.status === 'cancelled') continue;
+        const summary = e.summary || '(no title)';
+        if (e.start?.dateTime && e.end?.dateTime) {
+            out.push({ id: e.id, calendarId, summary, start: e.start.dateTime, end: e.end.dateTime });
+        } else if (e.start?.date && e.end?.date) {
+            out.push({ id: e.id, calendarId, summary, start: e.start.date, end: e.end.date, allDay: true });
+        }
+    }
+    return out;
+}
+
 export interface CalendarEventInput {
     summary: string;
     description?: string;
@@ -89,5 +151,29 @@ export async function createCalendarEvent(
         token,
         `/calendars/${encodeURIComponent(calendarId)}/events`,
         { method: 'POST', body: JSON.stringify(event) },
+    );
+}
+
+/** Partial update for an event — only the supplied fields change (Google's PATCH semantics). */
+export interface CalendarEventPatch {
+    start?: { dateTime: string; timeZone?: string };
+    end?: { dateTime: string; timeZone?: string };
+    summary?: string;
+}
+
+/**
+ * Patch an event's time (or summary) — used by the rendered calendar's drag-move / resize.
+ * Requires the calendar.events scope.
+ */
+export async function patchCalendarEvent(
+    token: string,
+    calendarId: string,
+    eventId: string,
+    patch: CalendarEventPatch,
+): Promise<CalendarEventResult> {
+    return calFetch<CalendarEventResult>(
+        token,
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        { method: 'PATCH', body: JSON.stringify(patch) },
     );
 }

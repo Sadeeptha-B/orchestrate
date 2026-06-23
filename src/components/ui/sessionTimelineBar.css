@@ -1,0 +1,30 @@
+/*
+ * External calendar event bars on the SessionTimelineBar. They sit *behind* the opaque session blocks
+ * (z-index 0 < the blocks' z-index 1) as faded day context. The label uses the theme text color (not
+ * the calendar swatch) so it stays legible against the faint fill. `--ev` is the calendar's hex color
+ * and `--ml`/`--w` are the bar's left/width (percent), all set inline.
+ *
+ * On hover the bar (a) raises above the session and goes solid so an overlapped event becomes readable,
+ * and (b) *expands to fit its full title* (capped to the remaining timeline width) — so a short event
+ * whose name was truncated to "Lu…" reveals instantly, without waiting on the native tooltip.
+ */
+.timeline-event {
+    z-index: 0;
+    margin-left: var(--ml);
+    width: var(--w);
+    background-color: color-mix(in srgb, var(--ev) 22%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ev) 45%, transparent);
+    border-left: 3px solid var(--ev);
+    color: var(--color-text);
+    transition: background-color 0.12s ease, color 0.12s ease, width 0.12s ease;
+}
+
+.timeline-event:hover {
+    z-index: 5;
+    width: max-content;
+    min-width: var(--w);
+    max-width: calc(100% - var(--ml));
+    background-color: var(--ev);
+    border-color: var(--ev);
+    color: #ffffff;
+}

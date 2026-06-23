@@ -713,8 +713,8 @@ Is X today-only?
 
                         <SubHeading>Step 4 — Schedule</SubHeading>
                         <ul className="list-disc pl-5 space-y-1">
-                            <li>Phase 1 (Assign): you assign manual tasks to sessions. Habits already render in the dedicated habit lane above the session blocks, positioned at their target time. They are <em>not</em> assignable to sessions.</li>
-                            <li>Phase 2 (Time): side-by-side Todoist + Calendar plus a <em>"Today's habits"</em> panel listing each instance. Any habit past its target window gets a ⤴ Reschedule affordance with a time-picker; strict ones are tagged <em>"missed"</em> but still listed and reschedulable.</li>
+                            <li>Phase 1 (Assign): you assign manual tasks to sessions. Habits already render in the dedicated habit lane above the session blocks, positioned at their target time. They are <em>not</em> assignable to sessions. If you've connected Google Calendar, that day's events also show as a faded, read-only lane on the timeline — context for fitting sessions around real commitments. You don't edit them there; the calendar view is for that.</li>
+                            <li>Phase 2 (Time): side-by-side Todoist + the Google Calendar view plus a <em>"Today's habits"</em> panel listing each instance. The calendar shows your selected calendars (including private ones), and you can drag an event to a new time or resize it to change its duration — the change saves straight back to Google. Any habit past its target window gets a ⤴ Reschedule affordance with a time-picker; strict ones are tagged <em>"missed"</em> but still listed and reschedulable.</li>
                         </ul>
                         <p className="text-text-light text-sm">
                             Capacity badge shows the morning session is <em>tight</em> at 110%. You proceed — it's advisory. Habits do not count toward session capacity.
