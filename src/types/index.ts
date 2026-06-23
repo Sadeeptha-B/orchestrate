@@ -83,6 +83,9 @@ export interface SessionSlot {
     name: string;
     startTime: string; // "HH:mm"
     endTime: string;   // "HH:mm"
+    // v7.7 Phase 3: No Distraction blocklist suffix appended to this session's calendar event name
+    // (e.g. "-ND"). Undefined / "" = no blocklist. The actual blocklists are managed by the extension.
+    blocklist?: string;
 }
 
 /**
@@ -174,6 +177,11 @@ export interface DayPlan {
     setupComplete: boolean;
     checkIns: CheckIn[];
     seededFocusIds?: string[];                            // v6.7: recurring-focus ids already added as intentions today (chip dedup)
+    // v7.7 Phase 3: sessionId -> Google event id on the Orchestrate calendar (for Sync reconcile).
+    sessionCalendarEventIds?: Record<string, string>;
+    // v7.7 Phase 3: per-session blocklist confirmation. Presence = confirmed; locked until the
+    // session's end time. `blocklist` is the suffix locked in at confirmation (null = none).
+    sessionStarts?: Record<string, { blocklist: string | null; confirmedAt: string }>;
 }
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';
@@ -214,6 +222,10 @@ export interface AppSettings {
     googleCalendarIds?: GoogleCalendarEntry[]; // v7.2: the *selected* calendars to overlay (sourced from the Calendar API list)
     googleCalendarConnected?: boolean;         // v7.2: user has authorized Google Calendar via the server-mediated OAuth flow (Cloudflare Worker holds the refresh token); drives the connection re-check on load. Access tokens are minted server-side on demand and held only in memory.
     calendarViewMode?: CalendarViewMode;
+    // v7.7 Phase 3: the dedicated app-managed calendar sessions are written to.
+    orchestrateCalendarName?: string;   // display name (default "Orchestrate")
+    orchestrateCalendarId?: string;     // Google calendar id once created (per connected account)
+    blocklists?: string[];              // No Distraction suffix strings the user can assign to sessions (e.g. "-ND")
     taskCapDefaults?: TaskCapDefaults;  // v6: defaults are injected by loadSettings when absent
     sessionBufferMinutes?: number;      // v6: subtracted from session length when computing capacity (default 60)
     habitsTodoistProjectId?: string;    // v6.1: Todoist project all habit-tasks live under; lazily created on first habit save

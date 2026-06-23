@@ -28,6 +28,10 @@ interface SessionEditorTimelineProps {
     timelineStartMinutes?: number;
     /** Right edge of the day window (minutes since midnight). */
     timelineEndMinutes?: number;
+    /** v7.7: No Distraction blocklist suffixes the user can assign to a session (from settings). */
+    blocklistOptions?: string[];
+    /** v7.7: session ids whose blocklist is locked (confirmed at start, until the session ends). */
+    lockedSessionIds?: Set<string>;
 }
 
 /** In-flight pointer drag. Held in local state; only committed on pointer-up. */
@@ -53,6 +57,8 @@ export function SessionEditorTimeline({
     onRemove,
     timelineStartMinutes,
     timelineEndMinutes,
+    blocklistOptions = [],
+    lockedSessionIds,
 }: SessionEditorTimelineProps) {
     const dayStart = timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES;
     const dayEnd = timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
@@ -250,34 +256,63 @@ export function SessionEditorTimeline({
                 })}
             </div>
 
-            {/* Rename / delete popover */}
+            {/* Rename / delete / blocklist popover */}
             {editingSlot && (
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-card p-2">
-                    <input
-                        autoFocus
-                        value={editingSlot.name}
-                        onChange={(e) => onUpdate({ ...editingSlot, name: e.target.value })}
-                        onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
-                        placeholder="Session name"
-                        className="flex-1 min-w-0 rounded-md border border-border bg-card px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent"
-                    />
-                    <span className="text-[11px] text-text-light tabular-nums whitespace-nowrap">
-                        {editingSlot.startTime}–{editingSlot.endTime}
-                    </span>
-                    <button
-                        type="button"
-                        onClick={() => { onRemove(editingSlot.id); setEditingId(null); }}
-                        className="text-xs px-2 py-1 rounded-md border border-border text-text-light hover:text-red-400 hover:border-red-400/50"
-                    >
-                        Delete
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setEditingId(null)}
-                        className="text-xs px-2 py-1 rounded-md border border-border text-text-light hover:border-accent"
-                    >
-                        Done
-                    </button>
+                <div className="rounded-lg border border-border bg-card p-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                        <input
+                            autoFocus
+                            value={editingSlot.name}
+                            onChange={(e) => onUpdate({ ...editingSlot, name: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setEditingId(null); }}
+                            placeholder="Session name"
+                            className="flex-1 min-w-0 rounded-md border border-border bg-card px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent"
+                        />
+                        <span className="text-[11px] text-text-light tabular-nums whitespace-nowrap">
+                            {editingSlot.startTime}–{editingSlot.endTime}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => { onRemove(editingSlot.id); setEditingId(null); }}
+                            className="text-xs px-2 py-1 rounded-md border border-border text-text-light hover:text-red-400 hover:border-red-400/50"
+                        >
+                            Delete
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setEditingId(null)}
+                            className="text-xs px-2 py-1 rounded-md border border-border text-text-light hover:border-accent"
+                        >
+                            Done
+                        </button>
+                    </div>
+                    {blocklistOptions.length > 0 && (() => {
+                        const locked = lockedSessionIds?.has(editingSlot.id) ?? false;
+                        return (
+                            <div className="flex items-center gap-2">
+                                <label className="text-[11px] text-text-light whitespace-nowrap" htmlFor="session-blocklist">
+                                    Blocklist
+                                </label>
+                                <select
+                                    id="session-blocklist"
+                                    value={editingSlot.blocklist ?? ''}
+                                    disabled={locked}
+                                    onChange={(e) => onUpdate({ ...editingSlot, blocklist: e.target.value || undefined })}
+                                    className="flex-1 min-w-0 rounded-md border border-border bg-card px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                    <option value="">None</option>
+                                    {blocklistOptions.map((b) => (
+                                        <option key={b} value={b}>{b}</option>
+                                    ))}
+                                </select>
+                                {locked && (
+                                    <span className="text-[10px] text-text-light whitespace-nowrap" title="Locked until the session ends">
+                                        🔒 locked
+                                    </span>
+                                )}
+                            </div>
+                        );
+                    })()}
                 </div>
             )}
 

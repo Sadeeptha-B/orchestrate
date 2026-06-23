@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import listPlugin from '@fullcalendar/list';
 import interactionPlugin, { type EventResizeDoneArg } from '@fullcalendar/interaction';
-import type { EventInput, EventDropArg, EventSourceFuncArg } from '@fullcalendar/core';
+import type { EventInput, EventDropArg, EventSourceFuncArg, EventClickArg, DateSelectArg } from '@fullcalendar/core';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useGoogleCalendarActions, useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
 import { isVisibleInCalendar } from '../../lib/googleCalendar';
+import { useSessionCalendarSync } from '../../hooks/useSessionCalendarSync';
 import type { CalendarViewMode } from '../../types';
+import { CalendarEventEditor, type EventEditorTarget, type EventEditorSubmit } from './CalendarEventEditor';
 import './renderedCalendar.css';
+
+const DEFAULT_EVENT_MS = 60 * 60 * 1000; // fallback duration when an event has no end / for all-day create
 
 /** 24-hour time format shared by the slot axis and event labels (matches the app's HH:mm convention). */
 const TIME_24H = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
@@ -36,16 +40,34 @@ interface RenderedCalendarProps {
 /**
  * OAuth-rendered calendar (replaces the public-iframe embed). Fetches the selected calendars' events
  * via the Calendar API over FullCalendar's visible range, so **private/imported calendars render**
- * (the iframe could not show them). Events are editable: drag to move + resize writes back to Google
- * via events.patch. The SessionTimelineBar overlay stays read-only; editing lives here.
+ * (the iframe could not show them). Fully editable: drag-move + resize patch the time/duration, clicking
+ * an event opens an editor (title/time, or delete), and dragging an empty slot creates a new event on a
+ * writable calendar — all written back to Google. The SessionTimelineBar overlay stays read-only.
  */
 export function RenderedCalendar({ className = '', height = 400, onSetup }: RenderedCalendarProps) {
     const { settings, dispatch } = useDayPlan();
-    const { isConnected } = useGoogleCalendarData();
-    const { listEventsInRange, patchEvent } = useGoogleCalendarActions();
+    const { isConnected, availableCalendars } = useGoogleCalendarData();
+    const { listEventsInRange, patchEvent, createEvent, deleteEvent } = useGoogleCalendarActions();
+    const { sync } = useSessionCalendarSync();
     const calendarEntries = (settings.googleCalendarIds ?? []).filter(isVisibleInCalendar);
     const viewMode: CalendarViewMode = settings.calendarViewMode ?? 'week';
     const calendarRef = useRef<FullCalendar>(null);
+    const [editor, setEditor] = useState<EventEditorTarget | null>(null);
+
+    // Calendars the user can write to — the create-mode picker, and the gate on whether to allow
+    // creating at all. Default new events to the writable primary, else the first writable calendar.
+    const writableCalendars = useMemo(
+        () => availableCalendars
+            .filter((c) => c.accessRole === 'owner' || c.accessRole === 'writer')
+            .map((c) => ({ id: c.id, name: c.name, color: c.color })),
+        [availableCalendars],
+    );
+    const defaultCreateCalendarId = useMemo(() => {
+        const primary = availableCalendars.find(
+            (c) => c.primary && (c.accessRole === 'owner' || c.accessRole === 'writer'),
+        );
+        return primary?.id ?? writableCalendars[0]?.id ?? '';
+    }, [availableCalendars, writableCalendars]);
 
     // FullCalendar event source: it re-runs this on navigation / view change, handing us the visible
     // range. `listEventsInRange` re-identifies when the selected calendars change (it closes over
@@ -59,19 +81,23 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
             try {
                 const events = await listEventsInRange(info.startStr, info.endStr);
                 success(
-                    events.map((e) => ({
-                        id: `${e.calendarId}::${e.id}`,
-                        title: e.summary,
-                        start: e.start,
-                        end: e.end,
-                        allDay: e.allDay,
-                        // All-day events render in the all-day row but aren't drag/resize-editable: a
-                        // time patch would convert them to timed events. Timed events stay editable.
-                        editable: e.allDay ? false : undefined,
-                        backgroundColor: e.color,
-                        borderColor: e.color,
-                        extendedProps: { calendarId: e.calendarId, googleEventId: e.id },
-                    })),
+                    events.map((e) => {
+                        const input: EventInput = {
+                            id: `${e.calendarId}::${e.id}`,
+                            title: e.summary,
+                            start: e.start,
+                            end: e.end,
+                            allDay: e.allDay,
+                            backgroundColor: e.color,
+                            borderColor: e.color,
+                            extendedProps: { calendarId: e.calendarId, googleEventId: e.id },
+                        };
+                        // Only all-day events are pinned non-editable (a time patch would convert them
+                        // to timed). Timed events must OMIT `editable` entirely — FullCalendar refines it
+                        // with Boolean(), so `editable: undefined` would resolve to false (no drag/resize).
+                        if (e.allDay) input.editable = false;
+                        return input;
+                    }),
                 );
             } catch (err) {
                 failure(err instanceof Error ? err : new Error(String(err)));
@@ -93,8 +119,12 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
         dispatch({ type: 'UPDATE_SETTINGS', settings: { calendarViewMode: mode } });
     };
 
-    // Re-run the event source for the current range (no time-based polling otherwise).
-    const handleRefresh = () => calendarRef.current?.getApi().refetchEvents();
+    // Sync: write the day's sessions to the Orchestrate calendar, then re-run the event source
+    // (no time-based polling otherwise). Sync no-ops when not connected / no creation scope.
+    const handleSync = async () => {
+        await sync();
+        calendarRef.current?.getApi().refetchEvents();
+    };
 
     // Persist a drag-move / resize back to Google; revert the visual change if the write fails.
     const handleEventChange = async (arg: EventDropArg | EventResizeDoneArg) => {
@@ -110,6 +140,76 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
             end: { dateTime: event.end.toISOString() },
         });
         if (!result) revert();
+    };
+
+    const closeEditor = useCallback(() => {
+        setEditor(null);
+        calendarRef.current?.getApi().unselect();
+    }, []);
+
+    // Click an event → edit it (title always; time/duration for timed events, title-only for all-day).
+    const handleEventClick = (arg: EventClickArg) => {
+        const { event } = arg;
+        const calendarId = event.extendedProps.calendarId as string | undefined;
+        const googleEventId = event.extendedProps.googleEventId as string | undefined;
+        if (!calendarId || !googleEventId || !event.start) return;
+        setEditor({
+            mode: 'edit',
+            calendarId,
+            eventId: googleEventId,
+            title: event.title,
+            start: event.start,
+            end: event.end ?? new Date(event.start.getTime() + DEFAULT_EVENT_MS),
+            allDay: event.allDay,
+            color: event.backgroundColor || undefined,
+            anchor: { x: arg.jsEvent.clientX, y: arg.jsEvent.clientY },
+        });
+    };
+
+    // Drag/click an empty slot → create. All-day (month) selections have no time, so default to a
+    // one-hour slot at 09:00 on the chosen day (the user adjusts in the editor).
+    const handleSelect = (arg: DateSelectArg) => {
+        if (writableCalendars.length === 0) {
+            calendarRef.current?.getApi().unselect();
+            return;
+        }
+        let start = arg.start;
+        let end = arg.end;
+        if (arg.allDay) {
+            start = new Date(arg.start);
+            start.setHours(9, 0, 0, 0);
+            end = new Date(start.getTime() + DEFAULT_EVENT_MS);
+        }
+        const anchor = arg.jsEvent ? { x: arg.jsEvent.clientX, y: arg.jsEvent.clientY } : undefined;
+        const color = writableCalendars.find((c) => c.id === defaultCreateCalendarId)?.color;
+        setEditor({ mode: 'create', calendarId: defaultCreateCalendarId, title: '', start, end, anchor, color });
+    };
+
+    const handleEditorSubmit = async (vals: EventEditorSubmit): Promise<boolean> => {
+        if (!editor) return false;
+        let ok = false;
+        if (editor.mode === 'create') {
+            const res = await createEvent(vals.calendarId, {
+                summary: vals.title || '(no title)',
+                start: { dateTime: vals.startISO },
+                end: { dateTime: vals.endISO },
+            });
+            ok = res !== null;
+        } else if (editor.eventId) {
+            const patch = vals.summaryOnly
+                ? { summary: vals.title }
+                : { summary: vals.title, start: { dateTime: vals.startISO }, end: { dateTime: vals.endISO } };
+            const res = await patchEvent(editor.calendarId, editor.eventId, patch);
+            ok = res !== null;
+        }
+        if (ok) calendarRef.current?.getApi().refetchEvents();
+        return ok;
+    };
+
+    const handleEditorDelete = async (calendarId: string, eventId: string): Promise<boolean> => {
+        const ok = await deleteEvent(calendarId, eventId);
+        if (ok) calendarRef.current?.getApi().refetchEvents();
+        return ok;
     };
 
     if (!isConnected) {
@@ -176,12 +276,12 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
                 ))}
                 <button
                     type="button"
-                    onClick={handleRefresh}
+                    onClick={handleSync}
                     className="ml-auto text-xs text-text-light hover:text-accent transition-colors cursor-pointer inline-flex items-center gap-1"
-                    title="Refresh calendar events"
-                    aria-label="Refresh calendar events"
+                    title="Write the day's sessions to the Orchestrate calendar and refresh"
+                    aria-label="Sync sessions to calendar"
                 >
-                    <span aria-hidden>↻</span> Refresh
+                    <span aria-hidden>↻</span> Sync
                 </button>
                 <a
                     href="https://calendar.google.com/calendar/r"
@@ -204,14 +304,31 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
                     dayMaxEvents
                     slotLabelFormat={TIME_24H}
                     eventTimeFormat={TIME_24H}
+                    dayHeaderFormat={{ weekday: 'short', month: 'short', day: 'numeric' }}
+                    titleFormat={{ month: 'long', day: 'numeric', year: 'numeric' }}
                     editable
                     eventStartEditable
                     eventDurationEditable
+                    selectable
+                    selectMirror
                     events={eventsSource}
                     eventDrop={handleEventChange}
                     eventResize={handleEventChange}
+                    eventClick={handleEventClick}
+                    select={handleSelect}
                 />
             </div>
+
+            {editor && (
+                <CalendarEventEditor
+                    key={`${editor.mode}:${editor.eventId ?? 'new'}:${editor.start.getTime()}`}
+                    target={editor}
+                    writableCalendars={writableCalendars}
+                    onClose={closeEditor}
+                    onSubmit={handleEditorSubmit}
+                    onDelete={handleEditorDelete}
+                />
+            )}
         </div>
     );
 }

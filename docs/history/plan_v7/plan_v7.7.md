@@ -85,9 +85,9 @@ Update [docs/synthesis.md](docs/synthesis.md) (integrations / feature set) and t
 
 ---
 
-## Phase 3 — DEFERRED (recorded direction only)
+## Phase 3 — SHIPPED (full write-up below, "Orchestrate v7.7 — Phase 3")
 
-Auto-create an **"Orchestrate"** secondary calendar on connect and write session blocks to it. Chosen approach when built:
+Auto-create an **"Orchestrate"** secondary calendar on connect and write session blocks to it. Original recorded direction (the as-built detail is in the Phase 3 section further down):
 - **Scope:** add `https://www.googleapis.com/auth/calendar.app.created` to `SCOPES` in [functions/api/auth/google/_lib.ts](functions/api/auth/google/_lib.ts) (lines 29-31) — least-privilege; lets the app create/manage only its own calendar while `calendar.events` keeps read access to others. Requires **one re-consent** (handle the scope-mismatch case in `checkConnection`/status).
 - New API fns `createCalendar` (`POST /calendars`) + reuse `createCalendarEvent` ([:83-93](src/lib/googleCalendarApi.ts#L83-L93), the long-dormant plumbing).
 - Persist the created calendar id + a `sessionId → googleEventId` map — this **is** a schema change: bump `SCHEMA_VERSION` (currently 7.4) and add one forward step in `migrateToCurrent` per the CLAUDE.md schema posture.
@@ -121,3 +121,93 @@ Auto-create an **"Orchestrate"** secondary calendar on connect and write session
 3. **Phase 1:** Dashboard timeline shows faded event blocks at correct times; hover shows titles; all-day events excluded; nothing shown when disconnected or no calendars selected; bar unaffected when `externalEvents` omitted.
 4. **Phase 2:** Calendar view renders events incl. the private calendar; week/month/agenda toggle persists; drag an event to a new time and resize it → reload/refetch confirms the change persisted in Google (events.patch); a forced failure reverts the drag and surfaces an error.
 5. Disconnect → both surfaces fall back to empty/connect states cleanly.
+
+
+# Orchestrate v7.7 — Phase 3: Orchestrate calendar, session write-back, No Distraction blocklists
+
+> Phases 1–2 (timeline event overlay + FullCalendar rendered view with create/edit/delete) shipped earlier this iteration. This is **Phase 3**, the deferred write-back work, plus the No Distraction blocklist feature.
+
+## Context
+
+Orchestrate plans the day as **sessions** (`plan.sessionSlots`), but they live only in localStorage — they never reach the user's calendar, and the user runs the **No Distraction** browser extension (nodistraction.net), which blocks sites *during a Google Calendar event* whose name ends with a blocklist suffix (e.g. `Afternoon Session -ND`). Phase 3 closes that loop:
+
+1. On connecting Google Calendar, Orchestrate **creates a dedicated secondary calendar** ("Orchestrate" by default, renamable in Settings) and **writes the day's sessions to it** as events.
+2. The user maintains a list of **blocklist suffix strings** in Settings (the actual blocklists are managed by No Distraction; Orchestrate only stores the strings to append). Each session can be assigned a blocklist when created.
+3. When a session **becomes current**, the user is **auto-prompted to confirm** its blocklist; once confirmed it's **locked until the session ends**, and the session's calendar event name carries the suffix so No Distraction enforces it.
+
+### Decisions (confirmed)
+- **Write trigger:** reuse the existing refresh controls — the `↻` on [SessionTimelineBar](src/components/ui/SessionTimelineBar.tsx) and "Refresh" on [RenderedCalendar](src/components/todoist/RenderedCalendar.tsx) — **renamed "Sync"**: they reconcile the day's sessions to the Orchestrate calendar *and* refetch. No separate button, no auto-sync.
+- **Start + lock:** auto-prompt when a session becomes current (or on next app-open during it); confirm locks the blocklist until the session's end time.
+- **Calendar target:** dedicated Orchestrate calendar via the `calendar.app.created` scope (one reconnect + Worker redeploy).
+- **Coupling:** blocklists only do anything via the written calendar event, so the blocklist flow drives a session write/patch.
+
+---
+
+## Part 0 — Compact the event editor (quick tweak)
+
+[CalendarEventEditor.tsx](src/components/todoist/CalendarEventEditor.tsx): tighten without cramping — `POPOVER_W` 320→300, container `p-4`→`p-3`, body `space-y-3`→`space-y-2.5`, header `mb-3`→`mb-2`. Keep the colored top edge and natural-language date buttons.
+
+---
+
+## Part A — Orchestrate calendar (scope + create + name)
+
+- **Worker scope** — [functions/api/auth/google/_lib.ts](functions/api/auth/google/_lib.ts) `SCOPES`: append `https://www.googleapis.com/auth/calendar.app.created` (lets the app create + manage events on its own calendar; `calendar.events` stays for others). The flow already uses `prompt=consent` + `include_granted_scopes`, so reconnecting grants it. **Requires Worker redeploy + one reconnect.**
+- **API** — [googleCalendarApi.ts](src/lib/googleCalendarApi.ts): add `createCalendar(token, summary): Promise<{ id: string }>` → `POST /calendars` (reuse `calFetch`).
+- **Context** — [GoogleCalendarContext.tsx](src/context/GoogleCalendarContext.tsx):
+  - Store the granted **scope** (already returned by `fetchConnectionStatus`/`/status`) in state; expose `hasCalendarManageScope` on the data value (scope includes `calendar.app.created` or `calendar`).
+  - Add action `ensureOrchestrateCalendar(name): Promise<string | null>` — return `settings.orchestrateCalendarId` if it still exists in `availableCalendars`; else match a writable calendar by `name`; else `createCalendar` → `dispatch(UPDATE_SETTINGS {orchestrateCalendarId})` + `refreshCalendars()`. 
+  - In `checkConnection` success: when `hasCalendarManageScope` and no valid `orchestrateCalendarId`, call `ensureOrchestrateCalendar(settings.orchestrateCalendarName ?? 'Orchestrate')` (the "create on connect" behavior).
+- **Settings UI** — [GoogleCalendarSetup.tsx](src/components/settings/GoogleCalendarSetup.tsx): an "Orchestrate calendar" name field (`orchestrateCalendarName`, default "Orchestrate") + status ("Created ✓" / "Reconnect to enable session write-back" when the scope is missing, wired to `connect()`), and a "Create / recreate" button.
+
+---
+
+## Part B — Blocklist settings + per-session choice
+
+- **Settings** — new `BlocklistSettings` sub-component (mirrors [CapacitySettings.tsx](src/components/settings/CapacitySettings.tsx)) mounted in the Integrations tab of [SettingsPage.tsx](src/components/settings/SettingsPage.tsx): edit `settings.blocklists: string[]` (add/remove suffix strings like `-ND`, `-deepwork`).
+- **Per-session choice** — `SessionSlot.blocklist?: string`. Add a blocklist `<select>` (None + each `settings.blocklists`) to the rename/delete popover in [SessionEditorTimeline.tsx](src/components/ui/SessionEditorTimeline.tsx#L254-L282) → `onUpdate({ ...editingSlot, blocklist })`. Pass `blocklistOptions: string[]` + a `lockedSessionIds: Set<string>` prop from [Step3Sessions.tsx](src/components/wizard/Step3Sessions.tsx); when a session is locked, render the blocklist read-only.
+
+---
+
+## Part C — Session write-back ("Sync")
+
+- **Reconcile routine** — new `useSessionCalendarSync()` hook (or context action) with access to `ensureOrchestrateCalendar` + `createEvent`/`patchEvent`/`deleteEvent` + `plan` + `dispatch`:
+  - Event name per session = `${session.name}${suffix ? ' ' + suffix : ''}`, where `suffix` = the **locked** blocklist (`plan.sessionStarts[id].blocklist`) if locked, else `session.blocklist`. Times = `plan.date` + `startTime`/`endTime` → ISO (reuse the `new Date(\`${date}T${HH:mm}\`)` pattern).
+  - Reconcile against `plan.sessionCalendarEventIds` (sessionId→eventId): **create** missing (store id), **patch** changed name/time, **delete** events for removed sessions. Dispatch a new reducer action `SET_SESSION_EVENT_IDS` (or fold into the plan) to persist the map.
+- **Wire "Sync"** — rename the [SessionTimelineBar](src/components/ui/SessionTimelineBar.tsx) `onRefreshEvents` control and [RenderedCalendar](src/components/todoist/RenderedCalendar.tsx) "Refresh" to "Sync"; their handlers become `await sync(); refetch()`. Sync no-ops gracefully when disconnected / scope missing. Callers: [SessionTimeline.tsx](src/components/dashboard/SessionTimeline.tsx), [Step3Schedule.tsx](src/components/wizard/Step3Schedule.tsx).
+
+---
+
+## Part D — Session-start blocklist confirmation + lock
+
+- **Detect transition** — on the dashboard, a `useSessionStartConfirm()` hook watches `useCurrentSession(plan.sessionSlots)`; when the current session id changes to one **not in `plan.sessionStarts`** and not dismissed this load → open a `SessionStartModal`.
+- **Modal** ([Modal.tsx](src/components/ui/Modal.tsx) pattern) — session name + blocklist picker (defaults to `session.blocklist`, options from `settings.blocklists` + None) + Confirm / Skip. **Confirm** → `dispatch(CONFIRM_SESSION_START {sessionId, blocklist})` then `sync()` (writes/patches that session's event with the suffix). **Skip** → local-dismiss for this load.
+- **Lock** — `isLocked(slot)` = `plan.sessionStarts[id]` exists **and** `now < endTime`. While locked, blocklist pickers are disabled and show the locked value. Mount the modal in [Dashboard.tsx](src/components/dashboard/Dashboard.tsx) alongside the existing check-in modal.
+
+---
+
+## Data model + schema (bump 7.4 → 7.5)
+
+[src/types/index.ts](src/types/index.ts):
+- `AppSettings`: `orchestrateCalendarName?: string`, `orchestrateCalendarId?: string`, `blocklists?: string[]`.
+- `SessionSlot`: `blocklist?: string`.
+- `DayPlan`: `sessionCalendarEventIds?: Record<string, string>`, `sessionStarts?: Record<string, { blocklist: string | null; confirmedAt: string }>`.
+
+[src/lib/schema.ts](src/lib/schema.ts): bump `SCHEMA_VERSION` to `7.5`. All additions are **additive optionals**, so `migrateToCurrent` needs **no new step** — old 7.4 data loads unchanged (the version stamp just advances). The shared `isSupportedSchemaVersion` gate keeps loaders + [DataManagement.tsx](src/components/settings/DataManagement.tsx) aligned automatically. Reducer: add `CONFIRM_SESSION_START` and `SET_SESSION_EVENT_IDS` cases in [DayPlanContext.tsx](src/context/DayPlanContext.tsx) (both mutate `plan`, auto-persisted).
+
+## Docs
+Update [docs/synthesis.md](docs/synthesis.md) §7 (Orchestrate calendar + session write-back + blocklists), [docs/data-model.md](docs/data-model.md) (new settings/session/plan fields + scope), and add the in-app guide note in [UserGuide.tsx](src/components/guide/UserGuide.tsx). Land the iteration write-up at `docs/history/plan_v7/plan_v7.7.md` (already open).
+
+## Reuse (don't reinvent)
+- `calFetch` / `getAccessToken` / `handleError` (token + error plumbing); `createEvent`/`patchEvent`/`deleteEvent` already wired.
+- `fetchConnectionStatus` already returns `scope` — no Worker change beyond `SCOPES`.
+- `UPDATE_SETTINGS` shallow-merge reducer; `CapacitySettings` settings-field pattern; `Modal` + `Button` + `inputClass`/`labelClass`.
+- `useCurrentSession` (transition detection) and the `useFocusNudge` id-compare pattern.
+
+## Verification
+1. `npm run lint` + `npm run build` clean.
+2. Deploy the Worker with the new scope; in the app, **reconnect** Google → confirm an "Orchestrate" calendar is created (appears in Settings + the calendar list) and rename it in Settings.
+3. Add a couple of blocklist strings in Settings; in Step 3, assign a blocklist to a session.
+4. Click **Sync** (timeline bar / rendered calendar) → the day's sessions appear as events on the Orchestrate calendar with the blocklist suffix; edit a session + Sync → event updates; delete a session + Sync → event removed.
+5. With a session whose window contains "now", load the dashboard → confirm prompt appears; Confirm → its event name gets the suffix and the blocklist picker is locked until end; reload → lock persists.
+6. Disconnect → Sync no-ops, no errors.
+

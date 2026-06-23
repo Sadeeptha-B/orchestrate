@@ -50,6 +50,18 @@ interface CalendarListResponse {
     }>;
 }
 
+/**
+ * Create a new secondary calendar and return its id (requires the calendar.app.created — or broad
+ * calendar — scope). Used to provision the app-managed "Orchestrate" calendar.
+ */
+export async function createCalendar(token: string, summary: string): Promise<{ id: string }> {
+    const data = await calFetch<{ id: string }>(token, '/calendars', {
+        method: 'POST',
+        body: JSON.stringify({ summary }),
+    });
+    return { id: data.id };
+}
+
 /** List the user's calendars (requires the calendarlist.readonly scope). */
 export async function listCalendars(token: string): Promise<GoogleCalendarListEntry[]> {
     const data = await calFetch<CalendarListResponse>(token, '/users/me/calendarList');
@@ -175,5 +187,18 @@ export async function patchCalendarEvent(
         token,
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
         { method: 'PATCH', body: JSON.stringify(patch) },
+    );
+}
+
+/** Delete an event (requires the calendar.events scope). Resolves on the 204/200 response. */
+export async function deleteCalendarEvent(
+    token: string,
+    calendarId: string,
+    eventId: string,
+): Promise<void> {
+    await calFetch<void>(
+        token,
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        { method: 'DELETE' },
     );
 }

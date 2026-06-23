@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -11,6 +11,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { useDayCalendarEvents } from '../../hooks/useDayCalendarEvents';
 import { useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
+import { useSessionCalendarSync } from '../../hooks/useSessionCalendarSync';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { RenderedCalendar } from '../todoist/RenderedCalendar';
 import { formatDuration, minutesOfDay, timeToMinutes } from '../../lib/time';
@@ -38,6 +39,8 @@ export function Step3Schedule() {
     const { taskMap } = useTodoistData();
     const { events: externalEvents, refetch: refetchEvents } = useDayCalendarEvents(plan.date);
     const { isConnected: gcalConnected } = useGoogleCalendarData();
+    const { sync } = useSessionCalendarSync();
+    const handleSync = useCallback(async () => { await sync(); refetchEvents(); }, [sync, refetchEvents]);
     const { moveToBacklog, removeIntention } = useIntentionRemoval();
     const [phase, setPhase] = useState<'assign' | 'time'>('assign');
     const [intentionsOpen, setIntentionsOpen] = useState(true);
@@ -226,7 +229,7 @@ export function Step3Schedule() {
                         timelineStartMinutes={settings.timelineStartMinutes}
                         timelineEndMinutes={settings.timelineEndMinutes}
                         externalEvents={externalEvents}
-                        onRefreshEvents={gcalConnected ? refetchEvents : undefined}
+                        onSync={gcalConnected ? handleSync : undefined}
                     />
 
                     {/* v6.3: Habit instances panel — reschedule is available from planning. */}

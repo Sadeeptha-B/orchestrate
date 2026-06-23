@@ -355,8 +355,9 @@ interface SessionTimelineBarProps {
      * faded bars inside the session band for day context. All-day events are excluded (no time-of-day);
      * editing happens in the rendered calendar view, not on the bar. */
     externalEvents?: CalendarEvent[];
-    /** When provided, shows a ↻ control that re-fetches the external calendar events on demand. */
-    onRefreshEvents?: () => void;
+    /** When provided, shows a "Sync" control that writes the day's sessions to the Orchestrate
+     *  calendar and re-fetches the external events on demand. */
+    onSync?: () => void;
 }
 
 export function SessionTimelineBar({
@@ -376,7 +377,7 @@ export function SessionTimelineBar({
     timelineEndMinutes,
     onMoveTask,
     externalEvents,
-    onRefreshEvents,
+    onSync,
 }: SessionTimelineBarProps) {
     const mainTasks = useMemo(
         () => linkedTasks.filter((lt) => lt.type === 'main'),
@@ -474,18 +475,18 @@ export function SessionTimelineBar({
 
     return (
         <div className="relative space-y-1 pt-5">
-            {/* Top-right controls: refresh external events ↻ and the full-day ⇆ remaining view toggle. */}
-            {(onRefreshEvents || canShowRemaining) && (
+            {/* Top-right controls: Sync sessions↔calendar and the full-day ⇆ remaining view toggle. */}
+            {(onSync || canShowRemaining) && (
                 <div className="absolute top-0 right-0 z-20 flex items-center gap-1">
-                    {onRefreshEvents && (
+                    {onSync && (
                         <button
                             type="button"
-                            onClick={onRefreshEvents}
-                            className="text-[10px] px-1.5 py-0.5 rounded-full border border-border bg-card text-text-light hover:text-accent hover:border-accent transition-colors cursor-pointer inline-flex items-center"
-                            title="Refresh calendar events"
-                            aria-label="Refresh calendar events"
+                            onClick={onSync}
+                            className="text-[10px] px-1.5 py-0.5 rounded-full border border-border bg-card text-text-light hover:text-accent hover:border-accent transition-colors cursor-pointer inline-flex items-center gap-1"
+                            title="Write the day's sessions to the Orchestrate calendar and refresh"
+                            aria-label="Sync sessions to calendar"
                         >
-                            <span aria-hidden>↻</span>
+                            <span aria-hidden>↻</span> Sync
                         </button>
                     )}
                     {canShowRemaining && (
