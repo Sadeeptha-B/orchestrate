@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
@@ -8,6 +8,7 @@ import { SessionEditorTimeline } from '../ui/SessionEditorTimeline';
 import { HistorySidebar, type HistoryTab } from './HistorySidebar';
 import { DigitalClock } from './DigitalClock';
 import { CheckInModal } from '../checkin/CheckInModal';
+import { SessionStartPrompt } from './SessionStartPrompt';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { RenderedCalendar } from '../todoist/RenderedCalendar';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
@@ -23,6 +24,7 @@ import { SeasonContextCard } from '../life/SeasonContextCard';
 import { HabitInstanceCard, MicroGapCard } from './HabitInstanceCard';
 import { TrueRestCard } from './TrueRestCard';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { isSessionLocked } from '../../lib/sessionCalendar';
 
 const DAY_CLOSES = [
     'Make the most of today.',       // Sun
@@ -65,6 +67,10 @@ export function Dashboard() {
     const backlogCount = life.backlog?.length ?? 0;
     // Shared between the timeline (click to pin) and the carousel (prev/next, ↩ to unpin).
     const [pinnedSessionId, setPinnedSessionId] = useState<string | null>(null);
+    const lockedSessionIds = useMemo(
+        () => new Set(plan.sessionSlots.filter((s) => isSessionLocked(s, plan.sessionStarts)).map((s) => s.id)),
+        [plan.sessionSlots, plan.sessionStarts],
+    );
 
     const { panelWidth, onMouseDown } = useResizablePanel();
 
@@ -235,6 +241,8 @@ export function Dashboard() {
                                             onRemove={(sessionId) => dispatch({ type: 'REMOVE_DAY_SESSION', sessionId })}
                                             timelineStartMinutes={settings.timelineStartMinutes}
                                             timelineEndMinutes={settings.timelineEndMinutes}
+                                            blocklistOptions={settings.blocklists ?? []}
+                                            lockedSessionIds={lockedSessionIds}
                                         />
                                         <p className="mt-2 text-[11px] text-text-light">
                                             Drag to add a block, drag a block to move, drag edges to resize, click to rename or delete.
@@ -257,45 +265,45 @@ export function Dashboard() {
 
                             <div className="mt-10 flex flex-col lg:flex-row gap-6 lg:items-start">
                                 <div className="flex-1 min-w-0 space-y-6">
-                                {/* Current session */}
-                                <div className="space-y-2">
-                                    <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
-                                        Current Session
-                                    </h3>
-                                    <CurrentSession
-                                        pinnedSessionId={pinnedSessionId}
-                                        onPinnedChange={setPinnedSessionId}
-                                    />
-                                </div>
-
-                                {/* Anytime today — committed tasks not tied to a session */}
-                                <AnytimeTray />
-
-                                {/* Task Manager (Todoist) — collapsible */}
-                                <CollapsibleSection title="Task Manager">
-                                    <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
-                                        <TodoistPanel
-                                            mode="full"
-                                            onSetup={() => navigate('/settings?tab=integrations')}
-                                            showFilterToggle
-                                            defaultFiltered
+                                    {/* Current session */}
+                                    <div className="space-y-2">
+                                        <h3 className="text-sm font-semibold text-text-light uppercase tracking-wider">
+                                            Current Session
+                                        </h3>
+                                        <CurrentSession
+                                            pinnedSessionId={pinnedSessionId}
+                                            onPinnedChange={setPinnedSessionId}
                                         />
                                     </div>
-                                </CollapsibleSection>
 
-                                {/* Calendar (Google) — collapsible */}
-                                <CollapsibleSection title="Calendar">
-                                    <div className="mt-3">
-                                        <RenderedCalendar height={400} onSetup={() => navigate('/settings?tab=integrations')} />
-                                    </div>
-                                </CollapsibleSection>
-                            </div>
+                                    {/* Anytime today — committed tasks not tied to a session */}
+                                    <AnytimeTray />
 
-                            <aside className="lg:w-96 lg:flex-shrink-0 space-y-6">
-                                <HabitInstanceCard />
-                                <MicroGapCard />
-                                <TrueRestCard variant="card" defaultCollapsed />
-                            </aside>
+                                    {/* Task Manager (Todoist) — collapsible */}
+                                    <CollapsibleSection title="Task Manager">
+                                        <div className="mt-2 rounded-lg border border-border overflow-hidden bg-card" style={{ height: 400 }}>
+                                            <TodoistPanel
+                                                mode="full"
+                                                onSetup={() => navigate('/settings?tab=integrations')}
+                                                showFilterToggle
+                                                defaultFiltered
+                                            />
+                                        </div>
+                                    </CollapsibleSection>
+
+                                    {/* Calendar (Google) — collapsible */}
+                                    <CollapsibleSection title="Calendar">
+                                        <div className="mt-3">
+                                            <RenderedCalendar height={400} onSetup={() => navigate('/settings?tab=integrations')} />
+                                        </div>
+                                    </CollapsibleSection>
+                                </div>
+
+                                <aside className="lg:w-96 lg:flex-shrink-0 space-y-6">
+                                    <HabitInstanceCard />
+                                    <MicroGapCard />
+                                    <TrueRestCard variant="card" defaultCollapsed />
+                                </aside>
                             </div>
                         </section>
                     </div>
@@ -303,6 +311,8 @@ export function Dashboard() {
             </div>
 
             <CheckInModal open={showCheckin} onClose={dismiss} onRecontextualize={handleRecontextualize} />
+
+            <SessionStartPrompt />
 
             <Modal
                 open={showSaveModal}

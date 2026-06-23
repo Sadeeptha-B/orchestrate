@@ -20,8 +20,11 @@ import type { ContextNote } from '../types';
  * Current schema. Persisted artifacts and full backups are stamped with this on write.
  * 7.4 (v7.4 Phase 2): first bump since 7.1 — `LinkedTask.firstAction`/`reentryNote` → `contextTrail`,
  * and `LifeContext.engagementHistory` introduced.
+ * 7.5 (v7.7 Phase 3): purely additive optionals — `SessionSlot.blocklist`, `AppSettings`
+ * orchestrate-calendar/blocklist fields, `DayPlan.sessionCalendarEventIds`/`sessionStarts`. No
+ * forward-migration step needed (absent fields read as undefined); the version stamp just advances.
  */
-export const SCHEMA_VERSION = 7.4;
+export const SCHEMA_VERSION = 7.5;
 
 /** Oldest schema the app still understands. Data stamped below this is rejected rather than migrated. */
 export const MIN_SUPPORTED_SCHEMA = 7.1;

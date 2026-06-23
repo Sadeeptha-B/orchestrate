@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { WizardLayout } from './WizardLayout';
 import { SessionEditorTimeline } from '../ui/SessionEditorTimeline';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { isSessionLocked } from '../../lib/sessionCalendar';
 import type { SessionSlot, SessionTemplate } from '../../types';
 
 export function Step3Sessions() {
@@ -13,6 +14,10 @@ export function Step3Sessions() {
     const confirmApply = useConfirmModal<SessionTemplate>();
     const [saving, setSaving] = useState(false);
     const [templateName, setTemplateName] = useState('');
+    const lockedSessionIds = useMemo(
+        () => new Set(plan.sessionSlots.filter((s) => isSessionLocked(s, plan.sessionStarts)).map((s) => s.id)),
+        [plan.sessionSlots, plan.sessionStarts],
+    );
 
     const handleNext = () => {
         dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
@@ -74,6 +79,8 @@ export function Step3Sessions() {
                     onRemove={(sessionId) => dispatch({ type: 'REMOVE_DAY_SESSION', sessionId })}
                     timelineStartMinutes={settings.timelineStartMinutes}
                     timelineEndMinutes={settings.timelineEndMinutes}
+                    blocklistOptions={settings.blocklists ?? []}
+                    lockedSessionIds={lockedSessionIds}
                 />
 
                 {plan.sessionSlots.length === 0 && (

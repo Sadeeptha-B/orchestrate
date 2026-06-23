@@ -4,6 +4,7 @@ import { Logo } from '../ui/Logo';
 import { HeaderControls } from '../ui/HeaderControls';
 import { TodoistSetup } from '../todoist/TodoistSetup';
 import { GoogleCalendarSetup } from './GoogleCalendarSetup';
+import { BlocklistSettings } from './BlocklistSettings';
 import { DataManagement } from './DataManagement';
 import { CapacitySettings } from './CapacitySettings';
 import { useDayPlan } from '../../hooks/useDayPlan';
@@ -104,6 +105,9 @@ export function SettingsPage() {
                                 <TodoistSetup />
                                 <div className="pt-6 border-t border-border">
                                     <GoogleCalendarSetup />
+                                </div>
+                                <div className="pt-6 border-t border-border">
+                                    <BlocklistSettings />
                                 </div>
                             </div>
                         )}

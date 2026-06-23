@@ -422,6 +422,9 @@ type Action =
     | { type: 'UPDATE_DAY_SESSION'; session: SessionSlot }
     | { type: 'REMOVE_DAY_SESSION'; sessionId: string }
     | { type: 'APPLY_SESSION_TEMPLATE'; templateId: string }
+    // ---- v7.7 Phase 3: session blocklist confirm + calendar write-back ----
+    | { type: 'CONFIRM_SESSION_START'; sessionId: string; blocklist: string | null; now: string }
+    | { type: 'SET_SESSION_EVENT_IDS'; eventIds: Record<string, string> }
     | { type: 'SET_WIZARD_STEP'; step: number }
     | { type: 'COMPLETE_SETUP' }
     | { type: 'ADD_CHECKIN'; checkIn: CheckIn }
@@ -870,6 +873,20 @@ function reducer(state: State, action: Action): State {
                 : plan.linkedTasks;
             return { ...state, plan: { ...plan, sessionSlots, taskSessions: {}, linkedTasks } };
         }
+
+        // ---- v7.7 Phase 3: session blocklist confirm + calendar write-back ----
+
+        case 'CONFIRM_SESSION_START': {
+            const sessionStarts = {
+                ...(plan.sessionStarts ?? {}),
+                [action.sessionId]: { blocklist: action.blocklist, confirmedAt: action.now },
+            };
+            return { ...state, plan: { ...plan, sessionStarts } };
+        }
+
+        case 'SET_SESSION_EVENT_IDS':
+            // Full replacement — the Sync reconcile computes the whole sessionId→eventId map.
+            return { ...state, plan: { ...plan, sessionCalendarEventIds: action.eventIds } };
 
         // ---- Wizard / global actions ----
 

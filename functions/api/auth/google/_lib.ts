@@ -26,9 +26,13 @@ export interface Env {
     APP_ORIGIN?: string;
 }
 
-/** calendarlist.readonly (auto-list calendars) + calendar.events (write plumbing). */
+/**
+ * calendarlist.readonly (auto-list calendars) + calendar.events (read/write events on any calendar)
+ * + calendar.app.created (v7.7 Phase 3: create + manage the app's own "Orchestrate" calendar). Adding
+ * a scope requires the user to reconnect — the flow uses prompt=consent so the new grant is requested.
+ */
 export const SCOPES =
-    'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events';
+    'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.app.created';
 
 const KV_REFRESH = 'google:refresh_token';
 const KV_ACCESS = 'google:access_token'; // JSON: { access_token, expires_at }

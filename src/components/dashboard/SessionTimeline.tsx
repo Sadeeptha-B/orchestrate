@@ -14,6 +14,7 @@ import { getMissedInstanceIds, habitKindOf } from '../../lib/habits';
 import { useTaskPlacement, readTaskDragPayload, writeTaskDragPayload } from '../../hooks/useTaskPlacement';
 import { useDayCalendarEvents } from '../../hooks/useDayCalendarEvents';
 import { useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
+import { useSessionCalendarSync } from '../../hooks/useSessionCalendarSync';
 import { EngagementTimer } from './EngagementTimer';
 import { openSegment } from '../../lib/engagement';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
@@ -581,6 +582,8 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
     const { moveTask } = useTaskPlacement();
     const { events: externalEvents, refetch: refetchEvents } = useDayCalendarEvents(todayISO());
     const { isConnected: gcalConnected } = useGoogleCalendarData();
+    const { sync } = useSessionCalendarSync();
+    const handleSync = useCallback(async () => { await sync(); refetchEvents(); }, [sync, refetchEvents]);
 
     // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps live in their own panel.
     const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
@@ -603,7 +606,7 @@ export function SessionTimeline({ pinnedSessionId, onSelectSession }: SessionTim
             timelineEndMinutes={settings.timelineEndMinutes}
             onMoveTask={moveTask}
             externalEvents={externalEvents}
-            onRefreshEvents={gcalConnected ? refetchEvents : undefined}
+            onSync={gcalConnected ? handleSync : undefined}
         />
     );
 }

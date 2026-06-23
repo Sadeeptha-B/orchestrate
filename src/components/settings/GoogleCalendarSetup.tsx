@@ -29,10 +29,15 @@ const GCAL_CALLBACK_ERRORS: Record<string, string> = {
 export function GoogleCalendarSetup() {
     const { settings, dispatch } = useDayPlan();
     const { secret: storedSecret } = useAppSecret();
-    const { isConfigured, isConnected, connecting, authFailed, availableCalendars, error } =
+    const { isConfigured, isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error } =
         useGoogleCalendarData();
-    const { setAppSecret, connect, disconnect, refreshCalendars, checkConnection } =
+    const { setAppSecret, connect, disconnect, refreshCalendars, checkConnection, ensureOrchestrateCalendar, recreateOrchestrateCalendar } =
         useGoogleCalendarActions();
+
+    const orchestrateName = settings.orchestrateCalendarName ?? 'Orchestrate';
+    const orchestrateCalendar = settings.orchestrateCalendarId
+        ? availableCalendars.find((c) => c.id === settings.orchestrateCalendarId)
+        : undefined;
 
     const [secretDraft, setSecretDraft] = useState('');
     const [editingSecret, setEditingSecret] = useState(false);
@@ -234,6 +239,62 @@ export function GoogleCalendarSetup() {
                                         ))}
                                     </ul>
                                 )}
+                            </div>
+
+                            {/* v7.7: dedicated app-managed calendar for written-back sessions. */}
+                            <div className="pt-3 border-t border-border">
+                                <label className={`block text-xs font-medium text-text mb-1`} htmlFor="orch-cal-name">
+                                    Orchestrate calendar
+                                </label>
+                                <p className="text-xs text-text-light mb-2">
+                                    Sessions are written back to this dedicated calendar (with any No Distraction
+                                    blocklist suffix appended). Use <strong>Sync</strong> on the timeline / calendar to push them.
+                                </p>
+                                <input
+                                    id="orch-cal-name"
+                                    type="text"
+                                    value={orchestrateName}
+                                    onChange={(e) =>
+                                        dispatch({ type: 'UPDATE_SETTINGS', settings: { orchestrateCalendarName: e.target.value } })
+                                    }
+                                    placeholder="Orchestrate"
+                                    className={inputClass}
+                                />
+                                <div className="mt-2 text-xs">
+                                    {!hasCalendarManageScope ? (
+                                        <span className="text-amber-600 dark:text-amber-400">
+                                            Reconnect to grant calendar-creation access, then the calendar is created automatically.{' '}
+                                            <button
+                                                type="button"
+                                                onClick={() => void connect()}
+                                                className="underline hover:text-accent cursor-pointer"
+                                            >
+                                                Reconnect
+                                            </button>
+                                        </span>
+                                    ) : orchestrateCalendar ? (
+                                        <span className="text-success">
+                                            Created — “{orchestrateCalendar.name}” is linked.
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    void recreateOrchestrateCalendar(orchestrateName);
+                                                }}
+                                                className="ml-2 text-text-light underline hover:text-accent cursor-pointer"
+                                            >
+                                                Recreate
+                                            </button>
+                                        </span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => void ensureOrchestrateCalendar(orchestrateName)}
+                                            className="text-accent underline hover:text-accent/80 cursor-pointer"
+                                        >
+                                            Create the Orchestrate calendar now
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </>
                     ) : (
