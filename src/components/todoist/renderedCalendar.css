@@ -130,6 +130,11 @@
     border-top-color: color-mix(in srgb, var(--color-border) 55%, transparent);
 }
 
+/* Compress slot rows so the whole configured day window fits at a glance (less scrolling). */
+.rendered-calendar .fc .fc-timegrid-slot {
+    height: 1.1em;
+}
+
 /* ── Events ────────────────────────────────────────────────────────────── */
 .rendered-calendar .fc .fc-event {
     border-radius: 6px;

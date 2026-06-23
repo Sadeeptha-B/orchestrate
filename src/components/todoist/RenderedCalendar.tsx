@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import FullCalendar from '@fullcalendar/react';
-import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
-import listPlugin from '@fullcalendar/list';
 import interactionPlugin, { type EventResizeDoneArg } from '@fullcalendar/interaction';
-import type { EventInput, EventDropArg, EventSourceFuncArg, EventClickArg, DateSelectArg } from '@fullcalendar/core';
+import type { EventInput, EventDropArg, EventSourceFuncArg, EventClickArg, DateSelectArg, EventHoveringArg } from '@fullcalendar/core';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useGoogleCalendarActions, useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
 import { isVisibleInCalendar } from '../../lib/googleCalendar';
 import { useSessionCalendarSync } from '../../hooks/useSessionCalendarSync';
+import { formatTimeOfDay } from '../../lib/time';
+import { DEFAULT_TIMELINE_START_MINUTES, DEFAULT_TIMELINE_END_MINUTES } from '../../lib/timeline';
 import type { CalendarViewMode } from '../../types';
 import { CalendarEventEditor, type EventEditorTarget, type EventEditorSubmit } from './CalendarEventEditor';
 import './renderedCalendar.css';
@@ -19,17 +20,35 @@ const DEFAULT_EVENT_MS = 60 * 60 * 1000; // fallback duration when an event has 
 const TIME_24H = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
 
 const VIEW_MODE_LABELS: Record<CalendarViewMode, string> = {
+    day: 'Day',
+    threeDay: '3-day',
     week: 'Week',
-    month: 'Month',
-    agenda: 'Agenda',
 };
 
-/** Orchestrate's view-mode vocabulary → FullCalendar view names. */
+/** Orchestrate's view-mode vocabulary → FullCalendar view names (all timeGrid — no month/list). */
 const FC_VIEW: Record<CalendarViewMode, string> = {
+    day: 'timeGridDay',
+    threeDay: 'timeGridThreeDay',
     week: 'timeGridWeek',
-    month: 'dayGridMonth',
-    agenda: 'listWeek',
 };
+
+/** Custom FullCalendar views not built in (3-day = a 3-day timeGrid). */
+const FC_CUSTOM_VIEWS = { timeGridThreeDay: { type: 'timeGrid', duration: { days: 3 } } };
+
+const VIEW_ORDER: CalendarViewMode[] = ['day', 'threeDay', 'week'];
+
+/** Minutes since midnight → "HH:mm:ss" for FullCalendar slotMin/MaxTime (1440 → "24:00:00"). */
+function minutesToClock(min: number): string {
+    return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}:00`;
+}
+
+interface EventHover {
+    x: number;
+    y: number;
+    title: string;
+    time: string;
+    color?: string;
+}
 
 interface RenderedCalendarProps {
     className?: string;
@@ -50,9 +69,17 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
     const { listEventsInRange, patchEvent, createEvent, deleteEvent } = useGoogleCalendarActions();
     const { sync } = useSessionCalendarSync();
     const calendarEntries = (settings.googleCalendarIds ?? []).filter(isVisibleInCalendar);
-    const viewMode: CalendarViewMode = settings.calendarViewMode ?? 'week';
+    // Coerce any legacy/unknown persisted mode (e.g. the removed 'agenda') to 'week'.
+    const rawViewMode = settings.calendarViewMode;
+    const viewMode: CalendarViewMode = rawViewMode && rawViewMode in FC_VIEW ? rawViewMode : 'week';
     const calendarRef = useRef<FullCalendar>(null);
     const [editor, setEditor] = useState<EventEditorTarget | null>(null);
+    const [hover, setHover] = useState<EventHover | null>(null);
+
+    // Bound the grid to the user's configured day window so the whole working day fits at a glance
+    // (no dead night hours); paired with `expandRows` the visible window fills the container.
+    const slotMinTime = minutesToClock(settings.timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES);
+    const slotMaxTime = minutesToClock(settings.timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES);
 
     // Calendars the user can write to — the create-mode picker, and the gate on whether to allow
     // creating at all. Default new events to the writable primary, else the first writable calendar.
@@ -212,6 +239,21 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
         return ok;
     };
 
+    // Hover popover (chip-style) so clustered events with clipped labels are readable without clicking.
+    const handleEventMouseEnter = (arg: EventHoveringArg) => {
+        const s = arg.event.start;
+        const e = arg.event.end;
+        const time = s ? `${formatTimeOfDay(s)}${e ? `–${formatTimeOfDay(e)}` : ''}` : '';
+        setHover({
+            x: arg.jsEvent.clientX,
+            y: arg.jsEvent.clientY,
+            title: arg.event.title,
+            time,
+            color: arg.event.backgroundColor || undefined,
+        });
+    };
+    const handleEventMouseLeave = () => setHover(null);
+
     if (!isConnected) {
         return (
             <div
@@ -262,7 +304,7 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
         <div className={className}>
             {/* View mode tabs + open link */}
             <div className="flex items-center gap-1 mb-2">
-                {(Object.keys(VIEW_MODE_LABELS) as CalendarViewMode[]).map((mode) => (
+                {VIEW_ORDER.map((mode) => (
                     <button
                         key={mode}
                         onClick={() => handleViewChange(mode)}
@@ -292,16 +334,17 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
                     Open in Google Calendar ↗
                 </a>
             </div>
-            <div className="rendered-calendar rounded-lg border border-border overflow-hidden bg-card" style={{ height }}>
+            <div className="rendered-calendar rounded-lg border border-border overflow-hidden bg-card">
                 <FullCalendar
                     ref={calendarRef}
-                    plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+                    plugins={[timeGridPlugin, interactionPlugin]}
                     initialView={FC_VIEW[viewMode]}
+                    views={FC_CUSTOM_VIEWS}
                     headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
-                    height="100%"
+                    height="auto"
                     nowIndicator
-                    expandRows
-                    dayMaxEvents
+                    slotMinTime={slotMinTime}
+                    slotMaxTime={slotMaxTime}
                     slotLabelFormat={TIME_24H}
                     eventTimeFormat={TIME_24H}
                     dayHeaderFormat={{ weekday: 'short', month: 'short', day: 'numeric' }}
@@ -316,8 +359,26 @@ export function RenderedCalendar({ className = '', height = 400, onSetup }: Rend
                     eventResize={handleEventChange}
                     eventClick={handleEventClick}
                     select={handleSelect}
+                    eventMouseEnter={handleEventMouseEnter}
+                    eventMouseLeave={handleEventMouseLeave}
                 />
             </div>
+
+            {hover && createPortal(
+                <div
+                    className="fixed z-50 pointer-events-none rounded-lg border border-border bg-card shadow-lg px-2.5 py-1.5 max-w-[260px]"
+                    style={{
+                        left: Math.min(hover.x + 12, window.innerWidth - 272),
+                        top: Math.min(hover.y + 12, window.innerHeight - 64),
+                        borderTopColor: hover.color,
+                        borderTopWidth: hover.color ? 3 : undefined,
+                    }}
+                >
+                    <p className="text-xs font-medium text-text break-words leading-snug">{hover.title}</p>
+                    {hover.time && <p className="text-[11px] text-text-light tabular-nums mt-0.5">{hover.time}</p>}
+                </div>,
+                document.body,
+            )}
 
             {editor && (
                 <CalendarEventEditor

@@ -29,6 +29,14 @@ function isoLocalHHMM(iso: string): string {
     return formatTimeOfDay(new Date(iso));
 }
 
+/** "HH:MM–HH:MM" start–end range of an external calendar event (local time). */
+function eventTimeRange(e: CalendarEvent): string {
+    return `${isoLocalHHMM(e.start)}–${isoLocalHHMM(e.end)}`;
+}
+
+/** Pixel height of the single-row masked-event chip rail above the timeline. */
+const EVENT_CHIP_ROW_H = 18;
+
 function nowInMinutes(): number {
     return minutesOfDay(new Date());
 }
@@ -253,6 +261,8 @@ interface PlacedEvent {
     left: number;   // % from lane start
     width: number;  // % of the lane
     row: number;    // stacking row index
+    startM: number; // clamped start (minutes since midnight)
+    endM: number;   // clamped end (minutes since midnight)
 }
 
 /** Local minutes-of-day window an event occupies on the rendered date, clamped to [dayStart, dayEnd]. */
@@ -308,6 +318,8 @@ function packExternalEvents(
             left: ((it.startM - dayStart) / totalMinutes) * 100,
             width: ((it.endM - it.startM) / totalMinutes) * 100,
             row,
+            startM: it.startM,
+            endM: it.endM,
         };
     });
     return { placed, rowCount: rowEnds.length };
@@ -473,6 +485,18 @@ export function SessionTimelineBar({
         [externalEvents, dateISO, dayStart, dayEnd, totalMinutes],
     );
 
+    // Minute ranges of the visible sessions — an event overlapping any of them is (partly) masked.
+    const sessionRanges = visibleSessions.map((s) => [timeToMinutes(s.startTime), timeToMinutes(s.endTime)] as const);
+    const isMaskedBySession = (startM: number, endM: number) =>
+        sessionRanges.some(([s, e]) => s < endM && startM < e);
+
+    // Masked events → chips in a rail above the timeline (kept discoverable). Gap events → labelled
+    // blocks on the timeline itself. Each group is re-packed so its rows are tight in its own lane.
+    const maskedEventList = placedEvents.filter((p) => isMaskedBySession(p.startM, p.endM)).map((p) => p.event);
+    const gapEventList = placedEvents.filter((p) => !isMaskedBySession(p.startM, p.endM)).map((p) => p.event);
+    const { placed: maskedChips } = packExternalEvents(maskedEventList, dateISO, dayStart, dayEnd, totalMinutes);
+    const { placed: gapBlocks } = packExternalEvents(gapEventList, dateISO, dayStart, dayEnd, totalMinutes);
+
     return (
         <div className="relative space-y-1 pt-5">
             {/* Top-right controls: Sync sessions↔calendar and the full-day ⇆ remaining view toggle. */}
@@ -545,6 +569,37 @@ export function SessionTimelineBar({
                 </div>
             )}
 
+            {/* Masked-event rail — events a session covers surface here as chips so they stay
+                discoverable (the session takes precedence on the band below). A single row tall:
+                concurrent events cluster (overlap) and `row` only drives layering order. Hover focuses
+                a chip (raised + expanded + wrapped). */}
+            {maskedChips.length > 0 && totalMinutes > 0 && (
+                <div className="relative" style={{ height: EVENT_CHIP_ROW_H }}>
+                    {maskedChips.map(({ event, left, width, row }) => {
+                        const swatch = event.color ?? '#6b7280';
+                        return (
+                            <div
+                                key={`evchip-${event.calendarId}-${event.id}`}
+                                className="tl-event-chip rounded-md overflow-hidden"
+                                style={{
+                                    top: 0,
+                                    zIndex: 2 + row, // later (more-overlapped) chips paint on top
+                                    ['--ml' as string]: `${left}%`,
+                                    ['--w' as string]: `${width}%`,
+                                    ['--ev' as string]: swatch,
+                                } as React.CSSProperties}
+                                title={`${event.summary} · ${eventTimeRange(event)}`}
+                            >
+                                <span className="tl-event-label px-1 py-0.5 text-[9px] font-medium leading-tight">
+                                    {event.summary}
+                                    <span className="tl-event-time"> · {eventTimeRange(event)}</span>
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
             {/* Hour labels */}
             <div className="relative h-5">
                 {hourMarks.map((m) => (
@@ -602,29 +657,29 @@ export function SessionTimelineBar({
                 band: sessions sit on top (opaque) and stay the only editable thing; events show through in
                 the gaps for day context. */}
             <div className="grid items-start" style={{ gridTemplateColumns: '1fr', minHeight: 80 }}>
-                {placedEvents.map(({ event, left, width, row }) => {
+                {/* Gap events — labelled blocks on the timeline itself (name + duration), behind the
+                    sessions but fully visible since nothing overlaps them. */}
+                {gapBlocks.map(({ event, left, width, row }) => {
                     const swatch = event.color ?? '#6b7280';
                     return (
                         <div
-                            key={`ev-${event.calendarId}-${event.id}`}
-                            className="timeline-event rounded-md overflow-hidden"
+                            key={`evfill-${event.calendarId}-${event.id}`}
+                            className="tl-event-fill rounded-md overflow-hidden"
                             style={{
                                 gridArea: '1 / 1',
                                 alignSelf: 'stretch',
-                                // --ml/--w drive position+width via CSS so :hover can expand to fit the title;
-                                // --ev is the calendar color (fill/border/solid-on-hover).
                                 ['--ml' as string]: `${left}%`,
                                 ['--w' as string]: `${width}%`,
                                 ['--ev' as string]: swatch,
                             } as React.CSSProperties}
-                            title={`${event.summary} · ${isoLocalHHMM(event.start)}–${isoLocalHHMM(event.end)}`}
+                            title={`${event.summary} · ${eventTimeRange(event)}`}
                         >
-                            {/* Offset the label per packed row so overlapping events' labels don't collide. */}
                             <span
-                                className="block truncate px-1 text-[9px] font-medium leading-none"
+                                className="tl-event-label px-1 py-0.5 text-[9px] font-medium leading-tight"
                                 style={{ marginTop: 2 + row * 11 }}
                             >
                                 {event.summary}
+                                <span className="tl-event-time"> · {eventTimeRange(event)}</span>
                             </span>
                         </div>
                     );

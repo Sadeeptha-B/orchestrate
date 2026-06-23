@@ -432,6 +432,7 @@ type Action =
     | { type: 'RESET_DAY' }
     | { type: 'RESET_ALL' }
     | { type: 'UPDATE_SETTINGS'; settings: Partial<AppSettings> }
+    | { type: 'REMOVE_BLOCKLIST'; suffix: string }
     | { type: 'SET_EDITING_STEP'; step: number | null }
     | { type: 'SAVE_DAY'; label: string }
     | { type: 'RESTORE_DAY'; savedAt: string }
@@ -930,6 +931,27 @@ function reducer(state: State, action: Action): State {
 
         case 'UPDATE_SETTINGS':
             return { ...state, settings: { ...settings, ...action.settings } };
+
+        case 'REMOVE_BLOCKLIST': {
+            // Drop the suffix from settings AND clear it from today's sessions + confirmed locks, so the
+            // next Sync rewrites the affected calendar events without the now-deleted blocklist name.
+            const blocklists = (settings.blocklists ?? []).filter((b) => b !== action.suffix);
+            const sessionSlots = plan.sessionSlots.map((s) =>
+                s.blocklist === action.suffix ? { ...s, blocklist: undefined } : s,
+            );
+            const sessionStarts = plan.sessionStarts
+                ? Object.fromEntries(
+                    Object.entries(plan.sessionStarts).map(([id, v]) =>
+                        [id, v.blocklist === action.suffix ? { ...v, blocklist: null } : v] as const,
+                    ),
+                )
+                : plan.sessionStarts;
+            return {
+                ...state,
+                settings: { ...settings, blocklists },
+                plan: { ...plan, sessionSlots, sessionStarts },
+            };
+        }
 
         case 'SET_EDITING_STEP':
             return { ...state, editingStep: action.step };

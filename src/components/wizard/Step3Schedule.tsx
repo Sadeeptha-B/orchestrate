@@ -538,7 +538,7 @@ export function Step3Schedule() {
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col">
                             <h3 className="text-sm font-medium text-text-light mb-2">Calendar</h3>
-                            <RenderedCalendar height={500} />
+                            <RenderedCalendar height={640} />
                         </div>
                     </div>
                 </div>
