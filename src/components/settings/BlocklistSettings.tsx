@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useSessionCalendarSync } from '../../hooks/useSessionCalendarSync';
 import { Button } from '../ui/Button';
 import { inputClass } from '../ui/formStyles';
 
@@ -10,8 +11,18 @@ import { inputClass } from '../ui/formStyles';
  */
 export function BlocklistSettings() {
     const { settings, dispatch } = useDayPlan();
+    const { sync } = useSessionCalendarSync();
     const blocklists = settings.blocklists ?? [];
     const [draft, setDraft] = useState('');
+    const pendingSync = useRef(false);
+
+    // After a delete cleans the live plan, re-sync so any affected calendar events lose the suffix
+    // (no-ops when not connected). Runs once `blocklists` reflects the removal.
+    useEffect(() => {
+        if (!pendingSync.current) return;
+        pendingSync.current = false;
+        void sync();
+    }, [settings.blocklists, sync]);
 
     const add = () => {
         const v = draft.trim();
@@ -24,7 +35,9 @@ export function BlocklistSettings() {
     };
 
     const remove = (s: string) => {
-        dispatch({ type: 'UPDATE_SETTINGS', settings: { blocklists: blocklists.filter((b) => b !== s) } });
+        // Clears the suffix from settings + today's sessions/locks (reducer), then re-syncs (effect).
+        dispatch({ type: 'REMOVE_BLOCKLIST', suffix: s });
+        pendingSync.current = true;
     };
 
     return (

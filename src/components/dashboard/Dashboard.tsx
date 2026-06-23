@@ -294,7 +294,7 @@ export function Dashboard() {
                                     {/* Calendar (Google) — collapsible */}
                                     <CollapsibleSection title="Calendar">
                                         <div className="mt-3">
-                                            <RenderedCalendar height={400} onSetup={() => navigate('/settings?tab=integrations')} />
+                                            <RenderedCalendar height={640} onSetup={() => navigate('/settings?tab=integrations')} />
                                         </div>
                                     </CollapsibleSection>
                                 </div>

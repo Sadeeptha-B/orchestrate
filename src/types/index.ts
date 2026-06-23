@@ -186,7 +186,7 @@ export interface DayPlan {
 
 export type NotificationPreference = 'in-app' | 'browser' | 'both';
 
-export type CalendarViewMode = 'week' | 'month' | 'agenda';
+export type CalendarViewMode = 'day' | 'threeDay' | 'week';
 
 export interface SavedDayPlan {
     plan: DayPlan;
