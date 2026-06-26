@@ -12,8 +12,10 @@ import { SessionStartPrompt } from './SessionStartPrompt';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { RenderedCalendar } from '../todoist/RenderedCalendar';
 import { useHourlyCheckin } from '../../hooks/useHourlyCheckin';
-import { useFocusNudge } from '../../hooks/useFocusNudge';
+import { useEngagementBanner } from '../../hooks/useEngagementNudge';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
+import { DEFAULT_RECONTEXT_CADENCE_MINUTES } from '../../lib/reminders';
+import { formatDuration } from '../../lib/time';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Logo } from '../ui/Logo';
@@ -50,9 +52,10 @@ export function Dashboard() {
         plan.sessionSlots,
         plan.setupComplete,
         settings.notificationPreference,
+        settings.recontextualizationCadenceMinutes ?? DEFAULT_RECONTEXT_CADENCE_MINUTES,
     );
     const { nextSessionStartsWithin } = useCurrentSession(plan.sessionSlots);
-    const { nudge: focusNudge, dismiss: dismissFocusNudge } = useFocusNudge(plan, settings);
+    const engagementBanner = useEngagementBanner(plan, settings);
 
     // v6.7: keep `plan.todaysHabits` in sync with the library while on the dashboard, so a habit
     // created/edited/deleted in /habits is reflected without re-running the wizard.
@@ -81,7 +84,7 @@ export function Dashboard() {
     };
 
     const handleRecontextualize = () => {
-        // Re-do scheduling — Schedule is step 4 since the v7.1 Sessions step was inserted at 3.
+        // Re-do scheduling — Schedule is step 4 in the Sessions → Intentions → Refine → Schedule flow.
         dispatch({ type: 'SET_EDITING_STEP', step: 4 });
         dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
         navigate('/setup');
@@ -180,20 +183,14 @@ export function Dashboard() {
                             <DigitalClock />
                         </section>
 
-                        {focusNudge && (
-                            <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-accent/10 border border-accent/30 text-sm text-accent">
+                        {engagementBanner && (
+                            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-accent/10 border border-accent/30 text-sm text-accent">
+                                <span aria-hidden className="text-base leading-none">◎</span>
                                 <span>
-                                    You're {focusNudge.minutes} min into{' '}
-                                    <span className="font-medium">{focusNudge.sessionName}</span> without a focus
-                                    block. Press ▶ on a task to start one.
+                                    It's been {formatDuration(engagementBanner.minutes)} since your last engagement in{' '}
+                                    <span className="font-medium">{engagementBanner.sessionName}</span>. Press ▶ on a task
+                                    to start one.
                                 </span>
-                                <button
-                                    onClick={dismissFocusNudge}
-                                    className="flex-shrink-0 text-accent/70 hover:text-accent transition-colors text-lg leading-none cursor-pointer"
-                                    title="Dismiss"
-                                >
-                                    &times;
-                                </button>
                             </div>
                         )}
                         <SeasonContextCard variant="inline" />

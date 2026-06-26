@@ -9,6 +9,8 @@ import {
     minutesToPct,
     pctToMinutes,
 } from '../../lib/timeline';
+import { eventTimeRange, packExternalEvents } from '../../lib/timelineEvents';
+import type { CalendarEvent } from '../../lib/googleCalendarApi';
 
 const SNAP_MINUTES = 15;
 const MIN_DURATION_MINUTES = 15;
@@ -32,6 +34,11 @@ interface SessionEditorTimelineProps {
     blocklistOptions?: string[];
     /** v7.7: session ids whose blocklist is locked (confirmed at start, until the session ends). */
     lockedSessionIds?: Set<string>;
+    /** v7.9: read-only external (Google) calendar events, shown as faded context bars behind the
+     *  editable blocks so meetings inform where sessions go. Requires `dateISO` to resolve the day. */
+    externalEvents?: CalendarEvent[];
+    /** Local date being edited ("YYYY-MM-DD") — only needed to place `externalEvents`. */
+    dateISO?: string;
 }
 
 /** In-flight pointer drag. Held in local state; only committed on pointer-up. */
@@ -59,10 +66,22 @@ export function SessionEditorTimeline({
     timelineEndMinutes,
     blocklistOptions = [],
     lockedSessionIds,
+    externalEvents,
+    dateISO,
 }: SessionEditorTimelineProps) {
     const dayStart = timelineStartMinutes ?? DEFAULT_TIMELINE_START_MINUTES;
     const dayEnd = timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
     const totalMinutes = dayEnd - dayStart;
+
+    // Read-only calendar events placed by the same percent-of-day math as the read-only bar, rendered
+    // as faded full-height bars *behind* the editable blocks (pointer-events-none, so drawing a session
+    // over a meeting still works). They show through the translucent session blocks for context.
+    const placedEvents = useMemo(
+        () => (dateISO && externalEvents?.length
+            ? packExternalEvents(externalEvents, dateISO, dayStart, dayEnd, totalMinutes).placed
+            : []),
+        [externalEvents, dateISO, dayStart, dayEnd, totalMinutes],
+    );
 
     const trackRef = useRef<HTMLDivElement>(null);
     const [drag, setDrag] = useState<Drag | null>(null);
@@ -205,6 +224,31 @@ export function SessionEditorTimeline({
                     />
                 ))}
 
+                {/* Read-only calendar events — faded context bars behind the editable blocks. */}
+                {placedEvents.map(({ event, left, width }) => {
+                    const color = event.color ?? '#6b7280';
+                    return (
+                        <div
+                            key={`evfill-${event.calendarId}-${event.id}`}
+                            className="absolute top-0 bottom-0 rounded-sm overflow-hidden pointer-events-none"
+                            style={{
+                                left: `${left}%`,
+                                width: `${width}%`,
+                                backgroundColor: `${color}24`,
+                                borderLeft: `2px solid ${color}`,
+                            }}
+                        >
+                            <span
+                                className="block px-1 pt-0.5 text-[9px] font-medium leading-tight truncate"
+                                style={{ color }}
+                            >
+                                {event.summary}
+                                <span className="text-text-light/70"> · {eventTimeRange(event)}</span>
+                            </span>
+                        </div>
+                    );
+                })}
+
                 {/* Live "create" ghost */}
                 {drag?.kind === 'create' && (() => {
                     const start = Math.min(drag.anchor, drag.current);
@@ -318,6 +362,7 @@ export function SessionEditorTimeline({
 
             <p className="text-[10px] text-text-light">
                 Drag an empty area to add a session · drag a block to move · drag its edges to resize · click to rename or delete
+                {placedEvents.length > 0 && ' · faded bars are your calendar events'}
             </p>
         </div>
     );

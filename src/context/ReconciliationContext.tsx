@@ -61,7 +61,7 @@ export { ReconciliationContext };
 
 /**
  * v6.5: central reconciliation provider for habits (v6.7: 'habit' kind only — micro-gaps never sync).
- * Replaces the per-surface reconciles that lived in Step1Intentions (overdue bump) and HabitsLibrary
+ * Replaces the per-surface reconciles that lived in Step2Intentions (overdue bump) and HabitsLibrary
  * (manual migrate). Detection is read-only and recomputed every render; the action runs:
  *
  *   1. **On first hydration** of the session — once Todoist is configured and `taskMap`

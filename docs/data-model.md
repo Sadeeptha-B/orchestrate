@@ -125,6 +125,10 @@ Persistent user preferences. Survives daily plan resets.
 
 **`focusStrict`** (v7.5): governs Focus Mode's note gates. When `true` (the load-time default, set in `withSettingsDefaults`) the first-concrete-action note (on Start) and the next-step note (on Stop **and** on leaving Focus) are required; when `false` both are optional. Toggled from the dashboard *Today* header. Additive — no schema bump.
 
+**`recontextualizationCadenceMinutes`** (v7.8): how often, in minutes, the hourly recontextualization check-in (`useHourlyCheckin`) fires while the user is inside a session. Falls back to `DEFAULT_RECONTEXT_CADENCE_MINUTES` (60) when absent; `0` disables the check-in entirely. The check-in fires on the cadence boundary aligned to minutes-since-midnight (e.g. 30 → :00/:30). Edited in Settings → **Configuration → Reminders**. Additive optional — no schema bump.
+
+**`engagementNudgeMinutes`** (v7.8): idle minutes before the engagement nudge fires — the threshold for "you've sat in an active session without engaging anything". Falls back to `DEFAULT_ENGAGEMENT_NUDGE_MINUTES` (10) when absent; `0` disables it. At the threshold a notification fires once; thereafter a **persistent dashboard banner** stays visible until the user re-engages (re-nudging every `ENGAGEMENT_NUDGE_REPEAT_MINUTES` = 30). Both the nudge and the banner read the shared `engagementIdleState` helper. Edited in Settings → **Configuration → Reminders**. Additive optional — no schema bump.
+
 **Google Calendar (v7.2, extended v7.7):** `googleCalendarIds` is the set of tracked calendars sourced from the Calendar API list (each `GoogleCalendarEntry` carries `id`/`name`/`color`/`primary`). **v7.7:** each entry also has independent **per-surface visibility** flags — `showOnTimeline` (faded read-only context on the `SessionTimelineBar`) and `showInCalendar` (the API-rendered FullCalendar view). Both default to visible when absent (`?? true`), so entries saved before v7.7 keep showing on both surfaces — **additive, no schema bump**. The setup UI adds/removes an entry as those toggles flip (an entry with neither surface on is dropped). The context's `listEventsInRange(timeMin, timeMax, surface)` filters by these flags via `isVisibleOnSurface` ([`src/lib/googleCalendar.ts`](../src/lib/googleCalendar.ts)). `googleCalendarConnected: boolean` records that the user authorized Google Calendar via the **server-mediated OAuth flow**; on load the `GoogleCalendarProvider` uses it to re-check the server connection (`/api/auth/google/status`). The **refresh token lives server-side in KV**; the browser only ever holds a short-lived access token **in memory** (minted by the Worker on demand). `calendarViewMode` selects the rendered view (`day` / `threeDay` / `week`; legacy `agenda`/`month` values coerce to `week`). Full OAuth model: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md).
 
 **Session write-back + blocklists (v7.7 Phase 3):** the OAuth scope adds `calendar.app.created` so the app can provision a dedicated **"Orchestrate" calendar** — `orchestrateCalendarName` (default `"Orchestrate"`) and `orchestrateCalendarId` (the created calendar's id, per connected account) on `AppSettings`. `GoogleCalendarProvider` exposes `hasCalendarManageScope` (derived from the granted `/status` scope) and `ensureOrchestrateCalendar(name)`, which auto-runs on connect to create/link the calendar. The **Sync** action (`useSessionCalendarSync`) reconciles `plan.sessionSlots` → events on that calendar, persisting the `plan.sessionCalendarEventIds` (sessionId → Google event id) map. `settings.blocklists: string[]` holds **No Distraction** suffixes; `SessionSlot.blocklist` is the suffix chosen for a session and appended to its event name (`sessionEventName`). When a session becomes current the dashboard prompts to confirm the blocklist; `plan.sessionStarts[sessionId] = { blocklist, confirmedAt }` records the confirmation and **locks** the blocklist until the session's end (`isSessionLocked`, [`src/lib/sessionCalendar.ts`](../src/lib/sessionCalendar.ts)). All Phase-3 fields are **additive optionals** (schema 7.5 — version bump only, no migration step).
@@ -338,17 +342,23 @@ Operate on `LifeContext.sessionTemplates` (mirrors the Habit/RestCue CRUD patter
 
 ## 4. Schema Version & Compatibility
 
-Current schema: `SCHEMA_VERSION` = **7.4** (v7.4 Phase 2 — the first bump since 7.1). Every persisted
+Current schema: `SCHEMA_VERSION` = **7.6** (v7.8 — wizard reorder). Every persisted
 slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` on write.
 The posture is a **supported floor**, `MIN_SUPPORTED_SCHEMA` = **7.1** (both constants + gate helpers in
 `src/lib/schema.ts`): artifacts stamped within `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` are accepted and
 **migrated forward**; older ones are rejected. The deep v1→7.1 chain (and the `_wizardSteps` step-remap)
 was deleted for cost reasons and lives in git history.
 
-**7.1 → 7.4 migration** (`migrateToCurrent`): **plan** — fold each `LinkedTask.firstAction`/`reentryNote`
-into a single `contextTrail` (entry/exit `ContextNote`s) and drop the scalars; **life** — default
-`engagementHistory` to `[]`. Saved plans in history (and imported sessions/backups) run through the same
-plan step via `migrateSavedPlan`, then re-stamp.
+**Migration steps** (`migrateToCurrent`, run cumulatively by parsed stamp):
+- **7.1 → 7.4:** **plan** — fold each `LinkedTask.firstAction`/`reentryNote` into a single `contextTrail`
+  (entry/exit `ContextNote`s) and drop the scalars; **life** — default `engagementHistory` to `[]`.
+- **7.5 → 7.6:** **plan** — remap `wizardStep` for the v7.8 wizard reorder (old `Intentions, Refine,
+  Sessions, Schedule, Music` → new `Sessions, Intentions, Refine, Schedule, Ready`, i.e.
+  `{1→2, 2→3, 3→1, 4→4, 5→5}`). Schema-gated so the old numbering is unambiguous; harmless for
+  already-`setupComplete` plans. (7.5 itself was a purely additive bump — no step.)
+
+Saved plans in history (and imported sessions/backups) run through the same plan steps via
+`migrateSavedPlan`, then re-stamp.
 
 **Floor-and-migrate guard.** `isSupportedSchemaVersion(v)` (`v >= MIN_SUPPORTED_SCHEMA && v <= SCHEMA_VERSION`,
 exported) is the shared numeric gate; `migrateToCurrent(raw, slice)` is the forward-migration seam:

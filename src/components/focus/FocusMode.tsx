@@ -701,8 +701,17 @@ function FocusPicker({ peekTask }: { peekTask?: LinkedTask }) {
                     )}
                 </div>
 
+                {/* Day's shape — the session timeline bar at the top, full width, so it frames the
+                    choice (and isn't cramped in a column). */}
+                <div className="space-y-1.5">
+                    <span className="text-[10px] font-medium text-text-light uppercase tracking-wider px-1">Today's shape</span>
+                    <div className="border border-border rounded-xl overflow-hidden px-4 py-1">
+                        <SessionTimeline pinnedSessionId={pinnedSessionId} onSelectSession={setPinnedSessionId} />
+                    </div>
+                </div>
+
                 <div className="grid lg:grid-cols-[1fr_320px] gap-6 items-start">
-                    {/* Left: the chooser (hidden while peeking) + the day's shape for contextualization */}
+                    {/* Left: the chooser (hidden while peeking) */}
                     <div className="space-y-5 min-w-0">
                         {peekTask ? null : groups.length > 0 ? (
                             <div className="space-y-4">
@@ -750,14 +759,6 @@ function FocusPicker({ peekTask }: { peekTask?: LinkedTask }) {
                                 <Button variant="secondary" onClick={() => navigate('/')}>Back to dashboard</Button>
                             </Card>
                         )}
-
-                        {/* Day context — the session timeline bar, moved here from the timer surface */}
-                        <div className="space-y-1.5">
-                            <span className="text-[10px] font-medium text-text-light uppercase tracking-wider px-1">Today's shape</span>
-                            <div className="border border-border rounded-xl overflow-hidden px-4 py-1">
-                                <SessionTimeline pinnedSessionId={pinnedSessionId} onSelectSession={setPinnedSessionId} />
-                            </div>
-                        </div>
                     </div>
 
                     {/* Right rail: the day-wide engagement log */}

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Logo } from '../ui/Logo';
 import { HeaderControls } from '../ui/HeaderControls';
@@ -6,16 +5,16 @@ import { TodoistSetup } from '../todoist/TodoistSetup';
 import { GoogleCalendarSetup } from './GoogleCalendarSetup';
 import { BlocklistSettings } from './BlocklistSettings';
 import { DataManagement } from './DataManagement';
-import { CapacitySettings } from './CapacitySettings';
+import { ConfigurationSettings } from './ConfigurationSettings';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { inputClass, labelClass } from '../ui/formStyles';
 
-const TABS = ['integrations', 'capacity', 'data'] as const;
+const TABS = ['integrations', 'configuration', 'data'] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
     integrations: 'Integrations',
-    capacity: 'Capacity',
+    configuration: 'Configuration',
     data: 'Data',
 };
 
@@ -28,10 +27,9 @@ export function SettingsPage() {
     const { settings, dispatch } = useDayPlan();
     const [searchParams, setSearchParams] = useSearchParams();
     const tabParam = searchParams.get('tab');
-    const [activeTab, setActiveTab] = useState<Tab>(isTab(tabParam) ? tabParam : 'integrations');
+    const activeTab: Tab = isTab(tabParam) ? tabParam : 'integrations';
 
     const selectTab = (tab: Tab) => {
-        setActiveTab(tab);
         setSearchParams({ tab }, { replace: true });
     };
 
@@ -111,7 +109,7 @@ export function SettingsPage() {
                                 </div>
                             </div>
                         )}
-                        {activeTab === 'capacity' && <CapacitySettings />}
+                        {activeTab === 'configuration' && <ConfigurationSettings />}
                         {activeTab === 'data' && (
                             <DataManagement onShowSavedSessions={handleShowSavedSessions} />
                         )}

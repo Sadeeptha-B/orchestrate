@@ -234,6 +234,11 @@ export interface AppSettings {
     // v7.5: Focus Mode strictness. When true (default), the first-concrete-action note (on start) and
     // the next-step note (on Stop / on leaving Focus) are *required*; when false they're optional.
     focusStrict?: boolean;
+    // v7.8: cadence (minutes) of the hourly recontextualization check-in. Default 60; 0 disables it.
+    recontextualizationCadenceMinutes?: number;
+    // v7.8: idle minutes before the engagement nudge fires (notif + persistent dashboard banner).
+    // Default 10; 0 disables it.
+    engagementNudgeMinutes?: number;
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────

@@ -4,11 +4,21 @@ import { SessionEditorTimeline } from '../ui/SessionEditorTimeline';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useDayCalendarEvents } from '../../hooks/useDayCalendarEvents';
+import { useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
+import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import { isSessionLocked } from '../../lib/sessionCalendar';
+import { habitKindOf } from '../../lib/habits';
+import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import type { SessionSlot, SessionTemplate } from '../../types';
 
-export function Step3Sessions() {
+export function Step1Sessions() {
     const { plan, life, settings, dispatch } = useDayPlan();
+    // v7.9: Sessions is now step 1, so the day's recurring context (season + habits) is surfaced
+    // here for scoping. Keep today's habit instances in sync as the source for the banner.
+    useTodaysHabitsSync();
+    const { events: externalEvents } = useDayCalendarEvents(plan.date);
+    const { isConnected: gcalConnected } = useGoogleCalendarData();
     const templates = life.sessionTemplates ?? [];
     const hasAssignments = Object.values(plan.taskSessions).some((ids) => ids.length > 0);
     const confirmApply = useConfirmModal<SessionTemplate>();
@@ -18,9 +28,14 @@ export function Step3Sessions() {
         () => new Set(plan.sessionSlots.filter((s) => isSessionLocked(s, plan.sessionStarts)).map((s) => s.id)),
         [plan.sessionSlots, plan.sessionStarts],
     );
+    // v6.7: timeline-habit instances (exclude micro-gaps / skipped) shown in the context banner.
+    const todaysHabitInstances = useMemo(
+        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && habitKindOf(life, i) === 'habit'),
+        [plan.todaysHabits, life],
+    );
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 2 });
     };
 
     const applyTemplate = (tpl: SessionTemplate) => {
@@ -41,13 +56,16 @@ export function Step3Sessions() {
     return (
         <WizardLayout wide onNext={handleNext}>
             <div className="space-y-5 mt-4">
+                {/* Today's context — season arc + recurring habits up top, framing the day before
+                    you shape it. */}
+                <SeasonFocusBanner todaysHabits={todaysHabitInstances} />
+
                 <div>
-                    <h2 className="text-2xl font-semibold mb-2">Shape your day's sessions</h2>
+                    <h2 className="text-2xl font-semibold mb-2">Let's shape your day</h2>
                     <p className="text-text-light text-sm">
-                        Lay out the work sessions for today. Drag on an empty area to add a block,
-                        drag a block to move it, drag its edges to resize, and click a block to rename
-                        or delete it. Everything after this — scheduling, the dashboard, check-ins —
-                        follows these sessions.
+                        Start by blocking out today's work sessions — the rhythm everything else
+                        follows. Drag on an empty area to add a block, drag a block to move it, drag
+                        its edges to resize, and click a block to rename or delete it.
                     </p>
                 </div>
 
@@ -81,6 +99,8 @@ export function Step3Sessions() {
                     timelineEndMinutes={settings.timelineEndMinutes}
                     blocklistOptions={settings.blocklists ?? []}
                     lockedSessionIds={lockedSessionIds}
+                    externalEvents={gcalConnected ? externalEvents : undefined}
+                    dateISO={plan.date}
                 />
 
                 {plan.sessionSlots.length === 0 && (

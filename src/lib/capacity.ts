@@ -6,7 +6,7 @@ export const DEFAULT_SESSION_BUFFER_MINUTES = 60;
 
 /**
  * v6 per-kind task-cap defaults injected by `loadSettings` when absent.
- * Single source of truth — Step2Refine, CapacitySettings, and the reducer all read this.
+ * Single source of truth — Step3Refine, ConfigurationSettings, and the reducer all read this.
  */
 export const DEFAULT_TASK_CAPS: TaskCapDefaults = {
     habit: 30,

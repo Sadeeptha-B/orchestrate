@@ -2,6 +2,14 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import type { SessionSlot, NotificationPreference } from '../types';
 import { useNotifications } from './useNotifications';
 import { minutesOfDay, timeToMinutes } from '../lib/time';
+import { DEFAULT_RECONTEXT_CADENCE_MINUTES } from '../lib/reminders';
+
+function msUntilNextCadenceBoundary(now: Date, cadenceMinutes: number): number {
+    const cadenceMs = cadenceMinutes * 60_000;
+    const elapsedTodayMs =
+        minutesOfDay(now) * 60_000 + now.getSeconds() * 1000 + now.getMilliseconds();
+    return (cadenceMs - (elapsedTodayMs % cadenceMs)) % cadenceMs;
+}
 
 function isWithinAnySession(slots: SessionSlot[]): boolean {
     const mins = minutesOfDay(new Date());
@@ -14,6 +22,7 @@ export function useHourlyCheckin(
     slots: SessionSlot[],
     setupComplete: boolean,
     notificationPreference: NotificationPreference,
+    cadenceMinutes: number = DEFAULT_RECONTEXT_CADENCE_MINUTES,
 ) {
     const [showCheckin, setShowCheckin] = useState(false);
     const { sendNotification } = useNotifications();
@@ -23,6 +32,8 @@ export function useHourlyCheckin(
 
     useEffect(() => {
         if (!setupComplete) return;
+        // A non-positive cadence disables the check-in entirely.
+        if (!Number.isFinite(cadenceMinutes) || cadenceMinutes <= 0) return;
 
         const check = () => {
             if (isWithinAnySession(slots)) {
@@ -32,26 +43,27 @@ export function useHourlyCheckin(
                         'Orchestrate Check-In',
                         "How's your session going? Time to recontextualize.",
                         notificationPreference,
+                        { dedupeKey: 'recontextualize-checkin' },
                     );
                 }
             }
         };
 
-        // Fire on the next whole hour, then every 60 min
+        // Fire on the next cadence boundary (aligned to minutes-since-midnight so e.g. a 30-min
+        // cadence lands on :00/:30 and a 60-min cadence keeps firing on the hour), then repeat.
         const now = new Date();
-        const msToNextHour =
-            (60 - now.getMinutes()) * 60_000 - now.getSeconds() * 1000 - now.getMilliseconds();
+        const msToBoundary = msUntilNextCadenceBoundary(now, cadenceMinutes);
 
         const timeout = setTimeout(() => {
             check();
-            intervalRef.current = setInterval(check, 60 * 60_000);
-        }, msToNextHour);
+            intervalRef.current = setInterval(check, cadenceMinutes * 60_000);
+        }, msToBoundary);
 
         return () => {
             clearTimeout(timeout);
             if (intervalRef.current) clearInterval(intervalRef.current);
         };
-    }, [setupComplete, slots, notificationPreference, sendNotification]);
+    }, [setupComplete, slots, notificationPreference, sendNotification, cadenceMinutes]);
 
     return { showCheckin, dismiss };
 }

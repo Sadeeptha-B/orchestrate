@@ -11,14 +11,12 @@ import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import type { Intention } from '../../types';
 import { TodoistPanel } from '../todoist/TodoistPanel';
 import { TodoistSetup } from '../todoist/TodoistSetup';
-import { SeasonFocusBanner } from '../life/SeasonFocusBanner';
 import { getTaskTitle } from '../../lib/tasks';
-import { habitKindOf } from '../../lib/habits';
 import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import type { LinkedTask } from '../../types';
 
-export function Step1Intentions() {
-    const { plan, settings, life, dispatch } = useDayPlan();
+export function Step2Intentions() {
+    const { plan, settings, dispatch } = useDayPlan();
     const { taskMap, isConfigured: todoistConfigured } = useTodoistData();
 
     // v6.3/v6.7: surface today's habit + micro-gap instances on the timeline / dashboard. Shared
@@ -104,13 +102,6 @@ export function Step1Intentions() {
         [plan.intentions],
     );
 
-    // v6.3: today's timeline-habit instances, surfaced by name inside the season card in Phase 1.
-    // v6.7: exclude micro-gaps — they're not "on the timeline".
-    const todaysHabitInstances = useMemo(
-        () => plan.todaysHabits.filter((i) => i.status !== 'skipped' && habitKindOf(life, i) === 'habit'),
-        [plan.todaysHabits, life],
-    );
-
     // Commit a drag-reorder of the current intention's linked tasks onto the dropped target.
     const reorderCurrentLinked = useCallback(
         (intentionId: string, orderedIds: string[], dragId: string, targetId: string) => {
@@ -167,7 +158,7 @@ export function Step1Intentions() {
     const upcomingCount = upcomingIntentions.length;
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 2 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 3 });
     };
 
     const markCurrentBrokenDown = () => {
@@ -231,8 +222,6 @@ export function Step1Intentions() {
                                     accomplish today?
                                 </p>
                             </div>
-
-                            <SeasonFocusBanner todaysHabits={todaysHabitInstances} />
 
                             <div className="flex gap-2">
                                 <input

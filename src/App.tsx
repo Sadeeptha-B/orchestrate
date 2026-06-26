@@ -5,6 +5,8 @@ import { useDayPlan } from './hooks/useDayPlan';
 import { TodoistProvider } from './context/TodoistContext';
 import { GoogleCalendarProvider } from './context/GoogleCalendarContext';
 import { ReconciliationProvider } from './context/ReconciliationContext';
+import { NotificationProvider } from './context/NotificationContext';
+import { NotificationBridge } from './components/ui/NotificationBridge';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 /**
@@ -98,13 +100,16 @@ export default function App() {
     return (
         <ErrorBoundary>
             <DayPlanProvider>
-                <GoogleCalendarProvider>
-                    <TodoistProvider>
-                        <ReconciliationProvider>
-                            <AppRoutes />
-                        </ReconciliationProvider>
-                    </TodoistProvider>
-                </GoogleCalendarProvider>
+                <NotificationProvider>
+                    <GoogleCalendarProvider>
+                        <TodoistProvider>
+                            <ReconciliationProvider>
+                                <NotificationBridge />
+                                <AppRoutes />
+                            </ReconciliationProvider>
+                        </TodoistProvider>
+                    </GoogleCalendarProvider>
+                </NotificationProvider>
             </DayPlanProvider>
         </ErrorBoundary>
     );
