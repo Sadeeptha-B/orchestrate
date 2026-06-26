@@ -96,8 +96,8 @@ export function ReconciliationProvider({ children }: { children: ReactNode }) {
         [life, taskMap, plan.date],
     );
     const needsSync = useMemo<NeedsSyncHabitInfo[]>(
-        () => findNeedsSyncHabits({ life, taskMap }),
-        [life, taskMap],
+        () => findNeedsSyncHabits({ life, taskMap, tasksHydrated }),
+        [life, taskMap, tasksHydrated],
     );
     const neverSyncedCount = useMemo(
         () => needsSync.filter((n) => n.reason === 'never-synced').length,
