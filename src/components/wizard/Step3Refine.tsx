@@ -16,7 +16,7 @@ type Phase = 'overview' | 'scheduling';
 /**
  * Task-manager panel state. `auto` defers to the long-task heuristic so the panel
  * pops open when an estimate first exceeds 60min. Once the user explicitly opens
- * or closes the panel, their intent sticks for the rest of Step 2.
+ * or closes the panel, their intent sticks for the rest of the Refine step.
  */
 type PanelIntent = 'auto' | 'open' | 'closed';
 
@@ -30,7 +30,7 @@ const ESTIMATE_PRESETS = [15, 30, 45, 60];
 /** Threshold (minutes) above which a non-background task triggers the "consider breaking down" nudge. */
 const LONG_TASK_THRESHOLD = 60;
 
-export function Step2Refine() {
+export function Step3Refine() {
     const { plan, settings, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const [phase, setPhase] = useState<Phase>('overview');
@@ -43,7 +43,7 @@ export function Step2Refine() {
 
     const intentions = plan.intentions;
 
-    // v6.1: Step 2 only refines tasks attached to user intentions. Orphan habit-tasks
+    // v6.1: the Refine step only refines tasks attached to user intentions. Orphan habit-tasks
     // arrive pre-typed/estimated from injection and bypass this step entirely.
     const manualLinkedTasks = useMemo(
         () => plan.linkedTasks.filter((lt) => lt.intentionId !== undefined),
@@ -126,7 +126,7 @@ export function Step2Refine() {
     };
 
     const handleNext = () => {
-        dispatch({ type: 'SET_WIZARD_STEP', step: 3 });
+        dispatch({ type: 'SET_WIZARD_STEP', step: 4 });
     };
 
     if (intentions.length === 0) {
@@ -135,7 +135,7 @@ export function Step2Refine() {
                 <div className="space-y-4 mt-4">
                     <h2 className="text-2xl font-semibold">Categorize your tasks</h2>
                     <p className="text-text-light text-sm">
-                        No intentions found. Go back to Step 1 to create intentions and link tasks.
+                        No intentions found. Go back to the Intentions step to create intentions and link tasks.
                     </p>
                 </div>
             </WizardLayout>

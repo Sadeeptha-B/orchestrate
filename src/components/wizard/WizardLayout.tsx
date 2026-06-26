@@ -109,6 +109,14 @@ export function WizardLayout({
                             <Button
                                 variant="ghost"
                                 size="sm"
+                                onClick={() => navigate('/life')}
+                                title="Seasons, habits & session templates"
+                            >
+                                Life
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => setPanelOpen((open) => !open)}
                                 title="Saved sessions and intentions backlog"
                             >

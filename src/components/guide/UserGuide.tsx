@@ -545,9 +545,11 @@ export function UserGuide() {
                             time you switch between work and break.
                         </p>
                         <Callout tone="info">
-                            If you're in an active session for 10 minutes without starting a focus block, Orchestrate
-                            nudges you (banner + notification) and keeps reminding you every 30 minutes until you begin —
-                            but only while the session still has unfinished work.
+                            If it's been a while since your last engagement while a session is active (10 minutes by
+                            default — adjustable in Settings → Configuration → Reminders), Orchestrate sends a
+                            notification and then keeps a banner on the dashboard until you re-engage, re-nudging every
+                            30 minutes — but only while the session still has unfinished work. The clock counts from your
+                            last Start→Stop, not the start of the session.
                         </Callout>
                         <SubHeading>Re-entry breadcrumb</SubHeading>
                         <p>

@@ -23,8 +23,11 @@ import type { ContextNote } from '../types';
  * 7.5 (v7.7 Phase 3): purely additive optionals — `SessionSlot.blocklist`, `AppSettings`
  * orchestrate-calendar/blocklist fields, `DayPlan.sessionCalendarEventIds`/`sessionStarts`. No
  * forward-migration step needed (absent fields read as undefined); the version stamp just advances.
+ * 7.6 (v7.8): wizard reorder — Sessions moved to step 1 (Sessions → Intentions → Refine → Schedule
+ * → Ready) and the Start Music step replaced by the Ready recap. A persisted `plan.wizardStep` from
+ * the old layout points at a different step now, so it's remapped forward (see `migratePlan_7_5_to_7_6`).
  */
-export const SCHEMA_VERSION = 7.5;
+export const SCHEMA_VERSION = 7.6;
 
 /** Oldest schema the app still understands. Data stamped below this is rejected rather than migrated. */
 export const MIN_SUPPORTED_SCHEMA = 7.1;
@@ -86,6 +89,19 @@ function migrateLife_7_1_to_7_4(raw: Record<string, unknown>): Record<string, un
 }
 
 /**
+ * 7.5 → 7.6 (plan): the wizard was reordered (old `Intentions, Refine, Sessions, Schedule, Music`
+ * → new `Sessions, Intentions, Refine, Schedule, Ready`), so a persisted `wizardStep` from the old
+ * layout maps onto a different step. Remap it forward. Schema-gated, so the old numbering is
+ * unambiguous. Harmless for already-`setupComplete` plans (their `wizardStep` is just the last edited).
+ */
+const WIZARD_STEP_REMAP_7_6: Record<number, number> = { 1: 2, 2: 3, 3: 1, 4: 4, 5: 5 };
+function migratePlan_7_5_to_7_6(raw: Record<string, unknown>): Record<string, unknown> {
+    const step = raw.wizardStep;
+    if (typeof step !== 'number') return raw;
+    return { ...raw, wizardStep: WIZARD_STEP_REMAP_7_6[step] ?? step };
+}
+
+/**
  * Migration seam. Forward-migrate a parsed, already-supported artifact up to `SCHEMA_VERSION`.
  * Single-step chain from `MIN_SUPPORTED_SCHEMA` upward — one block per step. Runs on the raw record
  * before markers are stripped / defaults are filled. `slice` lets a step target the right shape.
@@ -99,6 +115,9 @@ export function migrateToCurrent(
     if (from < 7.4) {
         if (slice === 'plan') out = migratePlan_7_1_to_7_4(out);
         else if (slice === 'life') out = migrateLife_7_1_to_7_4(out);
+    }
+    if (from < 7.6) {
+        if (slice === 'plan') out = migratePlan_7_5_to_7_6(out);
     }
     return out;
 }

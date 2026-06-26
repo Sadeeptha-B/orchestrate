@@ -24,7 +24,7 @@ import { useCompleteHabitInstance } from '../../hooks/useCompleteHabitInstance';
 import { HabitTimeEditor } from '../dashboard/HabitTimeEditor';
 import type { Intention, LinkedTask, SessionSlot } from '../../types';
 
-export function Step3Schedule() {
+export function Step4Schedule() {
     const { plan, life, settings, dispatch } = useDayPlan();
     // v6.7: only 'habit'-kind instances belong on the timeline; micro-gaps are off-timeline.
     const timelineHabits = plan.todaysHabits.filter((i) => habitKindOf(life, i) === 'habit');
@@ -58,7 +58,7 @@ export function Step3Schedule() {
         [plan.intentions],
     );
 
-    // Global task sort index honouring Step 1's ordering: intentions in their plan order, and
+    // Global task sort index honouring the Intentions step's ordering: intentions in their plan order, and
     // within each intention the `linkedTaskIds` order. Drives task placement inside timeline
     // session cards so they read the same way they were arranged during mapping.
     const taskOrder = useMemo(() => {
@@ -72,13 +72,13 @@ export function Step3Schedule() {
         return order;
     }, [plan.intentions]);
 
-    // Sort linked tasks by Step 1's sequencing (intention order, then `linkedTaskIds` order).
+    // Sort linked tasks by the Intentions step's sequencing (intention order, then `linkedTaskIds` order).
     const compareByTaskOrder = (a: LinkedTask, b: LinkedTask) =>
         (taskOrder.get(a.todoistId) ?? Number.MAX_SAFE_INTEGER) -
         (taskOrder.get(b.todoistId) ?? Number.MAX_SAFE_INTEGER);
 
     // Main tasks grouped by intention, with both the groups (plan order) and the tasks within
-    // each group (linkedTaskIds order) following Step 1's sequence.
+    // each group (linkedTaskIds order) following the Intentions step's sequence.
     const mainTasksByIntention = useMemo(() => {
         const orderOf = (lt: LinkedTask) => taskOrder.get(lt.todoistId) ?? Number.MAX_SAFE_INTEGER;
         return plan.intentions
@@ -243,7 +243,7 @@ export function Step3Schedule() {
                         const assignedBg = backgroundTasks.filter((lt) => assignedIds.includes(lt.todoistId)).sort(compareByTaskOrder);
                         const unassignedBg = backgroundTasks.filter((lt) => !assignedIds.includes(lt.todoistId)).sort(compareByTaskOrder);
 
-                        // Assigned main tasks grouped by intention, honouring Step 1's ordering for
+                        // Assigned main tasks grouped by intention, honouring the Intentions step's ordering for
                         // both the groups (plan order) and the tasks within each (linkedTaskIds order).
                         const assignedByIntention = plan.intentions
                             .map((i) => [i.id, assignedMain.filter((lt) => lt.intentionId === i.id).sort(compareByTaskOrder)] as const)
@@ -562,8 +562,8 @@ export function Step3Schedule() {
 }
 
 /**
- * v6.3: Step 3 habits panel — lists today's active habit instances (planned + engaged).
- * Each row exposes a Reschedule affordance unconditionally (Step 3 IS the planning step,
+ * v6.3: Schedule-step habits panel — lists today's active habit instances (planned + engaged).
+ * Each row exposes a Reschedule affordance unconditionally (the Schedule step IS the planning step,
  * so the user should be able to set/change times here without waiting for the target
  * window to elapse). v6.8: strict habits past their window now appear here too (tagged
  * "missed") instead of being filtered out — rescheduling one to a future time un-misses it.

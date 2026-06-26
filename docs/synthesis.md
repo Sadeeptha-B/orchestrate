@@ -46,16 +46,19 @@ StrictMode                         (main.tsx)
     `-- App                        (App.tsx)
         `-- ErrorBoundary
             `-- DayPlanProvider              <-- core app state (plan, settings, history, life)
-                `-- GoogleCalendarProvider   <-- v7.2: server-mediated OAuth (calendar list + write plumbing)
-                    `-- TodoistProvider          <-- Todoist data + API actions
-                        `-- ReconciliationProvider  <-- v6.5: central habit reconcile
-                            `-- AppRoutes        <-- router switch
+                `-- NotificationProvider     <-- v7.8: in-app notification banner queue + viewport
+                    `-- GoogleCalendarProvider   <-- v7.2: server-mediated OAuth (calendar list + write plumbing)
+                        `-- TodoistProvider          <-- Todoist data + API actions
+                            `-- ReconciliationProvider  <-- v6.5: central habit reconcile
+                                `-- NotificationBridge  <-- v7.8: engagement nudge + sync-error toasts
+                                `-- AppRoutes        <-- router switch
 ```
 
 - `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
 - `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The **refresh token lives server-side** (Cloudflare Worker + KV); the provider holds only a short-lived access token **in memory** (re-minted by the Worker on demand) plus a runtime shared secret in localStorage.
 - `TodoistProvider` reads `settings` (connection state + habits project preference) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
 - `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
+- `NotificationProvider` (v7.8) sits above the integration providers so they (and any view) can raise in-app banners via `useNotify`. It owns the toast queue and renders `NotificationViewport` (fixed, bottom-right, themed by kind: info/success/warning/error; info/success auto-dismiss, errors persist; de-duped by `dedupeKey`). `NotificationBridge` — a headless component under all providers — runs the engagement nudge app-wide and watches the Todoist / Google Calendar / reconciliation contexts, raising an **error banner on a sync failure** (linking to Integrations). Native browser notifications are now a **background-only fallback** in `useNotifications` (fired only when the tab is hidden and the preference allows the browser channel).
 
 ### 3.2 Routing
 
@@ -97,10 +100,17 @@ Focus Mode is the app's **execution surface**, so the **music protocol** lives h
 `MusicProvider` wraps a card-less `PlaylistSelector` + `SpotifyPlayer` above the timer (v7.6). The
 dashboard no longer carries the Spotify embed. (The static transition-tips card was dropped in v7.6.)
 
-A separate **focus nudge** (`useFocusNudge`, wired in the Dashboard) notifies the user — browser
-notification + in-app banner — if they've been in an active session ≥10 min without engaging anything
-(and the session still has incomplete work), repeating every 30 min while idle. No new entities,
-reducer actions, or schema migration — Focus Mode is a view over the existing engagement-segment model.
+A separate **engagement nudge** (`useEngagementNudge`, run app-wide by `NotificationBridge` — v7.8,
+formerly `useFocusNudge` on the Dashboard) notifies the user if they've been idle in an active session
+without engaging anything (and the session still has incomplete work) past a **configurable threshold**
+(`settings.engagementNudgeMinutes`, default 10; `0` disables), repeating every 30 min while idle.
+**v7.8** anchors the elapsed clock to the **last engagement boundary** (`lastEngagementBoundary` — the
+most recent Start→Stop today) rather than the session start, so it reports "time since you last did
+something" (folded into hours via `formatDuration`), and is reworded away from "focus". The
+notification fires once at the threshold; thereafter a **persistent dashboard banner**
+(`useEngagementBanner`) stays visible until the user re-engages. Both share the pure `engagementIdleState`
+helper in `lib/engagement.ts`. No new entities, reducer actions, or schema migration — it's a view over
+the existing engagement-segment model.
 
 **v7.4 — re-entry breadcrumb + activation ramp.** Focus Mode is the execution surface, so the v7.4
 execution-friction features live here. A per-task **re-entry breadcrumb** is a cumulative trail
@@ -243,19 +253,19 @@ The top-right fixed controls -- About, Settings, ThemeToggle -- are rendered by 
 
 A sequential flow captured in `plan.wizardStep` (1-indexed, persists across refreshes). `WizardLayout` wraps every step with a collapsible saved-sessions sidebar, header with step progress pills, and Back/Next footer. An "editing" mode supports returning from the dashboard.
 
-1. **Step 1 -- Intentions** (`Step1Intentions`). Two phases: (a) write down intentions, (b) sequentially map each to Todoist tasks via the embedded `TodoistPanel` (Link/Unlink buttons). The current intention's linked tasks render in `linkedTaskIds` order and are **drag-reorderable** (`REORDER_INTENTION_TASKS`); linking more than 5 tasks to one intention surfaces a scope-creep nudge ("this is probably an epic — split it"). The focused "Current" card can be **collapsed** to fold all not-yet-mapped intentions (the current one included) into a single drag-reorderable list (`REORDER_INTENTIONS`); picking "Map →" re-focuses one. Mapped intentions become collapsible panels showing their linked tasks. The step also fires `REFRESH_TODAYS_HABITS` to populate today's habits (both kinds) as `TodaysHabitInstance` rows, showing a chip count; each season-banner habit chip has a ✓ to mark it done for today (`useCompleteHabitInstance`). The `TodoistPanel` renders a non-actionable "Habit" label on rows backing a `TodaysHabitInstance`, and its task rows support **drag-reorder within a sibling group** (writes Todoist `child_order` via `item_reorder`). Each intention row has archive-to-backlog and delete buttons (both unschedule linked Todoist tasks via `useIntentionRemoval`). A **season focus banner** at the top surfaces the active season's supporting goals as clickable chips that add intentions.
+1. **Step 1 -- Sessions** (`Step1Sessions`). Define the day's work sessions **first** (v7.8: moved ahead of Intentions, so the session shape scopes intention planning) on a **drag-calendar** (`SessionEditorTimeline`): drag an empty area to add a block, drag a block to move, drag its edges to resize, click to rename/delete (15-min snapping, advisory overlap tint). v7.9: when Google Calendar is connected, that day's **external events render as faded read-only context bars behind the editable blocks** (shared positioning math in `lib/timelineEvents`, `pointer-events-none` so drawing over a meeting still works) — meetings inform where sessions go. A **season-focus context banner** (`SeasonFocusBanner`, moved here from the Intentions step in v7.9) sits at the top: the active season's arc + supporting-goal chips and today's recurring habits (each with a ✓ to mark done). The day's sessions live on `DayPlan.sessionSlots` (seeded from the last-used day) and drive every surface thereafter. **Session Templates** (from the Life section) appear as quick-apply chips — applying one replaces the day's sessions (and clears assignments, with a confirm if any exist). A "Save as template" affordance persists the current layout to `LifeContext.sessionTemplates`. Granular reducer actions (`ADD_/UPDATE_/REMOVE_DAY_SESSION`, `APPLY_SESSION_TEMPLATE`) keep session ids stable so assignments survive a Back-edit.
 
-2. **Step 2 -- Refine** (`Step2Refine`). Per-intention sequential flow: categorize each linked task as **main** or **background**, set an **estimate** (preset pills or custom). Background tasks clamp to `taskCapDefaults.manualBackground`. Tasks > 60 min trigger a nudge to break down via the TodoistPanel. v7.4: **main** tasks also get an optional **"First concrete action"** input (`SET_TASK_FIRST_ACTION` → `LinkedTask.firstAction`) — a concrete entry point that seeds the Focus Mode re-entry breadcrumb. Strictly optional; never gates advancing.
+2. **Step 2 -- Intentions** (`Step2Intentions`). Two phases: (a) write down intentions, (b) sequentially map each to Todoist tasks via the embedded `TodoistPanel` (Link/Unlink buttons). The current intention's linked tasks render in `linkedTaskIds` order and are **drag-reorderable** (`REORDER_INTENTION_TASKS`); linking more than 5 tasks to one intention surfaces a scope-creep nudge ("this is probably an epic — split it"). The focused "Current" card can be **collapsed** to fold all not-yet-mapped intentions (the current one included) into a single drag-reorderable list (`REORDER_INTENTIONS`); picking "Map →" re-focuses one. Mapped intentions become collapsible panels showing their linked tasks. The step also fires `REFRESH_TODAYS_HABITS` to populate today's habits (both kinds) as `TodaysHabitInstance` rows, showing a chip count; each season-banner habit chip has a ✓ to mark it done for today (`useCompleteHabitInstance`). The `TodoistPanel` renders a non-actionable "Habit" label on rows backing a `TodaysHabitInstance`, and its task rows support **drag-reorder within a sibling group** (writes Todoist `child_order` via `item_reorder`). Each intention row has archive-to-backlog and delete buttons (both unschedule linked Todoist tasks via `useIntentionRemoval`). (The season-focus context banner moved to Step 1 in v7.9, but recurring-focus chips it surfaces still add intentions here in plan order.)
 
-3. **Step 3 -- Sessions** (`Step3Sessions`, v7.1). Define the day's work sessions on a **drag-calendar** (`SessionEditorTimeline`): drag an empty area to add a block, drag a block to move, drag its edges to resize, click to rename/delete (15-min snapping, advisory overlap tint). The day's sessions live on `DayPlan.sessionSlots` (seeded from the last-used day) and drive every surface thereafter. **Session Templates** (from the Life section) appear as quick-apply chips — applying one replaces the day's sessions (and clears assignments, with a confirm if any exist). A "Save as template" affordance persists the current layout to `LifeContext.sessionTemplates`. Granular reducer actions (`ADD_/UPDATE_/REMOVE_DAY_SESSION`, `APPLY_SESSION_TEMPLATE`) keep session ids stable so assignments survive a Back-edit.
+3. **Step 3 -- Refine** (`Step3Refine`). Per-intention sequential flow: categorize each linked task as **main** or **background**, set an **estimate** (preset pills or custom). Background tasks clamp to `taskCapDefaults.manualBackground`. Tasks > 60 min trigger a nudge to break down via the TodoistPanel. v7.4: **main** tasks also get an optional **"First concrete action"** input (`SET_TASK_FIRST_ACTION` → `LinkedTask.firstAction`) — a concrete entry point that seeds the Focus Mode re-entry breadcrumb. Strictly optional; never gates advancing.
 
-4. **Step 4 -- Schedule** (`Step3Schedule`). Two phases:
-   - **Phase 1 (Assign):** Proportional `SessionTimelineBar` shows **all of the day's sessions** as blocks (past ones sit left of the now-line) plus a dedicated **habit lane** above where `TodaysHabitInstance` rows render at their `targetTime` (untimed ones cluster as "Anytime today"), and — when Google Calendar is connected — that day's **external calendar events as read-only faded bars inside the session band itself** (behind the session blocks; not editable on the bar, and only for calendars toggled visible on the timeline surface). A built-in **view toggle** (top-right) cycles the bar between the full configured day and just the remaining part of the day; the remaining view anchors its left edge to the in-progress session's start so the current session stays fully visible even though it began before now. Clicking a session opens its detail panel: current/upcoming sessions allow assigning tasks; a **past session is read-only for new assignments** but its tasks can be moved forward to a current/upcoming session via a "Move to…" dropdown. Task placement honours Step 1's sequencing (intentions in plan order, tasks in `linkedTaskIds` order) consistently — inside the timeline session blocks (via the bar's `taskOrder` prop) and in the selected-session detail panel (assigned groups, assigned background, and the Add-task lists). A "Today's intentions" overview panel lists every active intention with archive/delete buttons. The "Today's habits" panel exposes ✓ Done (mark complete) alongside Reschedule. Cannot advance until at least one task is assigned.
+4. **Step 4 -- Schedule** (`Step4Schedule`). Two phases:
+   - **Phase 1 (Assign):** Proportional `SessionTimelineBar` shows **all of the day's sessions** as blocks (past ones sit left of the now-line) plus a dedicated **habit lane** above where `TodaysHabitInstance` rows render at their `targetTime` (untimed ones cluster as "Anytime today"), and — when Google Calendar is connected — that day's **external calendar events as read-only faded bars inside the session band itself** (behind the session blocks; not editable on the bar, and only for calendars toggled visible on the timeline surface). A built-in **view toggle** (top-right) cycles the bar between the full configured day and just the remaining part of the day; the remaining view anchors its left edge to the in-progress session's start so the current session stays fully visible even though it began before now. Clicking a session opens its detail panel: current/upcoming sessions allow assigning tasks; a **past session is read-only for new assignments** but its tasks can be moved forward to a current/upcoming session via a "Move to…" dropdown. Task placement honours the Intentions step's sequencing (intentions in plan order, tasks in `linkedTaskIds` order) consistently — inside the timeline session blocks (via the bar's `taskOrder` prop) and in the selected-session detail panel (assigned groups, assigned background, and the Add-task lists). A "Today's intentions" overview panel lists every active intention with archive/delete buttons. The "Today's habits" panel exposes ✓ Done (mark complete) alongside Reschedule. Cannot advance until at least one task is assigned.
    - **Phase 2 (Time):** Side-by-side TodoistPanel + the API-rendered Google Calendar (FullCalendar, editable) for time-blocking, plus a "Today's habits" panel above (habit-kind only; micro-gaps are off-timeline). Habits past their target window get an inline reschedule affordance; v6.8 strict ones are tagged "missed" (greyed) but still listed and reschedulable.
 
-5. **Step 5 -- Start Music** (`Step4StartMusic`). Plays the "Start Work" Spotify playlist as a ramp-in trigger, then transitions to the Dashboard.
+5. **Step 5 -- Ready** (`Step5Launch`, v7.8). A calm "your day is ready" hand-off with the "Start Work" Spotify playlist embedded as a ramp-in on-ramp, so scheduling ends with an eased transition rather than dumping straight onto the dashboard. Completes setup (`COMPLETE_SETUP`) and offers a primary **Go to Dashboard** plus a secondary **Enter Focus Mode** launch.
 
-The user can return from the Dashboard: "Edit Plan" -> Step 1, "Recontextualize" -> Step 4 (Schedule).
+The user can return from the Dashboard: "Edit Plan" -> Step 1 (Sessions, the top of the flow), "Recontextualize" -> Step 4 (Schedule). The wizard header also carries a **Life** link to `/life`.
 
 ### 5.3 Dashboard
 
@@ -597,7 +607,7 @@ src/
     +-- Welcome.tsx
     +-- wizard/
     |   +-- Wizard.tsx, WizardLayout.tsx
-    |   +-- Step1Intentions.tsx, Step2Refine.tsx, Step3Sessions.tsx, Step3Schedule.tsx, Step4StartMusic.tsx
+    |   +-- Step1Sessions.tsx, Step2Intentions.tsx, Step3Refine.tsx, Step4Schedule.tsx, Step5Launch.tsx
     +-- dashboard/
     |   +-- Dashboard.tsx, SessionTimeline.tsx, MusicPanel.tsx, DigitalClock.tsx
     |   +-- InsightCard.tsx, HistorySidebar.tsx, BacklogTab.tsx
@@ -608,7 +618,7 @@ src/
     +-- todoist/
     |   +-- TodoistPanel.tsx, TodoistSetup.tsx, RenderedCalendar.tsx
     +-- settings/
-    |   +-- SettingsPage.tsx, CapacitySettings.tsx, DataManagement.tsx, GoogleCalendarSetup.tsx
+    |   +-- SettingsPage.tsx, ConfigurationSettings.tsx, DataManagement.tsx, GoogleCalendarSetup.tsx
     +-- guide/
     |   `-- UserGuide.tsx       # Single source for user guide content
     +-- life/

@@ -1,20 +1,20 @@
 import { useDayPlan } from '../../hooks/useDayPlan';
-import { Step1Intentions } from './Step1Intentions';
-import { Step2Refine } from './Step2Refine';
-import { Step3Sessions } from './Step3Sessions';
-import { Step3Schedule } from './Step3Schedule';
-import { Step4StartMusic } from './Step4StartMusic';
+import { Step1Sessions } from './Step1Sessions';
+import { Step2Intentions } from './Step2Intentions';
+import { Step3Refine } from './Step3Refine';
+import { Step4Schedule } from './Step4Schedule';
+import { Step5Launch } from './Step5Launch';
 
 const STEPS = [
-    Step1Intentions,
-    Step2Refine,
-    Step3Sessions,
-    Step3Schedule,
-    Step4StartMusic,
+    Step1Sessions,
+    Step2Intentions,
+    Step3Refine,
+    Step4Schedule,
+    Step5Launch,
 ];
 
 export function Wizard() {
     const { plan } = useDayPlan();
-    const StepComponent = STEPS[plan.wizardStep - 1] ?? Step1Intentions;
+    const StepComponent = STEPS[plan.wizardStep - 1] ?? Step1Sessions;
     return <StepComponent />;
 }

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
@@ -6,25 +6,34 @@ import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { totalEngagedSeconds } from '../../lib/engagement';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { ConfirmModal } from '../ui/ConfirmModal';
-import { useConfirmModal } from '../../hooks/useConfirmModal';
 
 /**
  * v6.2: list view of `life.backlog` shown inside the `HistorySidebar`'s Backlog tab.
- * Each row: intention title + task-count + archived-from date + reason chip,
- * with per-row "Bring to today" and "Discard" affordances.
+ * Each row: intention title + task-count + archived-from date + reason chip, a collapsible
+ * task list, and per-row "Bring to today" and "Discard" affordances. v7.8: discard confirms
+ * inline at the bottom of the sidebar (no modal); pending tasks expand in place.
  */
 export function BacklogTab() {
     const { life, plan, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const { discardFromBacklog } = useIntentionRemoval();
     const navigate = useNavigate();
-    const confirmDiscard = useConfirmModal<string>();
+    const [pendingDiscardId, setPendingDiscardId] = useState<string | null>(null);
+    const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
     const entries = useMemo(
         () => [...(life.backlog ?? [])].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt)),
         [life.backlog],
     );
+
+    const toggleExpanded = (id: string) => {
+        setExpandedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
 
     const handleBringBack = (backlogId: string) => {
         const entry = entries.find((e) => e.id === backlogId);
@@ -38,9 +47,13 @@ export function BacklogTab() {
         }
         dispatch({ type: 'RESTORE_FROM_BACKLOG', backlogId, taskCache });
         // If today's plan isn't set up yet, hop the user into the wizard so they
-        // can re-flow the restored tasks through Step 2 + Step 3.
+        // can re-flow the restored tasks through the Intentions + Schedule steps.
         if (!plan.setupComplete) navigate('/setup', { state: { fromWelcome: true } });
     };
+
+    const pendingEntry = pendingDiscardId
+        ? entries.find((e) => e.id === pendingDiscardId) ?? null
+        : null;
 
     if (entries.length === 0) {
         return (
@@ -53,7 +66,8 @@ export function BacklogTab() {
     return (
         <div className="space-y-2">
             {entries.map((entry) => {
-                const pendingCount = entry.intention.linkedTaskIds.length;
+                const pendingIds = entry.intention.linkedTaskIds;
+                const pendingCount = pendingIds.length;
                 const completedTitles = entry.completedTaskTitles ?? [];
                 const unfinishedRecords = entry.unfinishedTaskRecords ?? {};
                 const unfinishedIds = Object.keys(unfinishedRecords);
@@ -63,6 +77,8 @@ export function BacklogTab() {
                 const unfinishedTooltip = unfinishedIds
                     .map((id) => `${entry.taskSnapshots?.[id] ?? id}: ${minutesFor(id)}m`)
                     .join('\n');
+                const titleFor = (id: string) => taskMap.get(id)?.content ?? entry.taskSnapshots?.[id] ?? id;
+                const isExpanded = expandedIds.has(entry.id);
                 return (
                     <Card key={entry.id} className="!p-3">
                         <div className="space-y-2">
@@ -71,13 +87,33 @@ export function BacklogTab() {
                                     {entry.intention.title}
                                 </p>
                                 <p className="text-xs text-text-light">
-                                    {pendingCount} pending &middot;
-                                    {' '}from {entry.archivedFromDate} &middot;
+                                    {pendingCount > 0 ? (
+                                        <button
+                                            onClick={() => toggleExpanded(entry.id)}
+                                            className="hover:text-accent transition-colors cursor-pointer inline-flex items-center gap-0.5"
+                                            title={isExpanded ? 'Hide tasks' : 'View tasks'}
+                                        >
+                                            <span className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}>›</span>
+                                            {pendingCount} pending
+                                        </button>
+                                    ) : (
+                                        <span>{pendingCount} pending</span>
+                                    )}
+                                    {' '}&middot; from {entry.archivedFromDate} &middot;
                                     {' '}{entry.reason === 'rollover' ? 'rolled over' : 'manual'}
                                 </p>
+                                {isExpanded && pendingCount > 0 && (
+                                    <ul className="mt-1.5 space-y-0.5 border-l border-border/60 pl-2.5">
+                                        {pendingIds.map((id) => (
+                                            <li key={id} className="text-xs text-text-light truncate" title={titleFor(id)}>
+                                                {titleFor(id)}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
                                 {unfinishedIds.length > 0 && (
                                     <p
-                                        className="text-xs text-amber-700 dark:text-amber-300"
+                                        className="text-xs text-amber-700 dark:text-amber-300 mt-1"
                                         title={unfinishedTooltip}
                                     >
                                         ✱ Engaged earlier: {unfinishedIds.length} task{unfinishedIds.length === 1 ? '' : 's'}, {unfinishedTotalMinutes}m
@@ -103,7 +139,7 @@ export function BacklogTab() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => confirmDiscard.open(entry.id)}
+                                    onClick={() => setPendingDiscardId(entry.id)}
                                 >
                                     Discard
                                 </Button>
@@ -113,18 +149,29 @@ export function BacklogTab() {
                 );
             })}
 
-            <ConfirmModal
-                open={confirmDiscard.value !== null}
-                onClose={confirmDiscard.close}
-                onConfirm={() => confirmDiscard.value ? discardFromBacklog(confirmDiscard.value) : Promise.resolve()}
-                title="Discard backlog entry?"
-                confirmLabel="Discard"
-            >
-                <p className="text-sm text-text-light mb-4">
-                    The intention will be removed from the backlog. Any of its linked
-                    Todoist tasks that are currently scheduled will be unscheduled.
-                </p>
-            </ConfirmModal>
+            {/* v7.8: inline discard confirmation — replaces the former modal so it reads in place. */}
+            {pendingEntry && (
+                <div className="sticky bottom-0 rounded-lg border border-red-400/40 bg-card p-3 shadow-sm space-y-2">
+                    <p className="text-xs text-text-light">
+                        Discard <strong className="text-text">{pendingEntry.intention.title}</strong>? Its linked
+                        Todoist tasks that are currently scheduled will be unscheduled.
+                    </p>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setPendingDiscardId(null)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={() => {
+                                void discardFromBacklog(pendingEntry.id);
+                                setPendingDiscardId(null);
+                            }}
+                        >
+                            Discard
+                        </Button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
