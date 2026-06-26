@@ -115,7 +115,7 @@ export interface TodoistActionsValue {
     moveTask: (taskId: string, projectId: string) => Promise<boolean>;
     /** Reorder sibling tasks by writing new `child_order` values (1-based). Optimistic. */
     reorderTasks: (items: { id: string; child_order: number }[]) => Promise<boolean>;
-    completeTask: (taskId: string) => Promise<void>;
+    completeTask: (taskId: string) => Promise<boolean>;
     reopenTask: (taskId: string) => Promise<void>;
     deleteTask: (taskId: string) => Promise<void>;
     createTaskComment: (taskId: string, content: string) => Promise<void>;
@@ -394,8 +394,11 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [handleApiError]);
 
-    const completeTask = useCallback(async (taskId: string) => {
-        if (!isConfiguredRef.current) return;
+    const completeTask = useCallback(async (taskId: string): Promise<boolean> => {
+        if (!isConfiguredRef.current) {
+            setError('Todoist is not connected — reconnect in Settings.');
+            return false;
+        }
         // Capture recurrence-ness *before* the await so we know whether to drop the cache
         // entry. We use `item_close` (not `item_complete`): it does exactly what the official
         // Todoist clients do when you check a task off — regular tasks are completed, and
@@ -421,8 +424,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             } else {
                 setTasks((prev) => prev.filter((t) => t.id !== taskId));
             }
+            return true;
         } catch (e) {
             handleApiError(e, 'Failed to complete task');
+            return false;
         }
     }, [handleApiError, refreshTasks]);
 

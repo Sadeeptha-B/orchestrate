@@ -48,20 +48,20 @@ export function HabitInstanceCard() {
 
     const handleComplete = completeInstance;
 
-    const handleSkip = (instance: TodaysHabitInstance) => {
+    const handleSkip = async (instance: TodaysHabitInstance) => {
         const nowISO = new Date().toISOString();
-        dispatch({ type: 'SKIP_HABIT_INSTANCE', instanceId: instance.id, now: nowISO });
+        if (!instance.todoistTaskId) {
+            dispatch({ type: 'SKIP_HABIT_INSTANCE', instanceId: instance.id, now: nowISO });
+            return;
+        }
         // v6.4: Todoist has no native "skip" semantic — completion looks the same as a
         // done. Post a comment first so the skip is traceable in Todoist's own task
         // history, then complete the occurrence so its recurrence engine advances.
         // The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
-        if (!instance.todoistTaskId) return;
-        createTaskComment(instance.todoistTaskId, `Skipped via Orchestrate on ${plan.date}`).catch((err) => {
-            console.error(`[habits] skip: Todoist comment on ${instance.todoistTaskId} failed:`, err);
-        });
-        completeTask(instance.todoistTaskId).catch((err) => {
-            console.error(`[habits] skip: Todoist completion on ${instance.todoistTaskId} failed:`, err);
-        });
+        await createTaskComment(instance.todoistTaskId, `Skipped via Orchestrate on ${plan.date}`);
+        const completed = await completeTask(instance.todoistTaskId);
+        if (!completed) return;
+        dispatch({ type: 'SKIP_HABIT_INSTANCE', instanceId: instance.id, now: nowISO });
     };
 
     const renderRow = (i: TodaysHabitInstance) => {
@@ -79,11 +79,10 @@ export function HabitInstanceCard() {
         return (
             <li
                 key={i.id}
-                className={`px-1.5 py-1 rounded transition-colors ${
-                    isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
-                    : isTerminal || isMissed ? 'opacity-60'
-                    : ''
-                }`}
+                className={`px-1.5 py-1 rounded transition-colors ${isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
+                        : isTerminal || isMissed ? 'opacity-60'
+                            : ''
+                    }`}
             >
                 {/* Line 1: icon, title, pills, live timer */}
                 <div className="flex items-center gap-1.5">

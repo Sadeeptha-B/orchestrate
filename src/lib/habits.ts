@@ -131,6 +131,23 @@ export function habitInSeasonScope(habit: Habit, activeSeasonId: string | null):
 }
 
 /**
+ * Active habits whose recurrence matches `dateISO` and whose season scope matches the active
+ * season. Optional `kind` narrows the result to one lifecycle kind.
+ */
+export function habitsInScopeForDate(args: {
+    life: LifeContext;
+    dateISO: string;
+    kind?: HabitKind;
+}): Habit[] {
+    const { life, dateISO, kind } = args;
+    return life.habits.filter((habit) => {
+        if (!habit.active) return false;
+        if (kind && habit.kind !== kind) return false;
+        return habitMatchesDate(habit, dateISO) && habitInSeasonScope(habit, life.activeSeasonId);
+    });
+}
+
+/**
  * v6.7: compute today's micro-gap instances — the no-Todoist counterpart to
  * `computeTodaysHabitInstances`. Filters active 'micro-gap' habits whose recurrence + season
  * scope match today. Emits untimed, non-Todoist instances; the repeatable lifecycle
@@ -147,15 +164,9 @@ export function computeTodaysMicroGapInstances(args: {
 }): TodaysHabitInstance[] {
     const { life, plan, taskCaps } = args;
     const dateISO = plan.date;
-    const activeSeasonId = life.activeSeasonId;
     const out: TodaysHabitInstance[] = [];
 
-    for (const habit of life.habits) {
-        if (!habit.active) continue;
-        if (habit.kind !== 'micro-gap') continue;
-        if (!habitMatchesDate(habit, dateISO)) continue;
-        if (!habitInSeasonScope(habit, activeSeasonId)) continue;
-
+    for (const habit of habitsInScopeForDate({ life, dateISO, kind: 'micro-gap' })) {
         out.push({
             id: crypto.randomUUID(),
             habitId: habit.id,

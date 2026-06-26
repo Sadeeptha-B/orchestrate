@@ -8,7 +8,7 @@ import type {
 } from '../types';
 import type { TodoistActionsValue } from '../context/TodoistContext';
 import type { TodoistProject, TodoistTask } from '../hooks/useTodoist';
-import { habitMatchesDate, habitInSeasonScope } from './habits';
+import { habitsInScopeForDate } from './habits';
 import { minutesOfDay, timeToMinutes } from './time';
 
 const HABITS_PROJECT_NAME = 'Habits';
@@ -223,16 +223,11 @@ export function computeTodaysHabitInstances(args: {
 }): TodaysHabitInstance[] {
     const { life, plan, taskMap, now, taskCaps } = args;
     const dateISO = plan.date;
-    const activeSeasonId = life.activeSeasonId;
     const nowMinutes = minutesOfDay(now);
     const out: TodaysHabitInstance[] = [];
 
-    for (const habit of life.habits) {
-        if (!habit.active) continue;
-        if (habit.kind !== 'habit') continue; // v6.7: micro-gaps use computeTodaysMicroGapInstances (no Todoist).
+    for (const habit of habitsInScopeForDate({ life, dateISO, kind: 'habit' })) {
         if (!habit.todoistTaskId) continue;
-        if (!habitMatchesDate(habit, dateISO)) continue;
-        if (!habitInSeasonScope(habit, activeSeasonId)) continue;
 
         const task = taskMap.get(habit.todoistTaskId);
         if (!task || task.checked) continue;
@@ -344,8 +339,8 @@ export interface NeedsSyncHabitInfo {
  *    failed offline, a pre-v6.1 holdover, or a pre-v6.6 light-coherent habit that never synced).
  *  - `'missing-in-todoist'`: habit had a `todoistTaskId`, but the linked task is no
  *    longer present in `taskMap` (deleted out-of-band in Todoist). The check is gated
- *    by `taskMap.size > 0` so a not-yet-hydrated cache doesn't false-positive every
- *    habit during cold boot.
+ *    by explicit `tasksHydrated` so a not-yet-hydrated cache doesn't false-positive every
+ *    habit during cold boot, while an intentionally empty hydrated task list still counts.
  *
  * Pure read-only helper — the actual fix (create/update via `syncHabitToTodoist`) is
  * the caller's responsibility. Used by the central `ReconciliationProvider` for both
@@ -354,8 +349,9 @@ export interface NeedsSyncHabitInfo {
 export function findNeedsSyncHabits(args: {
     life: LifeContext;
     taskMap: Map<string, TodoistTask>;
+    tasksHydrated: boolean;
 }): NeedsSyncHabitInfo[] {
-    const { life, taskMap } = args;
+    const { life, taskMap, tasksHydrated } = args;
     const out: NeedsSyncHabitInfo[] = [];
     for (const habit of life.habits) {
         if (!habit.active) continue;
@@ -364,7 +360,7 @@ export function findNeedsSyncHabits(args: {
             out.push({ habit, reason: 'never-synced' });
             continue;
         }
-        if (taskMap.size > 0 && !taskMap.has(habit.todoistTaskId)) {
+        if (tasksHydrated && !taskMap.has(habit.todoistTaskId)) {
             out.push({ habit, reason: 'missing-in-todoist' });
         }
     }
@@ -387,15 +383,10 @@ export function findOverdueHabits(args: {
     dateISO: string;
 }): OverdueHabitInfo[] {
     const { life, taskMap, dateISO } = args;
-    const activeSeasonId = life.activeSeasonId;
     const out: OverdueHabitInfo[] = [];
 
-    for (const habit of life.habits) {
-        if (!habit.active) continue;
-        if (habit.kind !== 'habit') continue; // v6.7: micro-gaps have no Todoist task to bump.
+    for (const habit of habitsInScopeForDate({ life, dateISO, kind: 'habit' })) {
         if (!habit.todoistTaskId) continue;
-        if (!habitMatchesDate(habit, dateISO)) continue;
-        if (!habitInSeasonScope(habit, activeSeasonId)) continue;
 
         const task = taskMap.get(habit.todoistTaskId);
         if (!task || task.checked) continue;

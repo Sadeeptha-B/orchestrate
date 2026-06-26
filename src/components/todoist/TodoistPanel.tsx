@@ -304,20 +304,20 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
 
     // Wrap complete/delete to also update the day plan
     const handleCompleteTask = useCallback(
-        (taskId: string) => {
+        async (taskId: string) => {
             const linked = plan.linkedTasks.find((lt) => lt.todoistId === taskId);
             if (linked && !linked.completed) {
                 // Snapshot the title before Todoist removes it from active tasks
                 const title = tasks.find((t) => t.id === taskId)?.content;
                 dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: taskId, titleSnapshot: title });
             }
-            // If this task backs a habit instance, keep the Habits surface in sync — mirror
-            // HabitInstanceCard.handleComplete so completing here flips the instance to 🎉.
             const instanceId = habitInstanceByTodoistId.get(taskId);
-            if (instanceId) {
+            const completed = await completeTask(taskId);
+            // If this task backs a habit instance, keep the Habits surface in sync only after the
+            // recurring Todoist occurrence actually advanced.
+            if (instanceId && completed) {
                 dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId, now: new Date().toISOString() });
             }
-            completeTask(taskId);
         },
         [completeTask, plan.linkedTasks, tasks, dispatch, habitInstanceByTodoistId],
     );
