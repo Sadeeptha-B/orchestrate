@@ -449,7 +449,7 @@ type Action =
     | { type: 'TOGGLE_HABIT_ACTIVE'; habitId: string }
     | { type: 'PRUNE_TODAYS_HABITS' }
     | { type: 'PRUNE_STALE_HABIT_INSTANCES'; instanceIds: string[] }
-    | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[] }
+    | { type: 'IMPORT_BACKUP'; settings?: AppSettings; life?: LifeContext; history?: SavedDayPlan[]; currentDay?: DayPlan }
     // ---- True Rest cue customization ----
     | { type: 'ADD_REST_CUE'; cue: Omit<RestCue, 'id'> }
     | { type: 'UPDATE_REST_CUE'; cue: RestCue }
@@ -1342,70 +1342,46 @@ function reducer(state: State, action: Action): State {
         }
 
         case 'IMPORT_BACKUP': {
+            // Authoritative restore: each slice present in the backup *replaces* the local one
+            // (the backup is the source of truth — recovery means "make this device look like the
+            // backup", not "merge into whatever is here"). Absent slices are left untouched, so a
+            // partial backup only restores what it carries. The UI confirms before dispatching when
+            // local data exists. Import is schema-guarded upstream; plans are migrated forward.
             const next: State = { ...state };
             if (action.settings) {
-                next.settings = withSettingsDefaults({ ...state.settings, ...action.settings });
+                next.settings = withSettingsDefaults(action.settings);
             }
             if (action.life) {
-                // Merge by id — never overwrite existing entries; append new ones. The import is
-                // schema-guarded in DataManagement (floor → current); life's only 7.4 addition is
-                // engagementHistory (defaulted below), and saved plans are migrated via migrateSavedPlan.
-                const incomingSeasons = Array.isArray(action.life.seasons) ? action.life.seasons : [];
-                const incomingHabits = Array.isArray(action.life.habits) ? action.life.habits : [];
-                const incomingBacklog = Array.isArray(action.life.backlog) ? action.life.backlog : [];
-                const incomingTemplates = Array.isArray(action.life.sessionTemplates)
-                    ? action.life.sessionTemplates
-                    : [];
-                const incomingRestCues = Array.isArray(action.life.restCues)
-                    ? action.life.restCues
-                    : undefined;
-                const incomingEngagement = Array.isArray(action.life.engagementHistory)
-                    ? action.life.engagementHistory
-                    : [];
-                const existingSeasonIds = new Set(state.life.seasons.map((s) => s.id));
-                const existingHabitIds = new Set(state.life.habits.map((h) => h.id));
-                const existingBacklogIds = new Set((state.life.backlog ?? []).map((e) => e.id));
-                const existingTemplateIds = new Set((state.life.sessionTemplates ?? []).map((t) => t.id));
-                const existingEngagementIds = new Set((state.life.engagementHistory ?? []).map((r) => r.id));
-                const mergedSeasons = [
-                    ...state.life.seasons,
-                    ...incomingSeasons.filter((s) => !existingSeasonIds.has(s.id)),
-                ];
+                const seasons = Array.isArray(action.life.seasons) ? action.life.seasons : [];
                 const importedActiveSeasonId =
                     typeof action.life.activeSeasonId === 'string' ? action.life.activeSeasonId : null;
                 next.life = {
-                    seasons: mergedSeasons,
-                    habits: [
-                        ...state.life.habits,
-                        ...incomingHabits.filter((h) => !existingHabitIds.has(h.id)),
-                    ],
-                    activeSeasonId: state.life.activeSeasonId
-                        ?? (importedActiveSeasonId && mergedSeasons.some((s) => s.id === importedActiveSeasonId)
+                    seasons,
+                    habits: Array.isArray(action.life.habits) ? action.life.habits : [],
+                    activeSeasonId:
+                        importedActiveSeasonId && seasons.some((s) => s.id === importedActiveSeasonId)
                             ? importedActiveSeasonId
-                            : null),
-                    restCues: state.life.restCues ?? incomingRestCues,
-                    backlog: [
-                        ...(state.life.backlog ?? []),
-                        ...incomingBacklog.filter((e) => !existingBacklogIds.has(e.id)),
-                    ],
-                    sessionTemplates: [
-                        ...(state.life.sessionTemplates ?? []),
-                        ...incomingTemplates.filter((t) => !existingTemplateIds.has(t.id)),
-                    ],
-                    // v7.4 Phase 2: preserve the local archive; merge imported records by id, then prune.
-                    engagementHistory: pruneEngagementHistory([
-                        ...(state.life.engagementHistory ?? []),
-                        ...incomingEngagement.filter((r) => !existingEngagementIds.has(r.id)),
-                    ]),
+                            : null,
+                    restCues: Array.isArray(action.life.restCues) ? action.life.restCues : undefined,
+                    backlog: Array.isArray(action.life.backlog) ? action.life.backlog : [],
+                    sessionTemplates: Array.isArray(action.life.sessionTemplates)
+                        ? action.life.sessionTemplates
+                        : [],
+                    // Replace the archive with the backup's, then bound it to its rolling window.
+                    engagementHistory: pruneEngagementHistory(action.life.engagementHistory),
                 };
             }
             if (action.history) {
-                const existing = new Set(state.history.map((h) => h.savedAt));
-                const currentHistory = action.history.filter(isCurrentSavedPlan).map(migrateSavedPlan);
-                next.history = [
-                    ...state.history,
-                    ...currentHistory.filter((h) => !existing.has(h.savedAt)),
-                ];
+                next.history = action.history.filter(isCurrentSavedPlan).map(migrateSavedPlan);
+            }
+            if (action.currentDay) {
+                // v2 backups carry the live working day; restore it as today's plan, re-dated so it
+                // survives the cold-start freshness gate and is the active day on reload.
+                const migrated = stripPlanMarkers(
+                    migrateToCurrent(action.currentDay as unknown as Record<string, unknown>, 'plan'),
+                );
+                next.plan = { ...migrated, date: todayISO() };
+                next.editingStep = null;
             }
             return next;
         }

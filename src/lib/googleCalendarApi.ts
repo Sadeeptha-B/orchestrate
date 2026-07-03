@@ -62,6 +62,18 @@ export async function createCalendar(token: string, summary: string): Promise<{ 
     return { id: data.id };
 }
 
+/**
+ * Rename an existing calendar (PATCH its `summary`). Used when the user edits the Orchestrate
+ * calendar name — renames the linked calendar in place rather than creating a duplicate. Requires
+ * owner/writer access on the calendar (the calendar.app.created scope covers app-created ones).
+ */
+export async function patchCalendar(token: string, calendarId: string, summary: string): Promise<void> {
+    await calFetch<void>(token, `/calendars/${encodeURIComponent(calendarId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ summary }),
+    });
+}
+
 /** List the user's calendars (requires the calendarlist.readonly scope). */
 export async function listCalendars(token: string): Promise<GoogleCalendarListEntry[]> {
     const data = await calFetch<CalendarListResponse>(token, '/users/me/calendarList');

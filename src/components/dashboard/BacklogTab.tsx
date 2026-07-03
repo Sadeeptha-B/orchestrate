@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
-import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { totalEngagedSeconds } from '../../lib/engagement';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -10,15 +9,20 @@ import { Button } from '../ui/Button';
 /**
  * v6.2: list view of `life.backlog` shown inside the `HistorySidebar`'s Backlog tab.
  * Each row: intention title + task-count + archived-from date + reason chip, a collapsible
- * task list, and per-row "Bring to today" and "Discard" affordances. v7.8: discard confirms
- * inline at the bottom of the sidebar (no modal); pending tasks expand in place.
+ * task list, and per-row "Bring to today" and "Discard" affordances. v7.9: discard
+ * confirmation is owned by `HistorySidebar` and pinned at the bottom of the sidebar; this
+ * component just signals which entry the user wants to discard via `onRequestDiscard`.
  */
-export function BacklogTab() {
+export function BacklogTab({
+    pendingDiscardId,
+    onRequestDiscard,
+}: {
+    pendingDiscardId: string | null;
+    onRequestDiscard: (id: string | null) => void;
+}) {
     const { life, plan, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
-    const { discardFromBacklog } = useIntentionRemoval();
     const navigate = useNavigate();
-    const [pendingDiscardId, setPendingDiscardId] = useState<string | null>(null);
     const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
     const entries = useMemo(
@@ -51,10 +55,6 @@ export function BacklogTab() {
         if (!plan.setupComplete) navigate('/setup', { state: { fromWelcome: true } });
     };
 
-    const pendingEntry = pendingDiscardId
-        ? entries.find((e) => e.id === pendingDiscardId) ?? null
-        : null;
-
     if (entries.length === 0) {
         return (
             <p className="text-xs text-text-light">
@@ -79,8 +79,12 @@ export function BacklogTab() {
                     .join('\n');
                 const titleFor = (id: string) => taskMap.get(id)?.content ?? entry.taskSnapshots?.[id] ?? id;
                 const isExpanded = expandedIds.has(entry.id);
+                const isPendingDiscard = pendingDiscardId === entry.id;
                 return (
-                    <Card key={entry.id} className="!p-3">
+                    <Card
+                        key={entry.id}
+                        className={`!p-3 transition-shadow ${isPendingDiscard ? 'ring-1 ring-red-400/50' : ''}`}
+                    >
                         <div className="space-y-2">
                             <div className="min-w-0">
                                 <p className="text-sm font-medium truncate" title={entry.intention.title}>
@@ -139,7 +143,7 @@ export function BacklogTab() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => setPendingDiscardId(entry.id)}
+                                    onClick={() => onRequestDiscard(entry.id)}
                                 >
                                     Discard
                                 </Button>
@@ -148,30 +152,6 @@ export function BacklogTab() {
                     </Card>
                 );
             })}
-
-            {/* v7.8: inline discard confirmation — replaces the former modal so it reads in place. */}
-            {pendingEntry && (
-                <div className="sticky bottom-0 rounded-lg border border-red-400/40 bg-card p-3 shadow-sm space-y-2">
-                    <p className="text-xs text-text-light">
-                        Discard <strong className="text-text">{pendingEntry.intention.title}</strong>? Its linked
-                        Todoist tasks that are currently scheduled will be unscheduled.
-                    </p>
-                    <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => setPendingDiscardId(null)}>
-                            Cancel
-                        </Button>
-                        <Button
-                            size="sm"
-                            onClick={() => {
-                                void discardFromBacklog(pendingEntry.id);
-                                setPendingDiscardId(null);
-                            }}
-                        >
-                            Discard
-                        </Button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

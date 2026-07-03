@@ -31,7 +31,7 @@ export function GoogleCalendarSetup() {
     const { secret: storedSecret } = useAppSecret();
     const { isConfigured, isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error } =
         useGoogleCalendarData();
-    const { setAppSecret, connect, disconnect, refreshCalendars, checkConnection, ensureOrchestrateCalendar, recreateOrchestrateCalendar } =
+    const { setAppSecret, connect, disconnect, refreshCalendars, checkConnection, ensureOrchestrateCalendar, recreateOrchestrateCalendar, renameOrchestrateCalendar } =
         useGoogleCalendarActions();
 
     const orchestrateName = settings.orchestrateCalendarName ?? 'Orchestrate';
@@ -42,6 +42,18 @@ export function GoogleCalendarSetup() {
     const [secretDraft, setSecretDraft] = useState('');
     const [editingSecret, setEditingSecret] = useState(false);
     const hasSecret = isConfigured;
+
+    // The name is a local draft so we don't hit the Google API on every keystroke; committing it
+    // (blur / Enter) renames the linked calendar in place (or relinks to a same-named one).
+    const [nameDraft, setNameDraft] = useState(orchestrateName);
+    useEffect(() => {
+        setNameDraft(orchestrateName);
+    }, [orchestrateName]);
+    const commitName = () => {
+        const next = nameDraft.trim();
+        if (!next || next === orchestrateName) return;
+        void renameOrchestrateCalendar(next);
+    };
 
     const [searchParams, setSearchParams] = useSearchParams();
 
@@ -253,10 +265,16 @@ export function GoogleCalendarSetup() {
                                 <input
                                     id="orch-cal-name"
                                     type="text"
-                                    value={orchestrateName}
-                                    onChange={(e) =>
-                                        dispatch({ type: 'UPDATE_SETTINGS', settings: { orchestrateCalendarName: e.target.value } })
-                                    }
+                                    value={nameDraft}
+                                    onChange={(e) => setNameDraft(e.target.value)}
+                                    onBlur={commitName}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.currentTarget.blur();
+                                        } else if (e.key === 'Escape') {
+                                            setNameDraft(orchestrateName);
+                                        }
+                                    }}
                                     placeholder="Orchestrate"
                                     className={inputClass}
                                 />
@@ -278,7 +296,7 @@ export function GoogleCalendarSetup() {
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    void recreateOrchestrateCalendar(orchestrateName);
+                                                    void recreateOrchestrateCalendar(nameDraft.trim() || orchestrateName);
                                                 }}
                                                 className="ml-2 text-text-light underline hover:text-accent cursor-pointer"
                                             >
@@ -288,7 +306,7 @@ export function GoogleCalendarSetup() {
                                     ) : (
                                         <button
                                             type="button"
-                                            onClick={() => void ensureOrchestrateCalendar(orchestrateName)}
+                                            onClick={() => void ensureOrchestrateCalendar(nameDraft.trim() || orchestrateName)}
                                             className="text-accent underline hover:text-accent/80 cursor-pointer"
                                         >
                                             Create the Orchestrate calendar now

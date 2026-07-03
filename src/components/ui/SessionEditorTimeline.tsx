@@ -11,11 +11,14 @@ import {
 } from '../../lib/timeline';
 import { eventTimeRange, packExternalEvents } from '../../lib/timelineEvents';
 import type { CalendarEvent } from '../../lib/googleCalendarApi';
+import './sessionTimelineBar.css';
 
 const SNAP_MINUTES = 15;
 const MIN_DURATION_MINUTES = 15;
 /** Pixels of horizontal travel below which a pointer interaction counts as a click (open editor). */
 const CLICK_SLOP_PX = 4;
+/** Pixel height of one row in the calendar-event chip rail above the editor track. */
+const EVENT_CHIP_ROW_H = 18;
 
 interface SessionEditorTimelineProps {
     /** The session slots being edited (controlled). */
@@ -34,8 +37,9 @@ interface SessionEditorTimelineProps {
     blocklistOptions?: string[];
     /** v7.7: session ids whose blocklist is locked (confirmed at start, until the session ends). */
     lockedSessionIds?: Set<string>;
-    /** v7.9: read-only external (Google) calendar events, shown as faded context bars behind the
-     *  editable blocks so meetings inform where sessions go. Requires `dateISO` to resolve the day. */
+    /** v7.9: read-only external (Google) calendar events, shown as chips in a rail above the editable
+     *  track so meetings inform where sessions go without overlapping the editing surface. Requires
+     *  `dateISO` to resolve the day. */
     externalEvents?: CalendarEvent[];
     /** Local date being edited ("YYYY-MM-DD") — only needed to place `externalEvents`. */
     dateISO?: string;
@@ -73,13 +77,13 @@ export function SessionEditorTimeline({
     const dayEnd = timelineEndMinutes ?? DEFAULT_TIMELINE_END_MINUTES;
     const totalMinutes = dayEnd - dayStart;
 
-    // Read-only calendar events placed by the same percent-of-day math as the read-only bar, rendered
-    // as faded full-height bars *behind* the editable blocks (pointer-events-none, so drawing a session
-    // over a meeting still works). They show through the translucent session blocks for context.
-    const placedEvents = useMemo(
+    // Read-only calendar events placed by the same percent-of-day math as the read-only bar. They all
+    // live in a chip rail *above* the editable track (row-packed so time-overlapping ones stack), so
+    // nothing covers the editing surface and every meeting stays readable.
+    const { placed: placedEvents, rowCount: eventRowCount } = useMemo(
         () => (dateISO && externalEvents?.length
-            ? packExternalEvents(externalEvents, dateISO, dayStart, dayEnd, totalMinutes).placed
-            : []),
+            ? packExternalEvents(externalEvents, dateISO, dayStart, dayEnd, totalMinutes)
+            : { placed: [], rowCount: 0 }),
         [externalEvents, dateISO, dayStart, dayEnd, totalMinutes],
     );
 
@@ -194,6 +198,36 @@ export function SessionEditorTimeline({
 
     return (
         <div className="relative space-y-1 pt-1 select-none">
+            {/* Calendar-event rail — every external event surfaces here as a chip, kept entirely above
+                the editable track so nothing overlaps the editing surface. Time-overlapping events
+                stack onto separate rows; hover focuses a chip (raised + expanded + wrapped). */}
+            {placedEvents.length > 0 && totalMinutes > 0 && (
+                <div className="relative" style={{ height: eventRowCount * EVENT_CHIP_ROW_H }}>
+                    {placedEvents.map(({ event, left, width, row }) => {
+                        const swatch = event.color ?? '#6b7280';
+                        return (
+                            <div
+                                key={`evchip-${event.calendarId}-${event.id}`}
+                                className="tl-event-chip rounded-md overflow-hidden"
+                                style={{
+                                    top: row * EVENT_CHIP_ROW_H,
+                                    zIndex: 2 + row, // later (more-overlapped) chips paint on top
+                                    ['--ml' as string]: `${left}%`,
+                                    ['--w' as string]: `${width}%`,
+                                    ['--ev' as string]: swatch,
+                                } as React.CSSProperties}
+                                title={`${event.summary} · ${eventTimeRange(event)}`}
+                            >
+                                <span className="tl-event-label px-1 py-0.5 text-[9px] font-medium leading-tight">
+                                    {event.summary}
+                                    <span className="tl-event-time"> · {eventTimeRange(event)}</span>
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
             {/* Hour labels */}
             <div className="relative h-5">
                 {hourMarks.map((m) => (
@@ -223,31 +257,6 @@ export function SessionEditorTimeline({
                         style={{ left: `${minutesToPct(m, dayStart, totalMinutes)}%` }}
                     />
                 ))}
-
-                {/* Read-only calendar events — faded context bars behind the editable blocks. */}
-                {placedEvents.map(({ event, left, width }) => {
-                    const color = event.color ?? '#6b7280';
-                    return (
-                        <div
-                            key={`evfill-${event.calendarId}-${event.id}`}
-                            className="absolute top-0 bottom-0 rounded-sm overflow-hidden pointer-events-none"
-                            style={{
-                                left: `${left}%`,
-                                width: `${width}%`,
-                                backgroundColor: `${color}24`,
-                                borderLeft: `2px solid ${color}`,
-                            }}
-                        >
-                            <span
-                                className="block px-1 pt-0.5 text-[9px] font-medium leading-tight truncate"
-                                style={{ color }}
-                            >
-                                {event.summary}
-                                <span className="text-text-light/70"> · {eventTimeRange(event)}</span>
-                            </span>
-                        </div>
-                    );
-                })}
 
                 {/* Live "create" ghost */}
                 {drag?.kind === 'create' && (() => {
@@ -362,7 +371,7 @@ export function SessionEditorTimeline({
 
             <p className="text-[10px] text-text-light">
                 Drag an empty area to add a session · drag a block to move · drag its edges to resize · click to rename or delete
-                {placedEvents.length > 0 && ' · faded bars are your calendar events'}
+                {placedEvents.length > 0 && ' · hover the calendar events above to read them'}
             </p>
         </div>
     );
