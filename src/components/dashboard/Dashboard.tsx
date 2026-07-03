@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
+import { useDayCalendarEvents } from '../../hooks/useDayCalendarEvents';
+import { useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
 import { CurrentSession, SessionTimeline, AnytimeTray } from './SessionTimeline';
 import { SessionEditorTimeline } from '../ui/SessionEditorTimeline';
 import { HistorySidebar, type HistoryTab } from './HistorySidebar';
@@ -60,6 +62,10 @@ export function Dashboard() {
     // v6.7: keep `plan.todaysHabits` in sync with the library while on the dashboard, so a habit
     // created/edited/deleted in /habits is reflected without re-running the wizard.
     useTodaysHabitsSync();
+
+    // Calendar context for the in-dashboard "Adjust day" editor — same overlay the wizard's Step 1 uses.
+    const { events: externalEvents } = useDayCalendarEvents(plan.date);
+    const { isConnected: gcalConnected } = useGoogleCalendarData();
 
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
@@ -151,16 +157,16 @@ export function Dashboard() {
                 {/* Left side panel — saved sessions */}
                 {panelOpen && (
                     <aside
-                        className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-y-auto scrollbar-subtle relative"
+                        className="flex-shrink-0 border-r border-border bg-subtle/50 overflow-hidden relative flex flex-col"
                         style={{ width: panelWidth }}
                     >
                         {/* Drag handle — right edge */}
                         <div
                             onMouseDown={onMouseDown}
-                            className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors"
+                            className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-accent/20 active:bg-accent/30 transition-colors z-10"
                         />
-                        <div className="p-5 pt-6">
-                            <div className="flex items-center justify-end mb-3">
+                        <div className="p-5 pt-6 flex flex-col flex-1 min-h-0">
+                            <div className="flex items-center justify-end mb-3 flex-shrink-0">
                                 <button
                                     onClick={() => setPanelOpen(false)}
                                     className="text-text-light hover:text-text transition-colors text-lg leading-none cursor-pointer"
@@ -240,6 +246,8 @@ export function Dashboard() {
                                             timelineEndMinutes={settings.timelineEndMinutes}
                                             blocklistOptions={settings.blocklists ?? []}
                                             lockedSessionIds={lockedSessionIds}
+                                            externalEvents={gcalConnected ? externalEvents : undefined}
+                                            dateISO={plan.date}
                                         />
                                         <p className="mt-2 text-[11px] text-text-light">
                                             Drag to add a block, drag a block to move, drag edges to resize, click to rename or delete.

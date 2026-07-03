@@ -16,6 +16,7 @@ import {
     GoogleAuthError,
     listCalendars,
     listEvents,
+    patchCalendar,
     patchCalendarEvent,
     type CalendarEvent,
     type CalendarEventInput,
@@ -82,6 +83,13 @@ export interface GoogleCalendarActionsValue {
     ensureOrchestrateCalendar: (name: string) => Promise<string | null>;
     /** Force creation of a fresh app-managed calendar, ignoring the stored id / same-named reuse. */
     recreateOrchestrateCalendar: (name: string) => Promise<string | null>;
+    /**
+     * v7.8: persist a new Orchestrate calendar name and reconcile it with Google. When a calendar is
+     * already linked, this **renames that calendar in place** (no duplicate). If a *different* writable
+     * calendar already carries the new name, it relinks to that one instead of renaming. When nothing is
+     * linked yet, it just stores the name (used as the default at creation). Returns the linked id (or null).
+     */
+    renameOrchestrateCalendar: (name: string) => Promise<string | null>;
 }
 
 const GoogleCalendarDataContext = createContext<GoogleCalendarDataValue | null>(null);
@@ -361,6 +369,50 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         [provisionOrchestrateCalendar],
     );
 
+    const renameOrchestrateCalendar = useCallback(
+        async (rawName: string): Promise<string | null> => {
+            const name = rawName.trim();
+            if (!name) return settings.orchestrateCalendarId ?? null;
+            // Always persist the chosen name (it's the default at creation time when nothing's linked).
+            if (name !== settings.orchestrateCalendarName) {
+                dispatch({ type: 'UPDATE_SETTINGS', settings: { orchestrateCalendarName: name } });
+            }
+            const id = settings.orchestrateCalendarId;
+            // Nothing linked yet, or the linked id has vanished → leave provisioning to ensureOrchestrateCalendar.
+            if (!id || !availableCalendars.some((c) => c.id === id)) return id ?? null;
+            // Already named that → nothing to do against Google.
+            if (availableCalendars.find((c) => c.id === id)?.name === name) return id;
+            // Prefer relinking to a *different* writable calendar that already carries this name (avoids
+            // a duplicate name in the account) over renaming the linked one.
+            const sameNamed = availableCalendars.find(
+                (c) => c.id !== id && c.name === name && (c.accessRole === 'owner' || c.accessRole === 'writer'),
+            );
+            if (sameNamed) {
+                dispatch({ type: 'UPDATE_SETTINGS', settings: { orchestrateCalendarId: sameNamed.id } });
+                return sameNamed.id;
+            }
+            const token = await getAccessToken();
+            if (!token) return id;
+            try {
+                await patchCalendar(token, id, name);
+                await refreshCalendars();
+                return id;
+            } catch (e) {
+                handleError(e, 'Failed to rename the Orchestrate calendar');
+                return id;
+            }
+        },
+        [
+            settings.orchestrateCalendarId,
+            settings.orchestrateCalendarName,
+            availableCalendars,
+            dispatch,
+            getAccessToken,
+            refreshCalendars,
+            handleError,
+        ],
+    );
+
     useEffect(() => {
         tokenRef.current = null;
         setConnecting(false);
@@ -413,6 +465,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             deleteEvent,
             ensureOrchestrateCalendar,
             recreateOrchestrateCalendar,
+            renameOrchestrateCalendar,
         }),
         [
             setAppSecret,
@@ -427,6 +480,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             deleteEvent,
             ensureOrchestrateCalendar,
             recreateOrchestrateCalendar,
+            renameOrchestrateCalendar,
         ],
     );
 

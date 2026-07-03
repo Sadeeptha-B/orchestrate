@@ -7,6 +7,7 @@ import { Card } from './ui/Card';
 import { Logo } from './ui/Logo';
 import { HeaderControls } from './ui/HeaderControls';
 import { QuickStart } from './QuickStart';
+import { RestoreModal } from './RestoreModal';
 import { WIZARD_STEPS, TOTAL_STEPS } from '../data/wizardSteps';
 import { findActiveSeason } from '../lib/seasons';
 import { getActiveHabits, getAnchorHabits } from '../lib/habits';
@@ -23,6 +24,7 @@ export function Welcome() {
     const navigate = useNavigate();
     const aboutTriggerRef = useRef<(() => void) | null>(null);
     const [quickStartOpen, setQuickStartOpen] = useState(false);
+    const [restoreOpen, setRestoreOpen] = useState(false);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
@@ -228,7 +230,7 @@ export function Welcome() {
                         </p>
                     )}
                     <button
-                        onClick={() => navigate('/settings?tab=data')}
+                        onClick={() => setRestoreOpen(true)}
                         className="text-xs text-accent/80 hover:text-accent hover:underline cursor-pointer"
                     >
                         Restore from a backup →
@@ -237,6 +239,7 @@ export function Welcome() {
             </div>
 
             <QuickStart open={quickStartOpen} onClose={() => setQuickStartOpen(false)} />
+            <RestoreModal open={restoreOpen} onClose={() => setRestoreOpen(false)} />
         </div>
     );
 }

@@ -1,68 +1,13 @@
 import { useRef, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useDataImport } from '../../hooks/useDataImport';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { downloadJSON } from '../../lib/download';
-import { SCHEMA_VERSION, isSupportedSchemaVersion } from '../../lib/schema';
-import type { AppSettings, LifeContext, SavedDayPlan } from '../../types';
-
-interface FullBackup {
-    settings?: AppSettings;
-    life?: LifeContext;
-    history?: SavedDayPlan[];
-    _backupVersion?: number;
-    _schemaVersion?: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
-}
-
-function validateSessions(data: unknown): SavedDayPlan[] | null {
-    const arr = Array.isArray(data) ? data : [data];
-    for (const item of arr) {
-        if (
-            !item ||
-            typeof item !== 'object' ||
-            typeof (item as SavedDayPlan).savedAt !== 'string' ||
-            typeof (item as SavedDayPlan).label !== 'string' ||
-            !(item as SavedDayPlan).plan ||
-            !Array.isArray((item as SavedDayPlan).plan?.intentions) ||
-            // Schema guard: accept saved plans within the supported range (floor → current).
-            !isSupportedSchemaVersion((item as unknown as { plan: { _schemaVersion?: number } }).plan?._schemaVersion)
-        ) {
-            return null;
-        }
-    }
-    return arr as SavedDayPlan[];
-}
-
-function validateBackup(data: unknown): FullBackup | null {
-    if (!isRecord(data) || (!data.settings && !data.life && !data.history)) {
-        return null;
-    }
-    // Schema guard: accept backups within the supported range (floor → current).
-    if (!isSupportedSchemaVersion(data._schemaVersion)) {
-        return null;
-    }
-    if (data.settings !== undefined && !isRecord(data.settings)) {
-        return null;
-    }
-    if (data.life !== undefined && !isRecord(data.life)) {
-        return null;
-    }
-    if (data.history !== undefined && validateSessions(data.history) === null) {
-        return null;
-    }
-    return {
-        settings: data.settings as AppSettings | undefined,
-        life: data.life as LifeContext | undefined,
-        history: data.history as SavedDayPlan[] | undefined,
-        _backupVersion: typeof data._backupVersion === 'number' ? data._backupVersion : undefined,
-        _schemaVersion: typeof data._schemaVersion === 'number' ? data._schemaVersion : undefined,
-    };
-}
+import { SCHEMA_VERSION } from '../../lib/schema';
+import type { FullBackup } from '../../lib/dataImport';
+import type { DayPlan } from '../../types';
 
 interface DataManagementProps {
     /** Optional handler to surface the Saved Sessions sidebar (closes modal + reveals panel). */
@@ -70,37 +15,52 @@ interface DataManagementProps {
 }
 
 export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
-    const { settings, life, history, dispatch } = useDayPlan();
-    const [importError, setImportError] = useState<string | null>(null);
-    const [importInfo, setImportInfo] = useState<string | null>(null);
-    const [showRestoreHint, setShowRestoreHint] = useState(false);
-    const sessionsInputRef = useRef<HTMLInputElement>(null);
+    const { settings, life, history, plan, dispatch } = useDayPlan();
+    const {
+        importError,
+        importInfo,
+        importedDayCount,
+        pendingBackup,
+        importDayPlanFile,
+        importBackupFile,
+        confirmBackupImport,
+        cancelBackupImport,
+        reset: resetImportStatus,
+    } = useDataImport();
+    const [resetInfo, setResetInfo] = useState<string | null>(null);
+    const dayPlanInputRef = useRef<HTMLInputElement>(null);
     const backupInputRef = useRef<HTMLInputElement>(null);
     const confirmResetDay = useConfirmModal<true>();
     const confirmResetAll = useConfirmModal<true>();
 
+    const showRestoreHint = (importedDayCount ?? 0) > 0;
+
     const handleResetDay = () => {
         dispatch({ type: 'RESET_DAY' });
-        setImportError(null);
-        setImportInfo("Today's plan has been cleared.");
-        setShowRestoreHint(false);
+        resetImportStatus();
+        setResetInfo("Today's plan has been cleared.");
     };
 
     const handleResetAll = () => {
         // Clear the Todoist cache too — it's keyed off the token we're about to wipe.
         try { localStorage.removeItem('orchestrate-todoist-cache'); } catch { /* ignore */ }
         dispatch({ type: 'RESET_ALL' });
-        setImportError(null);
-        setImportInfo('All data has been reset to defaults.');
-        setShowRestoreHint(false);
+        resetImportStatus();
+        setResetInfo('All data has been reset to defaults.');
     };
 
     const exportFullBackup = () => {
+        // v2: bundle the live working day so a backup captures "today" even before it's
+        // manually saved to history. Skip it when nothing's been entered yet.
+        const planHasContent = plan.intentions.length > 0 || plan.setupComplete;
         const payload: FullBackup = {
             settings,
             life,
             history,
-            _backupVersion: 1,
+            currentDay: planHasContent
+                ? ({ ...plan, _schemaVersion: SCHEMA_VERSION } as DayPlan)
+                : undefined,
+            _backupVersion: 2,
             _schemaVersion: SCHEMA_VERSION,
         };
         const stamp = new Date().toISOString().slice(0, 10);
@@ -111,75 +71,17 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
         downloadJSON(history, `orchestrate-all-sessions.json`);
     };
 
-    const handleSessionsImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setImportError(null);
-        setImportInfo(null);
-        setShowRestoreHint(false);
+    const handleDayPlanImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setResetInfo(null);
         const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            try {
-                const data = JSON.parse(reader.result as string);
-                const sessions = validateSessions(data);
-                if (!sessions) {
-                    setImportError('Invalid session file format.');
-                    return;
-                }
-                dispatch({ type: 'IMPORT_SESSIONS', sessions });
-                setImportInfo(`Imported ${sessions.length} session${sessions.length !== 1 ? 's' : ''}.`);
-                setShowRestoreHint(sessions.length > 0);
-            } catch {
-                setImportError('Could not parse the file as JSON.');
-            }
-        };
-        reader.readAsText(file);
+        if (file) importDayPlanFile(file);
         e.target.value = '';
     };
 
     const handleBackupImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setImportError(null);
-        setImportInfo(null);
-        setShowRestoreHint(false);
+        setResetInfo(null);
         const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            try {
-                const parsed = JSON.parse(reader.result as string) as unknown;
-                if (!isRecord(parsed)) {
-                    setImportError('File is not a recognised Orchestrate full backup.');
-                    return;
-                }
-                // Schema guard: refuse backups outside the supported range (floor → current).
-                if (!isSupportedSchemaVersion(parsed._schemaVersion)) {
-                    setImportError(
-                        `Backup is from an unsupported version (expected schema ${SCHEMA_VERSION} or a supported predecessor). Only supported backups can be imported.`,
-                    );
-                    return;
-                }
-                const data = validateBackup(parsed);
-                if (!data) {
-                    setImportError('Backup file is malformed or contains unsupported saved sessions.');
-                    return;
-                }
-                dispatch({
-                    type: 'IMPORT_BACKUP',
-                    settings: data.settings,
-                    life: data.life,
-                    history: data.history,
-                });
-                const parts: string[] = [];
-                if (data.settings) parts.push('settings');
-                if (data.life) parts.push('life');
-                if (data.history) parts.push(`${data.history.length} sessions`);
-                setImportInfo(`Imported: ${parts.join(', ')}`);
-                setShowRestoreHint(!!data.history && data.history.length > 0);
-            } catch {
-                setImportError('Could not parse the file as JSON.');
-            }
-        };
-        reader.readAsText(file);
+        if (file) importBackupFile(file);
         e.target.value = '';
     };
 
@@ -190,24 +92,24 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     Restore
                 </h4>
                 <p className="text-xs text-text-light">
-                    Moving from another browser or device? Restore your data here, then pick a session to use as today's plan from the Saved Sessions sidebar.
+                    Moving from another browser or device? Restore a Full Backup (settings, life, saved days, and the day you were working on) to make this device match the backup, or import just a single day plan into Saved Sessions.
                 </p>
                 <div className="flex flex-wrap gap-2">
                     <Button
                         variant="secondary"
                         size="sm"
                         onClick={() => backupInputRef.current?.click()}
-                        title="Import from a Full Backup file (merges, never overwrites)"
+                        title="Restore from a Full Backup file (replaces local data with the backup's)"
                     >
                         Import Backup
                     </Button>
                     <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => sessionsInputRef.current?.click()}
-                        title="Import a saved sessions JSON file"
+                        onClick={() => dayPlanInputRef.current?.click()}
+                        title="Import a single day plan (or an exported day plans file) into Saved Sessions"
                     >
-                        Import Sessions
+                        Import Day Plan
                     </Button>
                 </div>
             </div>
@@ -271,11 +173,11 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
             </div>
 
             <input
-                ref={sessionsInputRef}
+                ref={dayPlanInputRef}
                 type="file"
                 accept=".json"
                 className="hidden"
-                onChange={handleSessionsImport}
+                onChange={handleDayPlanImport}
             />
             <input
                 ref={backupInputRef}
@@ -288,8 +190,8 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
             {importError && (
                 <p className="text-xs text-red-500">{importError}</p>
             )}
-            {importInfo && (
-                <p className="text-xs text-success">{importInfo}</p>
+            {(importInfo ?? resetInfo) && (
+                <p className="text-xs text-success">{importInfo ?? resetInfo}</p>
             )}
             {showRestoreHint && (
                 <p className="text-xs text-text-light">
@@ -308,6 +210,24 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     )}
                 </p>
             )}
+
+            <ConfirmModal
+                open={pendingBackup !== null}
+                onClose={cancelBackupImport}
+                onConfirm={confirmBackupImport}
+                title="Restore from this backup?"
+                confirmLabel="Replace & Restore"
+            >
+                <p className="text-sm text-text-light mb-3">
+                    This <strong>replaces</strong> your current{' '}
+                    {pendingBackup?.summary.join(', ')} with the backup's. Local entries not in the
+                    backup are removed — this is a restore, not a merge.
+                </p>
+                <p className="text-sm text-text-light mb-4">
+                    Export a Full Backup first if you want to keep your current data. This cannot be
+                    undone.
+                </p>
+            </ConfirmModal>
 
             <ConfirmModal
                 open={confirmResetDay.value !== null}

@@ -78,9 +78,18 @@ matching the Dashboard), so seasons / habits / templates are reachable mid-wizar
 
 ### 8. Backlog QoL ([`BacklogTab.tsx`](../../../src/components/dashboard/BacklogTab.tsx))
 
-- **Inline discard confirmation.** The discard `ConfirmModal` is replaced by an inline confirm strip
-  (`sticky bottom-0`) at the foot of the backlog list — names the entry, Cancel / Discard, no modal pop-over.
-  Still routes through `useIntentionRemoval().discardFromBacklog` (unschedules linked Todoist tasks).
+- **Sidebar-pinned discard confirmation.** The discard `ConfirmModal` is replaced by an inline confirm
+  strip — names the entry, Cancel / Discard, no modal pop-over. The strip is **pinned at the bottom of
+  the sidebar**, outside the scrollable backlog list, so it stays anchored to the sidebar's bottom edge
+  regardless of list length or scroll position (an earlier `sticky bottom-0` strip *inside* the list
+  floated directly under the clicked card when the list was short). To achieve this the state and the
+  strip are **owned by [`HistorySidebar`](../../../src/components/dashboard/HistorySidebar.tsx)**: the
+  sidebar lays out as a flex column with a `flex-1` scrollable tab-content region and a `flex-shrink-0`
+  footer; the confirmation renders in that footer (backlog tab only) and routes through
+  `useIntentionRemoval().discardFromBacklog` (unschedules linked Todoist tasks). `BacklogTab` is now
+  controlled — it takes `pendingDiscardId` / `onRequestDiscard` props, signals which entry to discard,
+  and rings the pending card. The owning [`Dashboard`](../../../src/components/dashboard/Dashboard.tsx)
+  `aside` moved its scroll inward (`overflow-hidden` + flex column) so the footer can pin.
 - **Collapsible task list.** The "N pending" count is now a toggle that expands the actual pending task
   titles in place (live Todoist `taskMap` → `taskSnapshots` fallback).
 
@@ -97,13 +106,26 @@ longer renders the banner.
 ### 10. Calendar events on the session editor
 
 When Google Calendar is connected, [`SessionEditorTimeline`](../../../src/components/ui/SessionEditorTimeline.tsx)
-now renders that day's external events as **faded read-only context bars behind the editable blocks**
-(`pointer-events-none`, so drawing a session over a meeting still works) — essential context for deciding
-where sessions go. The event-positioning geometry (`packExternalEvents` / `eventWindowMinutes` /
-`eventTimeRange`) was **extracted from `SessionTimelineBar` into [`src/lib/timelineEvents.ts`](../../../src/lib/timelineEvents.ts)**
+surfaces that day's external events as read-only context — essential for deciding where sessions go. The
+event-positioning geometry (`packExternalEvents` / `eventWindowMinutes` / `eventTimeRange`) was
+**extracted from `SessionTimelineBar` into [`src/lib/timelineEvents.ts`](../../../src/lib/timelineEvents.ts)**
 so the read-only bar and the editor share one implementation. Step 1 fetches events via
 `useDayCalendarEvents(plan.date)` and passes them (plus `dateISO`) to the editor, gated on
 `useGoogleCalendarData().isConnected`.
+
+Events render as chips in a **dedicated rail above the editable track** — kept entirely off the editing
+surface so nothing overlaps the session blocks. The rail row-packs (`packExternalEvents`' `rowCount`),
+so time-overlapping events stack onto separate rows (`top: row * EVENT_CHIP_ROW_H`) and each stays
+individually readable; chips are hoverable (native `title` + the shared `.tl-event-*` hover-expand
+styling from [`sessionTimelineBar.css`](../../../src/components/ui/sessionTimelineBar.css), now imported
+by the editor too). This replaced an earlier attempt that drew events as faded full-height bars behind
+the blocks — they hid behind the (opaque-ish) session blocks and couldn't be hovered, defeating the
+"read the day" purpose.
+
+The same editor (and therefore the same calendar rail) is reused by the dashboard's **"Adjust day"**
+surface: [`Dashboard.tsx`](../../../src/components/dashboard/Dashboard.tsx) now also calls
+`useDayCalendarEvents(plan.date)` + `useGoogleCalendarData()` and passes `externalEvents` / `dateISO`
+into `SessionEditorTimeline`, so adjusting sessions on the dashboard shows the same context as the wizard.
 
 ### 11. Focus Mode — "Today's shape" session bar to the top of the picker
 
@@ -138,10 +160,14 @@ Renamed: `Step3Sessions.tsx` → `Step1Sessions.tsx`, `Step1Intentions.tsx` → 
 Changed: `src/hooks/useNotifications.ts`, `src/hooks/useHourlyCheckin.ts`, `src/lib/engagement.ts`,
 `src/types/index.ts`, `src/App.tsx`, `src/components/settings/SettingsPage.tsx`,
 `src/components/dashboard/Dashboard.tsx` (dropped inline nudge banner; passes cadence; wizard-entry
-comments), `src/components/wizard/Wizard.tsx`, `WizardLayout.tsx`, `src/data/wizardSteps.ts`,
-`src/lib/schema.ts` (bump + remap step), `src/components/dashboard/BacklogTab.tsx`,
-`src/components/wizard/Step1Sessions.tsx`, `Step2Intentions.tsx`,
-`src/components/ui/SessionEditorTimeline.tsx`, `src/components/ui/SessionTimelineBar.tsx`
+comments; §10: feeds calendar events into the "Adjust day" editor; §8: `aside` is a flex column with an
+internal scroll region so the sidebar footer can pin),
+`src/components/dashboard/HistorySidebar.tsx` (§8: owns the pinned discard confirmation + flex-column
+scroll/footer layout), `src/components/wizard/Wizard.tsx`,
+`WizardLayout.tsx`, `src/data/wizardSteps.ts`, `src/lib/schema.ts` (bump + remap step),
+`src/components/dashboard/BacklogTab.tsx`, `src/components/wizard/Step1Sessions.tsx`, `Step2Intentions.tsx`,
+`src/components/ui/SessionEditorTimeline.tsx` (§10: calendar-event rail above the track, imports
+`sessionTimelineBar.css`), `src/components/ui/SessionTimelineBar.tsx`
 (now imports the extracted geometry), `src/components/focus/FocusMode.tsx`, plus stale step-name
 comments in `src/lib/capacity.ts` / `src/context/ReconciliationContext.tsx`.
 

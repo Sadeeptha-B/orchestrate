@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -28,12 +29,20 @@ export function HistorySidebar({
     onTabChange: (tab: HistoryTab) => void;
 }) {
     const { life, history } = useDayPlan();
+    const { discardFromBacklog } = useIntentionRemoval();
     const backlogCount = life.backlog?.length ?? 0;
     const sessionsCount = history.length;
 
+    // v7.9: the backlog discard confirmation is owned here (lifted out of `BacklogTab`)
+    // so it can be pinned at the bottom of the sidebar, outside the scrollable list.
+    const [pendingDiscardId, setPendingDiscardId] = useState<string | null>(null);
+    const pendingEntry = pendingDiscardId
+        ? (life.backlog ?? []).find((e) => e.id === pendingDiscardId) ?? null
+        : null;
+
     return (
-        <div className="space-y-3">
-            <div className="flex gap-1">
+        <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex gap-1 flex-shrink-0">
                 <TabButton
                     active={tab === 'sessions'}
                     onClick={() => onTabChange('sessions')}
@@ -47,7 +56,39 @@ export function HistorySidebar({
                     count={backlogCount}
                 />
             </div>
-            {tab === 'sessions' ? <SavedSessionsTab /> : <BacklogTab />}
+            <div className="flex-1 min-h-0 overflow-y-auto scrollbar-subtle mt-3">
+                {tab === 'sessions' ? (
+                    <SavedSessionsTab />
+                ) : (
+                    <BacklogTab
+                        pendingDiscardId={pendingDiscardId}
+                        onRequestDiscard={setPendingDiscardId}
+                    />
+                )}
+            </div>
+            {/* v7.9: discard confirmation pinned at the bottom of the sidebar. */}
+            {tab === 'backlog' && pendingEntry && (
+                <div className="mt-3 flex-shrink-0 rounded-lg border border-red-400/40 bg-card p-3 shadow-sm space-y-2">
+                    <p className="text-xs text-text-light">
+                        Discard <strong className="text-text">{pendingEntry.intention.title}</strong>? Its linked
+                        Todoist tasks that are currently scheduled will be unscheduled.
+                    </p>
+                    <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setPendingDiscardId(null)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={() => {
+                                void discardFromBacklog(pendingEntry.id);
+                                setPendingDiscardId(null);
+                            }}
+                        >
+                            Discard
+                        </Button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
