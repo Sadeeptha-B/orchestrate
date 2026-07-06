@@ -69,7 +69,7 @@ The requirement is modest and specific: **store a handful of small, long‑lived
 
 - **Could a cookie hold these?** No — and it's worth being clear *why*, because "just use a cookie" is a common instinct. A cookie is **browser** state: whatever is in a cookie is, by definition, sitting in the client. The entire point of this backend is to keep the refresh/personal tokens *off* the client. A cookie is the wrong tool for *storing* a secret. (Cookies are great for carrying a *session id* — but we deliberately don't do sessions; see §5.)
 - **Workers KV — chosen.** A globally‑replicated key‑value store with very fast edge reads, that binds to a Function in one line of config. Perfect for "read one small value per request."
-- **D1 (Cloudflare's SQLite)** — a real relational database. Overkill: we have ~4 keys, no relationships, no queries.
+- **D1 (Cloudflare's SQLite)** — a real relational database. Overkill *for the credential store*: it's ~4 keys, no relationships, no queries. (D1 *is* used elsewhere — the v7.9 **state sync sidecar** mirrors the app's data slices to a D1 table; see §4a. Different problem, different tool: durable app data with read-your-writes, not a hot per-request credential read.)
 - **Durable Objects** — give you strong consistency and coordination between concurrent writers. We have a single user and "last write wins" is fine, so there's nothing to coordinate; DO would add cost and complexity for zero benefit.
 - **R2 (object storage)** — for files/blobs, not tiny hot values.
 
@@ -84,7 +84,19 @@ Concretely, the one KV namespace (bound as `OAUTH_KV`) holds a handful of keys:
 | `google:scope` | string | none | The scopes Google granted, surfaced by `/status`. |
 | `todoist:token` | string | none | The Todoist personal token. Never leaves the Worker. |
 
-That's the whole "database." Notice there's no per‑user namespacing — the keys are global. That's not an oversight; it encodes a core assumption we'll confront head‑on in §5.
+That's the whole "credential database." Notice there's no per‑user namespacing — the keys are global. That's not an oversight; it encodes a core assumption we'll confront head‑on in §5.
+
+---
+
+## 4a. Where the app data lives: D1 (the sync sidecar)
+
+The KV store above holds *credentials*. The app's actual **data** (the day plan, settings, saved history, life context) lived only in each browser's `localStorage` — which meant the production deployment and local dev were two separate installations pointing at the same Google/Todoist account, silently duplicating things like the Orchestrate calendar. v7.9 fixes that with a **D1 sync sidecar**: a cloud mirror of the four slices, so every origin/device converges on one logical store.
+
+Why D1 here when KV was right for credentials? Different requirements: this is **durable app data** the user edits and reloads across devices, needing **read‑your‑writes** (you change a setting and expect it on the next load) — exactly where KV's eventual consistency is wrong and D1's strong consistency is right. It's also the natural home for future relational reads (v8 reviews over engagement history). Single‑user still means no `user_id` and last‑write‑wins is fine.
+
+- **Binding:** `SYNC_DB` (D1), declared in [`wrangler.toml`](../../wrangler.toml). Schema in [`db/schema.sql`](../../db/schema.sql): one table `slices(key, value, schema_version, updated_at)`, one row per slice.
+- **Endpoints** (guarded by the same `X-App-Secret`): `GET /api/state` returns all slices; `PUT /api/state/:key` upserts one with a last‑write‑wins guard inside the SQL (`WHERE excluded.updated_at >= slices.updated_at`, else **409** with the current row). Error vocabulary matches the rest: `unauthorized` (401), `server_not_configured` (500), `storage_unavailable` (503), plus `unknown_slice` (404) / `invalid_body` (400) / `conflict` (409). Code: [`functions/api/state/`](../../functions/api/state/).
+- **Client half:** [`src/lib/cloudSync.ts`](../../src/lib/cloudSync.ts) + the `SyncGate` cold‑start gate. The conflict model and merge rules are documented in [data-model.md](../data-model.md) §7.
 
 ---
 
@@ -250,7 +262,8 @@ All server config lives on the **Cloudflare Pages project** (per environment —
 | `GOOGLE_CLIENT_SECRET` | secret | Google `callback`/`token` | Proves the app's identity during code exchange + refresh. **Never shipped to the browser.** |
 | `APP_SHARED_SECRET` | secret | every guarded endpoint + `state` signing | The single‑user guard, and the HMAC key for OAuth `state`. You enter the same value in the app. |
 | `APP_ORIGIN` | plaintext (optional) | Google `login`/`callback` | Pins the canonical origin for the redirect URI (see below). Defaults to the request origin. |
-| `OAUTH_KV` | KV binding | all storage | Binds the KV namespace (also declared in [`wrangler.toml`](../../wrangler.toml)). |
+| `OAUTH_KV` | KV binding | all credential storage | Binds the KV namespace (also declared in [`wrangler.toml`](../../wrangler.toml)). |
+| `SYNC_DB` | D1 binding | `/api/state` (v7.9) | Binds the D1 database mirroring the app-data slices (declared in [`wrangler.toml`](../../wrangler.toml); schema in [`db/schema.sql`](../../db/schema.sql)). |
 
 The browser side has exactly **one** related value: the shared secret in `localStorage` (`orchestrate-cf-secret`). There are no `VITE_*` build‑time variables for these integrations anymore — the Google client ID moved server‑side along with everything else.
 

@@ -85,9 +85,10 @@ export interface GoogleCalendarActionsValue {
     recreateOrchestrateCalendar: (name: string) => Promise<string | null>;
     /**
      * v7.8: persist a new Orchestrate calendar name and reconcile it with Google. When a calendar is
-     * already linked, this **renames that calendar in place** (no duplicate). If a *different* writable
-     * calendar already carries the new name, it relinks to that one instead of renaming. When nothing is
-     * linked yet, it just stores the name (used as the default at creation). Returns the linked id (or null).
+     * already linked, this **always renames that calendar in place** (`patchCalendar`) — it never
+     * switches to another same-named calendar (same-named *reuse* is a creation-time concern only).
+     * When nothing is linked yet, it just stores the name (used as the default at creation). Returns
+     * the linked id (or null).
      */
     renameOrchestrateCalendar: (name: string) => Promise<string | null>;
 }
@@ -382,15 +383,8 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             if (!id || !availableCalendars.some((c) => c.id === id)) return id ?? null;
             // Already named that → nothing to do against Google.
             if (availableCalendars.find((c) => c.id === id)?.name === name) return id;
-            // Prefer relinking to a *different* writable calendar that already carries this name (avoids
-            // a duplicate name in the account) over renaming the linked one.
-            const sameNamed = availableCalendars.find(
-                (c) => c.id !== id && c.name === name && (c.accessRole === 'owner' || c.accessRole === 'writer'),
-            );
-            if (sameNamed) {
-                dispatch({ type: 'UPDATE_SETTINGS', settings: { orchestrateCalendarId: sameNamed.id } });
-                return sameNamed.id;
-            }
+            // Always rename the linked calendar in place — never switch to another same-named calendar.
+            // (Same-named *reuse* only applies at creation time, in provisionOrchestrateCalendar.)
             const token = await getAccessToken();
             if (!token) return id;
             try {

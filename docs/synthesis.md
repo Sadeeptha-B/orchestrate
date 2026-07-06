@@ -28,7 +28,7 @@ The app is **opinionated and personal** to the author's workflow: per-day work s
 | Styling | Tailwind CSS v4 (CSS custom properties via `@theme`); light/dark via `.dark` on `<html>` |
 | Routing | React Router v7 (`BrowserRouter`, basename `/` — served at the domain root on Cloudflare Pages) |
 | State management | React Context + `useReducer` (DayPlan), React Context + `useState` (Todoist, Music) |
-| Persistence | `localStorage` only — 4 primary keys + 3 auxiliary keys |
+| Persistence | `localStorage` working store (4 primary + auxiliary keys), mirrored to a **D1 sync sidecar** (v7.9) for cross-device/deployment consistency |
 | External APIs | Todoist REST API v1, Google Calendar (REST v3 via server-mediated OAuth — API-rendered events with FullCalendar, plus a read-only timeline overlay), Spotify embed |
 | Crypto | Web Crypto API — HMAC-SHA256 for OAuth `state` signing, **server-side** in the Worker. (Integration tokens are no longer encrypted in the browser; they live server-side in KV.) |
 | PWA | Service worker (network-first, falls back to cache then `index.html`), manifest with maskable icons |
@@ -45,16 +45,18 @@ StrictMode                         (main.tsx)
 `-- BrowserRouter (basename: /)   (main.tsx)
     `-- App                        (App.tsx)
         `-- ErrorBoundary
-            `-- DayPlanProvider              <-- core app state (plan, settings, history, life)
-                `-- NotificationProvider     <-- v7.8: in-app notification banner queue + viewport
-                    `-- GoogleCalendarProvider   <-- v7.2: server-mediated OAuth (calendar list + write plumbing)
-                        `-- TodoistProvider          <-- Todoist data + API actions
-                            `-- ReconciliationProvider  <-- v6.5: central habit reconcile
-                                `-- NotificationBridge  <-- v7.8: engagement nudge + sync-error toasts
-                                `-- AppRoutes        <-- router switch
+            `-- SyncGate                     <-- v7.9: cold-start D1 pull+merge before state loads
+                `-- DayPlanProvider              <-- core app state (plan, settings, history, life)
+                    `-- NotificationProvider     <-- v7.8: in-app notification banner queue + viewport
+                        `-- GoogleCalendarProvider   <-- v7.2: server-mediated OAuth (calendar list + write plumbing)
+                            `-- TodoistProvider          <-- Todoist data + API actions
+                                `-- ReconciliationProvider  <-- v6.5: central habit reconcile
+                                    `-- NotificationBridge  <-- v7.8: engagement nudge + sync-error toasts
+                                    `-- AppRoutes        <-- router switch
 ```
 
 - `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
+- `SyncGate` (v7.9) wraps `DayPlanProvider` and blocks the first render until the D1 sync sidecar's cold-start pull-and-merge resolves (`pullAndMerge`, [`src/lib/cloudSync.ts`](../src/lib/cloudSync.ts)) — it merges the remote whole-slice snapshot into localStorage (last-write-wins per slice) *before* `DayPlanProvider`'s loader runs, so the loader reconciles/migrates/rolls-over the winning state. It resolves fast (≤~2s cap; instant when offline or no app secret), so startup is never blocked for long. See §11.1.
 - `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The **refresh token lives server-side** (Cloudflare Worker + KV); the provider holds only a short-lived access token **in memory** (re-minted by the Worker on demand) plus a runtime shared secret in localStorage.
 - `TodoistProvider` reads `settings` (connection state + habits project preference) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
 - `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
@@ -318,7 +320,7 @@ Manages:
 
 **Plan date freshness + rollover:** `loadPlan()` returns the current-schema persisted plan without a date gate. If the date is stale, `loadInitialState` runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for unfinished intentions, appending them to `life.backlog` with `reason: 'rollover'`. No automatic save to `SavedDayPlan` history at rollover -- the backlog preserves the meaningful unfinished part. Manual `SAVE_DAY` is the only writer to history. Auto-rollover does NOT touch Todoist -- yesterday's tasks remain visibly overdue.
 
-**Schema guard (floor-and-migrate from 7.1):** every persisted slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` (current `SCHEMA_VERSION` = `7.4`, a JSON float; constants + gate helpers in `src/lib/schema.ts`). The posture is a **supported floor**, not exact-match: `MIN_SUPPORTED_SCHEMA` (= `7.1`) is the oldest version understood. On load, an artifact stamped within `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` is **accepted and migrated forward** to the current shape via the `migrateToCurrent` seam; anything **below the floor** (or unstamped) is rejected — a stale/foreign plan/settings/life slice becomes fresh defaults, `loadHistory` drops out-of-range saved plans, and imports (Full Backup / Sessions) are refused. The **7.1 → 7.4** step (v7.4 Phase 2, the first real bump) folds the old `firstAction`/`reentryNote` scalars into `contextTrail` and defaults `life.engagementHistory`; saved/imported plans go through the same step via `migrateSavedPlan`. Helpers `isSupportedSchemaVersion` (numeric, exported — so the DataManagement import path gates identically to the loaders) and `migrateToCurrent` centralize the logic. **Non-additive changes are a first-class option:** bump `SCHEMA_VERSION` and add a single forward step at the seam — compat is kept from the floor upward only, and the floor is raised (deleting now-dead steps) when carrying an old version forward gets too expensive. The deep v1→7.1 chain was deleted for that cost reason (see [history/plan_v7/plan_v7.3.md](./history/plan_v7/plan_v7.3.md)) and lives in git history. See [data-model.md](./data-model.md) §4.
+**Schema guard (floor-and-migrate from 7.1):** every persisted slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` (current `SCHEMA_VERSION` = `7.6`, a JSON float; constants + gate helpers in `src/lib/schema.ts`). The posture is a **supported floor**, not exact-match: `MIN_SUPPORTED_SCHEMA` (= `7.1`) is the oldest version understood. On load, an artifact stamped within `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` is **accepted and migrated forward** to the current shape via the `migrateToCurrent` seam; anything **below the floor** (or unstamped) is rejected — a stale/foreign plan/settings/life slice becomes fresh defaults, `loadHistory` drops out-of-range saved plans, and imports (Full Backup / Sessions) are refused. The **7.1 → 7.4** step (v7.4 Phase 2, the first real bump) folds the old `firstAction`/`reentryNote` scalars into `contextTrail` and defaults `life.engagementHistory`; saved/imported plans go through the same step via `migrateSavedPlan`. Helpers `isSupportedSchemaVersion` (numeric, exported — so the DataManagement import path gates identically to the loaders) and `migrateToCurrent` centralize the logic. **Non-additive changes are a first-class option:** bump `SCHEMA_VERSION` and add a single forward step at the seam — compat is kept from the floor upward only, and the floor is raised (deleting now-dead steps) when carrying an old version forward gets too expensive. The deep v1→7.1 chain was deleted for that cost reason (see [history/plan_v7/plan_v7.3.md](./history/plan_v7/plan_v7.3.md)) and lives in git history. See [data-model.md](./data-model.md) §4.
 
 **Cross-slice invariants the reducer enforces:**
 - Activating a season auto-deactivates the previously active one.
@@ -483,7 +485,7 @@ Full entity semantics, reducer actions, and schema-compatibility notes: [data-mo
 
 ## 11. Persistence
 
-All **app data** via `localStorage`. The only server-side state is the **integration tokens in Workers KV** — the Google refresh token and the Todoist personal token — held by the Pages Functions (not localStorage); see §7. The persistence direction is analysed in [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
+`localStorage` is the **working store** for all app data. As of v7.9 the four reducer slices are also **mirrored to a D1 database** (the sync sidecar, §11.1) so multiple deployments/devices share one logical store; localStorage stays authoritative for offline-first reads. The only other server-side state is the **integration tokens in Workers KV** — the Google refresh token and the Todoist personal token — held by the Pages Functions (not localStorage); see §7. The persistence direction is analysed in [roadmap/persistence_and_backend_migration.md](./roadmap/persistence_and_backend_migration.md).
 
 | Key | Content | Written By |
 |---|---|---|
@@ -491,11 +493,23 @@ All **app data** via `localStorage`. The only server-side state is the **integra
 | `orchestrate-settings` | `AppSettings` + schema marker | `DayPlanProvider` |
 | `orchestrate-history` | `SavedDayPlan[]` | `DayPlanProvider` |
 | `orchestrate-life-context` | `LifeContext` + schema marker | `DayPlanProvider` |
+| `orchestrate-sync-meta` | `{ [slice]: updatedAtMs }` — per-slice last-write clock for the D1 sidecar | `cloudSync.ts` (device-local; never backed up) |
+| `orchestrate-sync-reset-pending` | `{ [slice]: true }` — explicit local-clear intent so a deliberate reset beats the cloud snapshot on next startup | `cloudSync.ts` (device-local; cleared after the next local write or remote adoption) |
 | `orchestrate-todoist-cache` | Tasks, projects, sections, fetchedAt | `TodoistProvider` |
 | `orchestrate-cf-secret` | Shared secret guarding the OAuth Worker endpoints | `appSecret.ts` (read reactively via `useAppSecret`) |
 | `orchestrate-theme` | `"light"` or `"dark"` | `useTheme` |
 | `orchestrate-active-playlist` | Playlist ID | `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<playlistId, spotifyUrl>` | `MusicProvider` |
+
+### 11.1 D1 sync sidecar (v7.9)
+
+A thin cloud mirror so the production deployment and local dev (and future devices) stop diverging into separate installations — the class of bug that previously duplicated the Orchestrate calendar and Todoist habit tasks. **localStorage remains the offline-first working store**; the sidecar layers push/pull on top.
+
+- **Store.** One D1 table `slices(key, value, schema_version, updated_at)` — one row per slice (`plan` | `settings` | `history` | `life`), `value` being the exact JSON string the client persists. Bound as `SYNC_DB` on the Pages project. Endpoints (guarded by the same `X-App-Secret`): `GET /api/state` (all slices) and `PUT /api/state/:key` (upsert one, last-write-wins). See [reference/cloudflare_workers.md](./reference/cloudflare_workers.md).
+- **Conflict model.** Coarse whole-slice **last-write-wins** by a device-local `updatedAt` (ms) kept in `orchestrate-sync-meta`. The server enforces LWW inside the upsert (`WHERE excluded.updated_at >= slices.updated_at`, 409 otherwise). A separate device-local `orchestrate-sync-reset-pending` marker distinguishes an *explicit local clear* from an accidentally missing slice, so startup merge never overwrites a valid remote snapshot with freshly-mounted defaults. No field-level merge — sufficient for a single user across a couple of devices ([roadmap §4](./roadmap/persistence_and_backend_migration.md)).
+- **Pull (cold start).** `SyncGate` (§3.1) calls `pullAndMerge` before `DayPlanProvider` mounts: fetch the remote snapshot (≤2s, skipped offline / no secret), and per slice write the winner into localStorage so the existing loaders migrate/validate/roll-over it. A slice whose remote stamp is *newer* than this build's `SCHEMA_VERSION` is neither adopted nor overwritten (stale client safety).
+- **Push (mutation).** Each persist effect calls `notifyChanged(slice, serialized)` after writing localStorage; genuine changes bump the meta clock and debounce-push (~2.5s), flushed on `pagehide`/tab-hidden with `keepalive`. The **first mount fire is skipped** unless an init-time event (day-rollover, bootstrap, local-newer merge) marked the slice — so merely opening the app never claims "newest" and clobbers another device. `RESET_ALL` / `IMPORT_BACKUP` push like any mutation; recovery paths are D1 Time Travel (7 days) + the manual Full Backup file.
+- **Not synced:** the Todoist cache, the shared secret (deliberately per-device), theme/music prefs, and the sync sidecar's own device-local bookkeeping keys (`orchestrate-sync-meta`, `orchestrate-sync-reset-pending`).
 
 **Backup**: Settings page Data tab has Full Backup (bundles settings + life + history **+ the live `currentDay`**, stamped `_schemaVersion`; `_backupVersion: 2`), Import Backup (**authoritative restore** — see below; refuses non-`7.1` files), and **Import Day Plan** (renamed from "Import Sessions"; imports a single day plan, or an exported day-plans array, into Saved Sessions; refuses non-`7.1` plans). `HistorySidebar` has per-session Restore/Export/Delete. **`IMPORT_BACKUP` is authoritative**: each slice the backup carries *replaces* the local one (settings/life/history), and `currentDay` replaces today's plan (re-dated to today) — recovery means "make this device match the backup", not merge. Because that's destructive, `useDataImport` parks a validated backup in `pendingBackup` and the UI confirms (`ConfirmModal`, "Replace & Restore") before dispatching whenever local data exists; a pristine install imports straight through. The shared parse/validate/dispatch logic lives in `useDataImport` (over `lib/dataImport.ts`); the Welcome page's "Restore from a backup" opens an in-place `RestoreModal` that imports and then loads any restored day as today's plan (`RESTORE_DAY`) without leaving the page — no Settings round-trip.
 

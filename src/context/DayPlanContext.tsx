@@ -35,6 +35,7 @@ import {
     rebuildLinkedTasksForBacklogEntry,
 } from '../lib/backlog';
 import { SCHEMA_VERSION, isSupportedSchema, migrateToCurrent } from '../lib/schema';
+import { notifyChanged, markInitChange } from '../lib/cloudSync';
 import { openSegment } from '../lib/engagement';
 import { habitKindOf } from '../lib/habits';
 import {
@@ -245,6 +246,12 @@ function loadInitialState(): State {
     const life: LifeContext = harvested.length === 0
         ? baseLife
         : { ...baseLife, backlog: [...(baseLife.backlog ?? []), ...harvested] };
+
+    // Rollover mutated the plan (and maybe the backlog) at load time, before any user action — mark
+    // these so the sync sidecar pushes the rolled-over result (else a second device would re-harvest
+    // the same stale plan). markInitChange is idempotent, so StrictMode's double init is harmless.
+    markInitChange('plan');
+    if (harvested.length > 0) markInitChange('life');
 
     return {
         plan: freshPlan(seedSessionSlots(raw, settings)),
@@ -1461,30 +1468,31 @@ export { DayPlanContext };
 export function DayPlanProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, null, loadInitialState);
 
-    // Persist on every state change (stamp the schema version so loads can guard against old data)
+    // Persist on every state change (stamp the schema version so loads can guard against old data).
+    // After each write, notifyChanged mirrors the slice to the D1 sync sidecar (debounced push);
+    // the first mount fire is a no-op there unless loadInitialState marked the slice (rollover).
     useEffect(() => {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({ ...state.plan, _schemaVersion: SCHEMA_VERSION }),
-        );
+        const serialized = JSON.stringify({ ...state.plan, _schemaVersion: SCHEMA_VERSION });
+        localStorage.setItem(STORAGE_KEY, serialized);
+        notifyChanged('plan', serialized);
     }, [state.plan]);
 
     useEffect(() => {
-        localStorage.setItem(
-            SETTINGS_KEY,
-            JSON.stringify({ ...state.settings, _schemaVersion: SCHEMA_VERSION }),
-        );
+        const serialized = JSON.stringify({ ...state.settings, _schemaVersion: SCHEMA_VERSION });
+        localStorage.setItem(SETTINGS_KEY, serialized);
+        notifyChanged('settings', serialized);
     }, [state.settings]);
 
     useEffect(() => {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+        const serialized = JSON.stringify(state.history);
+        localStorage.setItem(HISTORY_KEY, serialized);
+        notifyChanged('history', serialized);
     }, [state.history]);
 
     useEffect(() => {
-        localStorage.setItem(
-            LIFE_KEY,
-            JSON.stringify({ ...state.life, _schemaVersion: SCHEMA_VERSION }),
-        );
+        const serialized = JSON.stringify({ ...state.life, _schemaVersion: SCHEMA_VERSION });
+        localStorage.setItem(LIFE_KEY, serialized);
+        notifyChanged('life', serialized);
     }, [state.life]);
 
     return (
