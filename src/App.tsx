@@ -8,6 +8,7 @@ import { ReconciliationProvider } from './context/ReconciliationContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { NotificationBridge } from './components/ui/NotificationBridge';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { SyncGate } from './components/SyncGate';
 
 /**
  * Wrap a route's dynamic import so a failed chunk fetch — typically a stale hashed chunk after a
@@ -99,18 +100,20 @@ function AppRoutes() {
 export default function App() {
     return (
         <ErrorBoundary>
-            <DayPlanProvider>
-                <NotificationProvider>
-                    <GoogleCalendarProvider>
-                        <TodoistProvider>
-                            <ReconciliationProvider>
-                                <NotificationBridge />
-                                <AppRoutes />
-                            </ReconciliationProvider>
-                        </TodoistProvider>
-                    </GoogleCalendarProvider>
-                </NotificationProvider>
-            </DayPlanProvider>
+            <SyncGate>
+                <DayPlanProvider>
+                    <NotificationProvider>
+                        <GoogleCalendarProvider>
+                            <TodoistProvider>
+                                <ReconciliationProvider>
+                                    <NotificationBridge />
+                                    <AppRoutes />
+                                </ReconciliationProvider>
+                            </TodoistProvider>
+                        </GoogleCalendarProvider>
+                    </NotificationProvider>
+                </DayPlanProvider>
+            </SyncGate>
         </ErrorBoundary>
     );
 }

@@ -1,9 +1,10 @@
 /// <reference lib="webworker" />
 const sw = self;
 
-// Bumped to v3 for the move to the domain root (was cached under /orchestrate/ on GitHub Pages);
-// the activate handler purges the stale v2 caches.
-const CACHE_NAME = 'orchestrate-v3';
+// Bumped to v4 to purge any cached `/api/*` responses from before those were excluded (the sync
+// sidecar's GET /api/state must never be served stale from cache); the activate handler purges older
+// caches. (v3 was the move to the domain root from GitHub Pages's /orchestrate/ path.)
+const CACHE_NAME = 'orchestrate-v4';
 
 // Cache app shell on install
 sw.addEventListener('install', (event) => {
@@ -39,6 +40,9 @@ sw.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
     const url = new URL(event.request.url);
     if (url.origin !== sw.location.origin) return;
+    // Never cache or intercept the Pages Functions API (auth, Todoist proxy, state sync) — these are
+    // dynamic, secret-guarded, and marked no-store; a cached response would break sync + integrations.
+    if (url.pathname.startsWith('/api/')) return;
 
     event.respondWith(
         fetch(event.request)

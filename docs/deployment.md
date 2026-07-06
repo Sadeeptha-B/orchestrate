@@ -54,6 +54,23 @@ npx wrangler kv namespace create OAUTH_KV
 
 Paste the namespace ID into [`wrangler.toml`](../wrangler.toml) (replace `REPLACE_WITH_KV_NAMESPACE_ID`), or bind it in the dashboard in step 3.
 
+### 1b. Create the D1 database (state sync — v7.9)
+
+The sync sidecar mirrors the app's data slices to a D1 database so multiple deployments/devices share one store (see [reference/cloudflare_workers.md](./reference/cloudflare_workers.md) §4a). Create it once:
+
+```bash
+npx wrangler d1 create orchestrate-sync
+```
+
+Paste the printed `database_id` into [`wrangler.toml`](../wrangler.toml) (replace `REPLACE_WITH_DATABASE_ID`). Then apply the schema to **both** the remote and local databases:
+
+```bash
+npx wrangler d1 execute orchestrate-sync --remote --file db/schema.sql
+npx wrangler d1 execute orchestrate-sync --local  --file db/schema.sql
+```
+
+The DB must exist before the first deploy that references the binding, or the deploy fails validation. It fits the D1 free tier comfortably (single user; 5 GB / 100k writes per day).
+
 ### 2. Create the Pages project
 
 **Workers & Pages → Create → Pages → Connect to Git**, pick this repo, then set:
@@ -70,6 +87,7 @@ Cloudflare auto-detects the `functions/` directory and deploys it as Pages Funct
 In the new project: **Settings → Functions (or Bindings)**:
 
 - **KV namespace binding:** variable name `OAUTH_KV` → the namespace from step 1.
+- **D1 database binding:** variable name `SYNC_DB` → the database from step 1b. (If it's already in `wrangler.toml` with the real `database_id`, the git-integration deploy picks it up automatically — same as the KV binding.)
 
 Then **Settings → Environment variables / Secrets** (add to the **Production** environment, and Preview if you use it):
 
@@ -150,7 +168,7 @@ The frontend dev server (`npm run dev`) does **not** run the Pages Functions, so
    npm run build
    npx wrangler pages dev dist
    ```
-   For KV locally, Wrangler uses a local KV simulation by default; add `--kv OAUTH_KV` if it doesn't auto-bind from `wrangler.toml`.
+   For KV locally, Wrangler uses a local KV simulation by default; add `--kv OAUTH_KV` if it doesn't auto-bind from `wrangler.toml`. Likewise Wrangler auto-provisions a **local D1** for `SYNC_DB` (persisted under `.wrangler/state`) — apply the schema to it once with `npx wrangler d1 execute orchestrate-sync --local --file db/schema.sql` (step 1b) so `/api/state` works locally.
 3. Add `http://localhost:8788/api/auth/google/callback` as an Authorized redirect URI in the Google OAuth client (Part A).
 
 For pure UI work without OAuth, `npm run dev` is still the fastest loop — the calendar panel just shows the "enter app secret / connect" state.

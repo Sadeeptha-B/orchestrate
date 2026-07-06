@@ -14,6 +14,15 @@ export interface TodoistEnv extends GuardEnv {
     OAUTH_KV: KVNamespace;
 }
 
+/** Env for the state-sync endpoints (shared secret guard + the D1 slice store). */
+export interface StateEnv extends GuardEnv {
+    SYNC_DB: D1Database;
+}
+
+/** The four persisted slices synced to D1 (mirror of the localStorage working store). */
+export const SYNC_SLICE_KEYS = ['plan', 'settings', 'history', 'life'] as const;
+export type SyncSliceKey = (typeof SYNC_SLICE_KEYS)[number];
+
 /** Origin of the Todoist REST/Sync API the proxy forwards to. */
 export const TODOIST_API = 'https://api.todoist.com';
 

@@ -24,3 +24,14 @@ pages_build_output_dir = "dist"
 binding = "OAUTH_KV"
 id = "bea5f764eb0e422798cef203dee4f481"
 
+# D1 database holding the synced state slices (see functions/api/state/*). This is
+# the cloud mirror of the localStorage working store — one row per slice, last-write-wins.
+# Create it once and paste the id below, then apply the schema (local + remote):
+#   npx wrangler d1 create orchestrate-sync
+#   npx wrangler d1 execute orchestrate-sync --remote --file db/schema.sql
+#   npx wrangler d1 execute orchestrate-sync --local  --file db/schema.sql
+[[d1_databases]]
+binding = "SYNC_DB"
+database_name = "orchestrate-sync"
+database_id = "be40205a-95cf-4fc0-96b0-411948847100"
+

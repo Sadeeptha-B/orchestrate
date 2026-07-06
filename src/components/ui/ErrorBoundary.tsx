@@ -1,5 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 import { Button } from './Button';
+import { markLocalReset } from '../../lib/cloudSync';
 
 interface Props {
     children: ReactNode;
@@ -28,6 +29,9 @@ export class ErrorBoundary extends Component<Props, State> {
     handleResetAndClear = () => {
         try {
             localStorage.removeItem('orchestrate-day-plan');
+            // Win the next sync merge so the cleared plan isn't re-adopted from the cloud on reload
+            // (the crashing plan would otherwise pull straight back in).
+            markLocalReset('plan');
         } catch { /* ignore */ }
         window.location.reload();
     };
