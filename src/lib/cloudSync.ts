@@ -10,7 +10,7 @@
 // For a single user across a couple of devices this is sufficient (see docs/roadmap/
 // persistence_and_backend_migration.md §4). There is no field-level merge.
 
-import { getStoredSecret, hasStoredSecret } from './appSecret';
+import { getStoredUser, setStoredUser } from './identity';
 import { SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA, isSupportedSchemaVersion } from './schema';
 
 export type SliceKey = 'plan' | 'settings' | 'history' | 'life';
@@ -103,11 +103,32 @@ function setPendingReset(slice: SliceKey, pending: boolean): void {
     }
 }
 
-// ─── HTTP ────────────────────────────────────────────────────────────────────────
+// ─── Identity-switch guard ──────────────────────────────────────────────────────
 
-function authHeaders(): Record<string, string> {
-    return { 'X-App-Secret': getStoredSecret(), 'Content-Type': 'application/json' };
+/** Todoist cache key (owned by TodoistContext) — cleared alongside the slices on a user switch. */
+const TODOIST_CACHE_KEY = 'orchestrate-todoist-cache';
+
+/**
+ * localStorage is per browser profile, not per Access identity. If a different account signs in on
+ * this machine, the previous user's local slices must not merge into (or push over) the new user's
+ * cloud data — clear all local app state first, so the merge below adopts the new user's snapshot.
+ */
+function guardIdentitySwitch(remoteUser: string): void {
+    const previous = getStoredUser();
+    if (previous && previous !== remoteUser) {
+        try {
+            for (const key of Object.values(SLICE_STORAGE_KEYS)) localStorage.removeItem(key);
+            localStorage.removeItem(META_KEY);
+            localStorage.removeItem(RESET_PENDING_KEY);
+            localStorage.removeItem(TODOIST_CACHE_KEY);
+        } catch {
+            // ignore storage failures
+        }
+    }
+    setStoredUser(remoteUser);
 }
+
+// ─── HTTP ────────────────────────────────────────────────────────────────────────
 
 interface RemoteSlice {
     value: string;
@@ -120,8 +141,8 @@ interface RemoteSlice {
 /**
  * Cold-start merge. Fetch the remote snapshot and, per slice, decide winner by `updatedAt` and write
  * the winning remote value straight into localStorage (so the existing loaders migrate/validate it
- * like any persisted value). Resolves silently on no-secret / offline / any fetch failure — sync then
- * stays passive this session, but genuine local mutations still push. Memoized (StrictMode-safe).
+ * like any persisted value). Resolves silently on offline / any fetch failure — sync then stays
+ * passive this session, but genuine local mutations still push. Memoized (StrictMode-safe).
  */
 export function pullAndMerge(timeoutMs = PULL_TIMEOUT_MS): Promise<void> {
     if (hasPulled) return Promise.resolve();
@@ -137,20 +158,22 @@ export function pullAndMerge(timeoutMs = PULL_TIMEOUT_MS): Promise<void> {
 }
 
 async function doPullAndMerge(timeoutMs: number): Promise<boolean> {
-    if (!hasStoredSecret()) return false;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
 
     let slices: Partial<Record<SliceKey, RemoteSlice>>;
     try {
         const res = await fetch('/api/state', {
-            headers: authHeaders(),
             signal: AbortSignal.timeout(timeoutMs),
         });
         if (!res.ok) return false;
-        const body = (await res.json()) as { slices?: Partial<Record<SliceKey, RemoteSlice>> };
+        const body = (await res.json()) as {
+            user?: string;
+            slices?: Partial<Record<SliceKey, RemoteSlice>>;
+        };
+        if (typeof body.user === 'string' && body.user) guardIdentitySwitch(body.user.toLowerCase());
         slices = body.slices ?? {};
     } catch {
-        return false; // timeout / network / non-JSON — passive this session
+        return false; // timeout / network / non-JSON / expired session — passive this session
     }
 
     for (const slice of SLICE_KEYS) {
@@ -268,7 +291,7 @@ function schedulePush(slice: SliceKey): void {
 }
 
 async function doPush(slice: SliceKey, keepalive: boolean): Promise<void> {
-    if (noPush.has(slice) || !hasStoredSecret()) return; // keep dirty; retry on next change / focus / online
+    if (noPush.has(slice)) return; // keep dirty; retry on next change / focus / online
 
     const value = localStorage.getItem(SLICE_STORAGE_KEYS[slice]);
     if (value == null) {
@@ -280,7 +303,7 @@ async function doPush(slice: SliceKey, keepalive: boolean): Promise<void> {
     try {
         const res = await fetch(`/api/state/${slice}`, {
             method: 'PUT',
-            headers: authHeaders(),
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value, schemaVersion: SCHEMA_VERSION, updatedAt }),
             keepalive,
         });

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WizardLayout } from './WizardLayout';
 import { SessionEditorTimeline } from '../ui/SessionEditorTimeline';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -14,6 +15,7 @@ import type { SessionSlot, SessionTemplate } from '../../types';
 
 export function Step1Sessions() {
     const { plan, life, settings, dispatch } = useDayPlan();
+    const navigate = useNavigate();
     // v7.9: Sessions is now step 1, so the day's recurring context (season + habits) is surfaced
     // here for scoping. Keep today's habit instances in sync as the source for the banner.
     useTodaysHabitsSync();
@@ -68,6 +70,34 @@ export function Step1Sessions() {
                         its edges to resize, and click a block to rename or delete it.
                     </p>
                 </div>
+
+                {/* Calendar nudge — this is the surface where the connection pays off (meetings
+                    render right above the session track), so encourage it here until connected. */}
+                {!gcalConnected && !settings.calendarNudgeDismissed && (
+                    <div className="rounded-lg border border-accent/30 bg-accent-subtle/20 px-4 py-3 flex items-start gap-3">
+                        <span className="text-lg leading-none mt-0.5">📅</span>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm text-text">
+                                <strong>Connect Google Calendar</strong> to see today's meetings right here while
+                                you shape your sessions.
+                            </p>
+                            <div className="flex gap-3 mt-1.5 text-xs">
+                                <button
+                                    onClick={() => navigate('/settings?tab=integrations')}
+                                    className="text-accent hover:underline cursor-pointer font-medium"
+                                >
+                                    Connect →
+                                </button>
+                                <button
+                                    onClick={() => dispatch({ type: 'UPDATE_SETTINGS', settings: { calendarNudgeDismissed: true } })}
+                                    className="text-text-light hover:text-accent cursor-pointer"
+                                >
+                                    Don't show again
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Quick-apply templates */}
                 {templates.length > 0 && (

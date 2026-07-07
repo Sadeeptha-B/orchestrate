@@ -1,48 +1,35 @@
 // Worker-mediated Google OAuth client for the Google Calendar integration.
 //
-// This replaces the browser-only GIS token client (engagement_record_strategy.md option E1) with
-// the server-mediated auth-code flow (option E2). The Cloudflare Pages Functions under
-// `/api/auth/google` hold the client secret and the long-lived refresh token (in Workers KV); the
-// browser only ever holds a single **shared secret** (entered once in Settings) and asks the Worker
-// for short-lived access tokens on demand. See functions/api/auth/google/_lib.ts for the server side.
+// The Cloudflare Pages Functions under `/api/auth/google` hold the client secret and the long-lived
+// refresh token (in Workers KV, namespaced per user); the browser asks the Worker for short-lived
+// access tokens on demand. Requests are authenticated by the Cloudflare Access session cookie that
+// rides every same-origin fetch — there is no in-app credential. See functions/api/auth/google/_lib.ts
+// for the server side.
 
-import { getStoredSecret, setStoredSecret } from './appSecret';
+import { SessionExpiredError, apiFetch } from './identity';
 
 const API_BASE = '/api/auth/google';
-
-// The shared secret now lives in appSecret.ts (it guards the Todoist proxy too). Re-exported here so
-// existing importers of googleAuth keep working.
-export { getStoredSecret, setStoredSecret };
-
-function authHeaders(): HeadersInit {
-    return { 'X-App-Secret': getStoredSecret() };
-}
 
 export interface ConnectionStatus {
     connected: boolean;
     scope: string | null;
 }
 
-/** Thrown when the Worker rejects the shared secret (so the UI can prompt to re-enter it). */
-export class AppSecretError extends Error {
-    constructor() {
-        super('The app secret was rejected by the server.');
-        this.name = 'AppSecretError';
-    }
-}
+/** Where the OAuth callback should land the browser afterwards (allowlisted server-side). */
+export type ConnectReturnTarget = 'settings' | 'home';
 
 /** Whether the server currently holds a Google refresh token (i.e. connected). */
 export async function fetchConnectionStatus(): Promise<ConnectionStatus> {
-    const res = await fetch(`${API_BASE}/status`, { headers: authHeaders() });
-    if (res.status === 401) throw new AppSecretError();
+    const res = await apiFetch(`${API_BASE}/status`);
+    if (res.status === 401) throw new SessionExpiredError();
     if (!res.ok) throw new Error(`Status check failed (${res.status})`);
     return res.json();
 }
 
 /** Begin the interactive consent flow: fetch the Google consent URL, then navigate to it. */
-export async function startGoogleLogin(): Promise<void> {
-    const res = await fetch(`${API_BASE}/login`, { headers: authHeaders() });
-    if (res.status === 401) throw new AppSecretError();
+export async function startGoogleLogin(returnTo: ConnectReturnTarget = 'settings'): Promise<void> {
+    const res = await apiFetch(`${API_BASE}/login?return=${returnTo}`);
+    if (res.status === 401) throw new SessionExpiredError();
     if (!res.ok) throw new Error(`Could not start sign-in (${res.status})`);
     const { url } = (await res.json()) as { url: string };
     window.location.href = url;
@@ -52,12 +39,19 @@ export type AccessTokenOutcome =
     | { ok: true; accessToken: string; expiresInSec: number }
     | { ok: false; reason: 'unauthorized' | 'not_connected' | 'error'; message?: string };
 
+const GOOGLE_DISCONNECT_ERRORS: Record<string, string> = {
+    server_not_configured: 'The Cloudflare worker is missing its Google OAuth configuration.',
+    storage_unavailable: 'Cloudflare KV is unavailable right now. Please try again shortly.',
+    unauthorized: 'Your session expired — reload the page and try again.',
+};
+
 /** Ask the Worker for a fresh access token (minted from the server-held refresh token). */
 export async function fetchAccessToken(): Promise<AccessTokenOutcome> {
     let res: Response;
     try {
-        res = await fetch(`${API_BASE}/token`, { headers: authHeaders() });
+        res = await apiFetch(`${API_BASE}/token`);
     } catch (e) {
+        if (e instanceof SessionExpiredError) return { ok: false, reason: 'unauthorized' };
         return { ok: false, reason: 'error', message: e instanceof Error ? e.message : 'Network error' };
     }
     if (res.ok) {
@@ -79,9 +73,15 @@ export async function fetchAccessToken(): Promise<AccessTokenOutcome> {
 
 /** Revoke + clear the server-held refresh token. */
 export async function disconnectGoogle(): Promise<void> {
+    const res = await apiFetch(`${API_BASE}/disconnect`, { method: 'POST' });
+    if (res.status === 401) throw new SessionExpiredError();
+    if (res.ok) return;
+
+    let error = 'disconnect_failed';
     try {
-        await fetch(`${API_BASE}/disconnect`, { method: 'POST', headers: authHeaders() });
+        error = ((await res.json()) as { error?: string }).error ?? error;
     } catch {
-        // best-effort; the UI clears local state regardless
+        // non-JSON error
     }
+    throw new Error(GOOGLE_DISCONNECT_ERRORS[error] ?? 'Google Calendar could not be disconnected right now.');
 }

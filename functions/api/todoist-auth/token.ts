@@ -1,12 +1,12 @@
 // POST /api/todoist-auth/token  { token }
-// Guarded by the shared secret. Validates the Todoist personal token (against the projects endpoint)
-// and, if valid, stores it in Workers KV. The token never round-trips back to the browser afterward.
+// Identity-guarded. Validates the Todoist personal token (against the projects endpoint) and, if
+// valid, stores it under the caller's KV key. It never round-trips back to the browser afterward.
 
-import { KV_TODOIST_TOKEN, TODOIST_API, type TodoistEnv, json, requireAppSecret } from '../../_shared';
+import { TODOIST_API, type TodoistEnv, json, requireUser, todoistTokenKey } from '../../_shared';
 
 export const onRequestPost: PagesFunction<TodoistEnv> = async ({ request, env }) => {
-    const authError = requireAppSecret(request, env);
-    if (authError) return authError;
+    const auth = await requireUser(request, env);
+    if (auth instanceof Response) return auth;
 
     let token = '';
     try {
@@ -28,7 +28,7 @@ export const onRequestPost: PagesFunction<TodoistEnv> = async ({ request, env })
     if (!res.ok) return json({ error: 'todoist_unreachable' }, 502);
 
     try {
-        await env.OAUTH_KV.put(KV_TODOIST_TOKEN, token);
+        await env.OAUTH_KV.put(todoistTokenKey(auth.email), token);
     } catch {
         return json({ error: 'storage_unavailable' }, 503);
     }

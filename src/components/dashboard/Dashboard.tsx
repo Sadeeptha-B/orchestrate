@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { getStoredUser } from '../../lib/identity';
 import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import { useDayCalendarEvents } from '../../hooks/useDayCalendarEvents';
 import { useGoogleCalendarData } from '../../hooks/useGoogleCalendar';
@@ -184,7 +185,7 @@ export function Dashboard() {
                     <div className="max-w-6xl mx-auto space-y-8">
                         <section className="bg-subtle/30 rounded-xl p-5 flex items-center justify-between gap-4">
                             <p className="text-2xl font-semibold text-text">
-                                {greeting(settings.userName, new Date())}
+                                {greeting(settings.userName || getStoredUser().split('@')[0] || undefined, new Date())}
                             </p>
                             <DigitalClock />
                         </section>

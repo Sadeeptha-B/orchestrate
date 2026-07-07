@@ -1,27 +1,27 @@
 # Orchestrate's Cloudflare backend — a walkthrough
 
-This is the conceptual tour of Orchestrate's small serverless backend: the part that lets a no‑backend, browser‑only app talk to Google Calendar and Todoist *safely*. It's written to be read top‑to‑bottom — each piece introduces the concept it needs (OAuth, refresh tokens, serverless Functions, KV, CSRF, proxies) right where that concept first matters, and explains *why* the code is shaped the way it is, not just what it does.
+This is the conceptual tour of Orchestrate's small serverless backend: the part that lets a browser-first app talk to Google Calendar and Todoist *safely*, sync its state across devices, and serve a handful of pre-approved users independently. It's written to be read top‑to‑bottom — each piece introduces the concept it needs (OAuth, refresh tokens, serverless Functions, KV, Cloudflare Access, JWTs, proxies) right where that concept first matters, and explains *why* the code is shaped the way it is, not just what it does.
 
-If you just want the click‑by‑click setup (Google Cloud console, Cloudflare dashboard), that's a separate page: [../deployment.md](../deployment.md). For where this sits in the wider app, see [synthesis.md §7](../synthesis.md); for the design history and the alternatives that were weighed, see the roadmap docs ([engagement_record_strategy.md](../roadmap/engagement_record_strategy.md) — this is **option E2** — and [persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md)).
+If you just want the click‑by‑click setup (Google Cloud console, Cloudflare dashboard, Zero Trust), that's a separate page: [../deployment.md](../deployment.md). For where this sits in the wider app, see [synthesis.md §7](../synthesis.md); for the design history and the alternatives that were weighed, see the roadmap docs ([engagement_record_strategy.md](../roadmap/engagement_record_strategy.md) — this is **option E2** — and [persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md)).
 
 ---
 
 ## 1. The problem: a browser is a bad place to keep a secret
 
-Orchestrate is a **static single‑page app** (SPA). All of its real data — your plans, habits, sessions — lives in the browser's `localStorage`. There's no application database and no server that "owns" your data. That's a deliberate, low‑cost design.
+Orchestrate is a **static single‑page app** (SPA). Its working data — your plans, habits, sessions — lives in the browser's `localStorage` (mirrored to a small cloud store, §4a). There's no traditional app server. That's a deliberate, low‑cost design.
 
 But two features need to reach *out* to other services:
 
-- **Google Calendar** — to list your calendars and (eventually) write events.
+- **Google Calendar** — to list your calendars and read/write events.
 - **Todoist** — the source of truth for tasks; the app reads and writes them constantly.
 
 Both require a **credential** — a secret string that proves "this app is allowed to act as you." And here's the tension that shapes this entire backend:
 
 > A credential that can act as you, indefinitely, must **not** live in the browser.
 
-Anything the browser holds is recoverable by anyone with access to that browser profile (and, for anything in the JS bundle, by literally anyone on the internet who views source). A long‑lived credential sitting in `localStorage` is "encrypted" only in the sense of being mildly inconvenient to read — the key sits right next to it. So the job of this backend is narrow and specific: **hold the credentials that can't safely live in the browser, and nothing else.** It is a credential vault and a request broker — not an app server.
+Anything the browser holds is recoverable by anyone with access to that browser profile (and, for anything in the JS bundle, by literally anyone on the internet who views source). So the job of this backend is narrow and specific: **hold the credentials that can't safely live in the browser, mirror the app's data slices, and nothing else.** It is a credential vault, a request broker, and a small sync store — not an app server.
 
-The two integrations need *different* kinds of credential, and that difference drives almost every decision below. Let's look at each.
+The two integrations need *different* kinds of credential, and that difference drives almost every decision below.
 
 ---
 
@@ -29,13 +29,13 @@ The two integrations need *different* kinds of credential, and that difference d
 
 ### Google Calendar uses OAuth
 
-**OAuth 2.0** is the "Sign in with Google / allow this app to access your calendar" protocol. Instead of you handing your Google password to Orchestrate, Google issues the app scoped, revocable credentials. There are three secrets in play, and it's worth being precise about each because they have very different lifetimes and risk:
+**OAuth 2.0** is the "Sign in with Google / allow this app to access your calendar" protocol. Instead of you handing your Google password to Orchestrate, Google issues the app scoped, revocable credentials. There are three secrets in play, with very different lifetimes and risk:
 
-- **Client ID + client secret** — these identify *the application itself* to Google (think of them as the app's own username/password with Google). The client secret must stay server‑side; it's what lets the app exchange codes for tokens.
+- **Client ID + client secret** — these identify *the application itself* to Google. The client secret must stay server‑side; it's what lets the app exchange codes for tokens.
 - **Access token** — a short‑lived (~1 hour) bearer token used to actually call the Calendar API. "Bearer" means whoever holds it can use it, no questions asked — so short lifetimes matter.
 - **Refresh token** — a long‑lived credential whose only job is to mint fresh access tokens when the old one expires. This is the crown jewel: with it, a server can act as you for as long as you don't revoke it. It absolutely cannot live in the browser.
 
-The original version of this integration (the roadmap's **option E1**) used Google's browser‑only token client: no backend, access tokens minted directly in the page and held only in memory. That works *while a tab is open*, but it can never hold a refresh token — so the connection dies with the tab and can never do unattended work. To get a durable, cross‑device connection (and a future where a server can write calendar events with no tab open), we need the **server‑mediated authorization‑code flow** (option E2), where the refresh token lives on the server. That's what §6 walks through.
+The original version of this integration (the roadmap's **option E1**) used Google's browser‑only token client — it could never hold a refresh token, so the connection died with the tab. The current design is the **server‑mediated authorization‑code flow** (option E2), where the refresh token lives on the server. That's what §6 walks through.
 
 ### Todoist uses a personal token
 
@@ -51,131 +51,130 @@ Orchestrate is hosted on **Cloudflare Pages**, which serves the static build (HT
 
 A few concepts to introduce here, because they're load‑bearing:
 
-- **Serverless / Workers.** You don't run or manage a server. You write a function; Cloudflare runs it on demand at the edge, scales it, and bills per invocation. There's no always‑on process and no machine to patch. The flip side is that the function is **stateless** — it keeps nothing between requests, so any durable state must go somewhere external (that's §4).
+- **Serverless / Workers.** You don't run or manage a server. You write a function; Cloudflare runs it on demand at the edge, scales it, and bills per invocation. The flip side is that the function is **stateless** — it keeps nothing between requests, so any durable state must go somewhere external (§4).
 - **File‑based routing.** Functions live in a [`functions/`](../../functions/) directory at the repo root, and the file path *is* the URL path: `functions/api/auth/google/login.ts` answers `GET /api/auth/google/login`. Files whose names start with `_` (like `_shared.ts`) are treated as shared modules, not routes.
-- **Same origin.** This is the quietly crucial part. The Functions are served from the *same domain* as the app (`yourapp.pages.dev/api/...`). Because the browser sees the app and the backend as one origin, requests between them are "same‑origin": no CORS preflight to configure, and the browser will happily attach a custom header (we'll use one as our key) on every call. If the backend lived on a different domain, we'd be fighting CORS and cross‑site cookie rules the whole way.
+- **Same origin.** This is the quietly crucial part. The Functions are served from the *same domain* as the app (`yourapp.pages.dev/api/...`). Because the browser sees the app and the backend as one origin, requests between them are "same‑origin": no CORS to configure, and — since v7.10 — the **Cloudflare Access session cookie rides along automatically** on every call (§5). If the backend lived on a different domain, we'd be fighting CORS and cross‑site cookie rules the whole way.
 
-> Aside — and a nice bonus of the Cloudflare move: serving from `yourapp.pages.dev` (or a custom domain) gives Orchestrate its **own origin**, so its `localStorage` is isolated from other sites. On GitHub Pages, every project under `you.github.io` shares one origin and therefore one `localStorage` namespace; the move to Pages fixes that for free.
-
-So we now have somewhere to run server code, on the same origin as the app. Two questions remain: *where do the secrets actually sit* (§4), and *how do we stop the public internet from using our backend* (§5).
+So we now have somewhere to run server code, on the same origin as the app. Two questions remain: *where do the secrets actually sit* (§4), and *who is allowed to use our backend, and how do we tell users apart* (§5).
 
 ---
 
 ## 4. Where the secrets live: Workers KV
 
-Our stateless Functions need to remember a few things between requests — the Google refresh token, the Todoist token, a cached access token. That's durable state, and a Worker can't hold it. We need external storage.
+Our stateless Functions need to remember a few things between requests — each user's Google refresh token, their Todoist token, a cached access token. That's durable state, and a Worker can't hold it. We need external storage.
 
-The requirement is modest and specific: **store a handful of small, long‑lived strings, and read one of them on essentially every request.** Cloudflare offers several storage products; here's why **Workers KV** is the right fit, by elimination:
+The requirement is modest and specific: **store a handful of small, long‑lived strings, and read one of them on essentially every request.** Cloudflare offers several storage products; **Workers KV** is the right fit: a globally‑replicated key‑value store with very fast edge reads, that binds to a Function in one line of config. (D1 — a real relational database — would be overkill for the credential store; it *is* used for the state sync, §4a. Durable Objects would add coordination we don't need; R2 is for blobs.)
 
-- **Could a cookie hold these?** No — and it's worth being clear *why*, because "just use a cookie" is a common instinct. A cookie is **browser** state: whatever is in a cookie is, by definition, sitting in the client. The entire point of this backend is to keep the refresh/personal tokens *off* the client. A cookie is the wrong tool for *storing* a secret. (Cookies are great for carrying a *session id* — but we deliberately don't do sessions; see §5.)
-- **Workers KV — chosen.** A globally‑replicated key‑value store with very fast edge reads, that binds to a Function in one line of config. Perfect for "read one small value per request."
-- **D1 (Cloudflare's SQLite)** — a real relational database. Overkill *for the credential store*: it's ~4 keys, no relationships, no queries. (D1 *is* used elsewhere — the v7.9 **state sync sidecar** mirrors the app's data slices to a D1 table; see §4a. Different problem, different tool: durable app data with read-your-writes, not a hot per-request credential read.)
-- **Durable Objects** — give you strong consistency and coordination between concurrent writers. We have a single user and "last write wins" is fine, so there's nothing to coordinate; DO would add cost and complexity for zero benefit.
-- **R2 (object storage)** — for files/blobs, not tiny hot values.
+KV has one characteristic to be aware of: it's **eventually consistent**. A write may take up to ~60 seconds to become visible everywhere on the globe. For us that's harmless — a person doesn't connect on their laptop and read from their phone in the same second, and the access‑token cache simply refreshes on a miss.
 
-KV has one characteristic to be aware of: it's **eventually consistent**. A write may take up to ~60 seconds to become visible everywhere on the globe. For us that's harmless — a single person doesn't connect on their laptop and read from their phone in the same second, and the access‑token cache simply refreshes on a miss. (If we ever needed read‑your‑writes within a second across regions, KV would be the wrong choice. We don't.)
-
-Concretely, the one KV namespace (bound as `OAUTH_KV`) holds a handful of keys:
+Concretely, the one KV namespace (bound as `OAUTH_KV`) holds a handful of keys **per user**, namespaced by the verified Access identity (§5):
 
 | Key | Shape | TTL | Role |
 |---|---|---|---|
-| `google:refresh_token` | string | none | The long‑lived refresh token. Never leaves the Worker. |
-| `google:access_token` | JSON `{ access_token, expires_at }` | ≈1 hr | A cache of the current access token so repeated calls don't hammer Google. Auto‑expires. |
-| `google:scope` | string | none | The scopes Google granted, surfaced by `/status`. |
-| `todoist:token` | string | none | The Todoist personal token. Never leaves the Worker. |
+| `user:<email>:google:refresh_token` | string | none | That user's long‑lived refresh token. Never leaves the Worker. |
+| `user:<email>:google:access_token` | JSON `{ access_token, expires_at }` | ≈1 hr | A cache of the current access token so repeated calls don't hammer Google. Auto‑expires. |
+| `user:<email>:google:scope` | string | none | The scopes Google granted, surfaced by `/status`. |
+| `user:<email>:todoist:token` | string | none | That user's Todoist personal token. Never leaves the Worker. |
 
-That's the whole "credential database." Notice there's no per‑user namespacing — the keys are global. That's not an oversight; it encodes a core assumption we'll confront head‑on in §5.
+The `user:<email>:` prefix (built by `userKey()` in [`functions/_shared.ts`](../../functions/_shared.ts)) is what makes the app **multi‑user**: each pre‑approved account's credentials are isolated, so one person connecting their Google account can never overwrite or read another's.
 
 ---
 
 ## 4a. Where the app data lives: D1 (the sync sidecar)
 
-The KV store above holds *credentials*. The app's actual **data** (the day plan, settings, saved history, life context) lived only in each browser's `localStorage` — which meant the production deployment and local dev were two separate installations pointing at the same Google/Todoist account, silently duplicating things like the Orchestrate calendar. v7.9 fixes that with a **D1 sync sidecar**: a cloud mirror of the four slices, so every origin/device converges on one logical store.
+The KV store above holds *credentials*. The app's actual **data** (the day plan, settings, saved history, life context) lives in each browser's `localStorage`, mirrored to a **D1 sync sidecar** (v7.9): a cloud copy of the four slices, so every origin/device converges on one logical store per user.
 
-Why D1 here when KV was right for credentials? Different requirements: this is **durable app data** the user edits and reloads across devices, needing **read‑your‑writes** (you change a setting and expect it on the next load) — exactly where KV's eventual consistency is wrong and D1's strong consistency is right. It's also the natural home for future relational reads (v8 reviews over engagement history). Single‑user still means no `user_id` and last‑write‑wins is fine.
+Why D1 here when KV was right for credentials? Different requirements: this is **durable app data** the user edits and reloads across devices, needing **read‑your‑writes** (you change a setting and expect it on the next load) — exactly where KV's eventual consistency is wrong and D1's strong consistency is right. It's also the natural home for future relational reads (v8 reviews over engagement history).
 
-- **Binding:** `SYNC_DB` (D1), declared in [`wrangler.toml`](../../wrangler.toml). Schema in [`db/schema.sql`](../../db/schema.sql): one table `slices(key, value, schema_version, updated_at)`, one row per slice.
-- **Endpoints** (guarded by the same `X-App-Secret`): `GET /api/state` returns all slices; `PUT /api/state/:key` upserts one with a last‑write‑wins guard inside the SQL (`WHERE excluded.updated_at >= slices.updated_at`, else **409** with the current row). Error vocabulary matches the rest: `unauthorized` (401), `server_not_configured` (500), `storage_unavailable` (503), plus `unknown_slice` (404) / `invalid_body` (400) / `conflict` (409). Code: [`functions/api/state/`](../../functions/api/state/).
+- **Binding:** `SYNC_DB` (D1), declared in [`wrangler.toml`](../../wrangler.toml). Schema in [`db/schema.sql`](../../db/schema.sql): one table `slices(user_id, key, value, schema_version, updated_at)` with primary key `(user_id, key)` — one row per user per slice. `user_id` is the verified Access email (§5), so each account has its own four rows; v7.10 added the column (migration: [`db/migrate_add_user_id.sql`](../../db/migrate_add_user_id.sql)).
+- **Endpoints** (identity‑guarded like everything else): `GET /api/state` returns the caller's identity plus their slices (`{ user, slices }` — the `user` field drives the client's identity‑switch guard, §5); `PUT /api/state/:key` upserts one slice with a last‑write‑wins guard inside the SQL (`WHERE excluded.updated_at >= slices.updated_at`, else **409** with the current row). Error vocabulary matches the rest: `unauthorized` (401), `server_not_configured` (500), `storage_unavailable` (503), plus `unknown_slice` (404) / `invalid_body` (400) / `conflict` (409). Code: [`functions/api/state/`](../../functions/api/state/).
 - **Client half:** [`src/lib/cloudSync.ts`](../../src/lib/cloudSync.ts) + the `SyncGate` cold‑start gate. The conflict model and merge rules are documented in [data-model.md](../data-model.md) §7.
 
 ---
 
-## 5. Locking the door: one shared secret
+## 5. Locking the door: Cloudflare Access
 
-We've put secrets on the server. But the server is on the public internet — anyone can send a request to `https://yourapp.pages.dev/api/auth/google/token`. If those endpoints were open, a stranger could mint Google access tokens for your account and drive your Todoist. We need a guard.
+We've put secrets on the server. But the server is on the public internet — anyone can send a request to `https://yourapp.pages.dev/api/auth/google/token`. And unlike the original single‑user design (which guarded everything with one shared secret — see git history for that era), the app is now used by a *handful* of pre‑approved people, each of whom must see only their own data. So the guard has to answer two questions on every request: **is this person allowed in at all**, and **which person is it**?
 
-The instinct from "normal" web apps is **sessions**: a login form, a server‑side session store, session cookies, expiry, logout, CSRF tokens. That's a lot of machinery — and all of it exists to answer the question "*which* user is this?" Orchestrate has a deliberate, simplifying answer: **there is only one user.** It's a personal tool. So instead of accounts, the whole auth model is a single **shared secret**.
+Rather than building accounts, sessions, and a login screen into the app, Orchestrate pushes the whole problem to the edge with **Cloudflare Access** (part of Cloudflare Zero Trust):
 
-Here's how it works:
+- The entire origin — static assets *and* `/api/*` — sits behind an Access **application**. An unauthenticated visitor never even receives the app bundle; they get a Google sign‑in page.
+- The Access **policy** is the allowlist: `Allow → Emails ∈ [you + the people you've approved]`. Adding a friend is a dashboard edit, not a code change. (The free Zero Trust plan covers 50 users — far more than needed.)
+- The **identity provider** is Google SSO, reusing the *same* Google OAuth client as the calendar integration (one extra authorized redirect URI pointing at `<team>.cloudflareaccess.com`). One Google Cloud project serves both login and calendar.
+- After sign‑in, Access sets a session cookie (`CF_Authorization`) on the origin. Because app and backend are same‑origin (§3), every `fetch('/api/…')` carries it automatically — the client attaches **no credential of its own** anymore.
 
-- You generate a high‑entropy string and set it on the Cloudflare project as `APP_SHARED_SECRET` (§10).
-- You enter that same string once in the app's Settings. It's saved in `localStorage` (key `orchestrate-cf-secret`) and sent as the **`X-App-Secret` header** on every backend request.
-- Each guarded Function compares the header to the env var. Match → proceed; mismatch → `401`.
+### How a Function knows who's calling
 
-Why a header rather than a cookie or session?
+Access doesn't just gate requests — it **injects identity**. Every request that passes the edge carries a `Cf-Access-Jwt-Assertion` header: a **JWT** (JSON Web Token — a signed statement of claims) asserting who authenticated. The Worker must *verify* it rather than trust it blindly (defense in depth — e.g. against a misconfigured route or a direct-to-origin path):
 
-- **No accounts, by design.** There's no "which user," so there's nothing for a session to track.
-- **Stateless.** The check is a string comparison against an env var — no session store, no lifecycle, no extra KV. This fits the stateless‑Worker model perfectly.
-- **One secret, both integrations.** The same value guards Google and Todoist; it's stored once and rides every request. (In the code, the secret lives in [`src/lib/appSecret.ts`](../../src/lib/appSecret.ts) and is surfaced to React reactively through the [`useAppSecret`](../../src/hooks/useAppSecret.ts) hook, so the UI updates the moment it's entered or changed.)
+- `requireUser(request, env)` in [`functions/_shared.ts`](../../functions/_shared.ts) verifies the JWT's signature against the Zero Trust team's public keys (fetched from `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` via `jose`'s remote JWKS, cached per isolate), and checks the issuer and the application's **AUD tag** (`CF_ACCESS_AUD`).
+- The verified `email` claim (lowercased) becomes the user id — the KV key prefix (§4) and the D1 `user_id` (§4a).
+- Every endpoint starts with the same three lines:
 
-The honest trade‑off: a header secret is a **bearer credential** — anyone who has it gets in, and it doesn't expire on its own. We accept that because it's high‑entropy, only ever travels over HTTPS, sits in a header (not a URL, so it can't leak via browser history or `Referer`), and can be **rotated instantly** (change the env var, re‑enter it). For a single‑user tool, that's a proportionate guard. (§11 revisits what it deliberately is *not*.)
+```ts
+const auth = await requireUser(request, env);
+if (auth instanceof Response) return auth;
+// auth.email is the verified identity
+```
 
-### What "public + single‑tenant" really means
+Errors reuse the established vocabulary: missing/invalid JWT → `401 unauthorized`; `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` unset → `500 server_not_configured`.
 
-It's worth making the consequences explicit, because the app being publicly reachable can feel alarming:
+**Local dev bypass.** `wrangler pages dev` has no Access in front of it, so `.dev.vars` sets `DEV_USER_EMAIL` — when present, `requireUser` skips verification and assumes that identity. Setting a different email simulates a second user (their own KV keys, their own D1 rows). It must never be set in production.
 
-- **The SPA is inert without the secret.** It's just JavaScript. The bundle contains no client secret and no tokens. Unauthenticated, the most it can do is render the "enter app secret" prompt.
-- **KV holds exactly one person's tokens, in global keys.** There is no per‑user partitioning — the design assumes a single operator. That's why the keys in §4 are just `google:refresh_token`, not `user:123:google:refresh_token`.
-- **The shared secret is the entire perimeter.** Whoever holds it can act as you. Treat it like a password: don't commit it; rotate it if it leaks.
-- **Two people with the same secret share one identity.** A second person entering your secret would read and write *your* Google and Todoist — there is no "second user," just two clients of the same single tenant. That's acceptable precisely because this is a personal tool. It is **not** a multi‑tenant design, and turning it into one would require real per‑user auth and per‑user KV key namespacing — not just handing out the secret.
+### What multi‑user means for the browser
 
-With the door locked, we can finally walk the interesting path: the Google OAuth flow.
+One subtlety: `localStorage` is per **browser profile**, not per Access identity. If you sign out and a friend signs in on the same machine, their cloud data must not merge with your local slices. The client handles this with an **identity‑switch guard**: `GET /api/state` returns the caller's email, the client compares it with the `orchestrate-user` stamp in localStorage, and on a mismatch clears all local app state before merging ([`src/lib/cloudSync.ts`](../../src/lib/cloudSync.ts)). And when the Access session **expires**, `/api/*` fetches stop returning JSON (the edge redirects to the login page) — the client detects this (`redirect: 'manual'` + `SessionExpiredError` in [`src/lib/identity.ts`](../../src/lib/identity.ts)) and surfaces a "reload to sign in again" banner; a reload re-runs the SSO, usually silently.
+
+### Two allowlists, one Google client
+
+Being allowed **into the app** (the Access policy) and letting the app **touch your calendar** (Google's consent) are separate grants. Because the Google OAuth client is in **Testing** mode, each user who connects their calendar must also be listed as a **test user** in the Google Cloud console (cap 100). Both lists are managed against the same Google client; [deployment.md](../deployment.md) covers both.
 
 ---
 
 ## 6. Walkthrough: connecting Google Calendar
 
-This is the **authorization‑code flow** — the full, server‑mediated OAuth dance. Here's the whole thing at a glance, then we'll narrate it:
+This is the **authorization‑code flow** — the full, server‑mediated OAuth dance. Note this is a *second, independent* Google interaction from the Access login in §5: that one proved who you are; this one grants the app calendar access. Here's the whole thing at a glance, then we'll narrate it:
 
 ```
-Browser (SPA)                Pages Functions (Worker)            Google
-  | enter shared secret           |                                |
-  | Connect ───fetch /login──────▶| build consent URL (signed state)|
-  | ◀──{ url }────────────────────|                                |
-  | ──redirect──────────────────────────────────────────────────▶ | consent screen
-  |                               | ◀──/callback?code&state─────── |
+Browser (SPA, behind Access)     Pages Functions (Worker)            Google
+  | Connect ───fetch /login──────▶| verify Access JWT                |
+  |                               | build consent URL                |
+  |                               |   (state signs email+return)    |
+  | ◀──{ url }────────────────────|                                 |
+  | ──redirect──────────────────────────────────────────────────▶  | consent screen
+  |                               | ◀──/callback?code&state──────── |
+  |                               | verify Access JWT (cookie rode  |
+  |                               |   the redirect) + state match   |
   |                               | exchange code → tokens (uses    |
   |                               |   the client secret)            |
-  |                               | store refresh_token in KV      |
-  | ◀──redirect /settings?gcal=connected ─────────────────────────|
-  | need a token ──fetch /token──▶| refresh_token → access_token   |
-  | ◀──{ access_token }───────────|                                |
-  | ──Bearer call──────────────────────────────────────────────▶  | Calendar API
+  |                               | store refresh_token in KV under |
+  |                               |   user:<email>:…                |
+  | ◀──redirect /settings?gcal=connected (or /?gcal=… for onboarding)
+  | need a token ──fetch /token──▶| refresh_token → access_token    |
+  | ◀──{ access_token }───────────|                                 |
+  | ──Bearer call──────────────────────────────────────────────▶   | Calendar API
 ```
 
-**Step 1 — kick off the login.** You enter the shared secret and click *Connect*. The browser calls [`GET /api/auth/google/login`](../../functions/api/auth/google/login.ts) with the `X-App-Secret` header. The Worker doesn't redirect you itself — it builds the Google **consent URL** and hands it back as `{ url }`, and the browser navigates to it. (Returning the URL rather than redirecting keeps the secret in a header instead of leaking it into a redirect.)
+**Step 1 — kick off the login.** You click *Connect* (in Settings, or the onboarding flow). The browser calls [`GET /api/auth/google/login`](../../functions/api/auth/google/login.ts) — optionally with `?return=home` so the callback lands back on `/` (onboarding) instead of the Settings tab. The Worker verifies the caller's identity, builds the Google **consent URL** and hands it back as `{ url }`; the browser navigates to it.
 
 That consent URL carries several parameters, each a deliberate choice:
 
 - `client_id`, `redirect_uri`, `response_type=code` — standard: "this app, send the result back here, and give me an authorization *code*."
-- `scope` — the permissions requested. We ask for the **least** that the feature needs: `calendar.calendarlist.readonly` (to list your calendars) and `calendar.events` (write plumbing for later).
-- `access_type=offline` **and** `prompt=consent` — this pair is what makes Google issue a **refresh token**. Google only returns one when you explicitly ask for offline access, and `prompt=consent` forces it to re‑issue one even on a repeat authorization. Without these two, you'd get an access token that dies in an hour with no way to renew server‑side — defeating the entire point of the migration.
-- `state` — a value we'll get back unchanged on the callback. This is our defense against **CSRF** (cross‑site request forgery): without it, an attacker could trick your browser into completing an OAuth callback *they* initiated, linking your session to *their* account. We'll come back to how `state` is built, because it's a neat trick.
+- `scope` — the least the features need: `calendar.calendarlist.readonly`, `calendar.events`, and `calendar.app.created` (the app‑managed Orchestrate calendar, v7.7).
+- `access_type=offline` **and** `prompt=consent` — this pair is what makes Google issue a **refresh token**. Without these two, you'd get an access token that dies in an hour with no way to renew server‑side — defeating the point.
+- `state` — a value we get back unchanged on the callback: our **CSRF** defense, and now also the **identity binding**.
 
-**Step 2 — you consent at Google.** Google shows its consent screen. (Because the app's consent screen is left in **Testing** mode — fine for a single user — you'll see a one‑time "Google hasn't verified this app" notice. See [deployment.md](../deployment.md) for the Testing‑mode details.) You approve.
+**How `state` is built (stateless, self‑verifying, identity‑bound).** `/login` signs a small JSON payload — timestamp, nonce, **the caller's email**, and the allowlisted return target — as `base64url(payload).HMAC‑SHA256(payload, OAUTH_STATE_SECRET)`. Only the server knows the signing key, so only our `/login` can mint a valid state; the signature *is* the proof, so nothing needs storing in KV (which also dodges KV's eventual consistency). Binding the email means a callback can only complete for the same person who started the flow — user A can't be tricked into storing user B's tokens.
 
-**Step 3 — Google calls us back.** Google redirects the browser to [`GET /api/auth/google/callback?code=…&state=…`](../../functions/api/auth/google/callback.ts). Two things to notice:
+**Step 2 — you consent at Google.** (Testing mode shows a one‑time "Google hasn't verified this app" notice; each user must be on the test‑user list — §5.)
 
-- This endpoint is **not** guarded by the shared secret. It can't be — *Google* is the caller, and Google can't attach our custom header. So how do we know this callback is legitimate and not a forgery? That's what `state` is for.
-- **The clever part: stateless CSRF protection.** When `/login` built the URL, it set `state = <timestamp>.<nonce>.<HMAC‑SHA256(timestamp.nonce, APP_SHARED_SECRET)>`. HMAC is a keyed signature — only someone who knows the secret can produce a valid one. On the callback, the Worker recomputes the signature and checks it matches and that the timestamp is under 10 minutes old. Because the signature *is* the proof, we don't have to store the nonce anywhere and look it up — no KV round‑trip, no session. The signature is self‑verifying. (This also dodges KV's eventual‑consistency: a stored nonce might not be readable yet on the callback.)
+**Step 3 — Google calls us back.** Google redirects the browser to [`GET /api/auth/google/callback?code=…&state=…`](../../functions/api/auth/google/callback.ts). In the single‑user era this was the one unauthenticated endpoint; now the redirect **passes through Access** — the browser carries its session cookie — so the callback *also* has a verified identity. It checks: valid signature, fresh (≤10 min), and **state.email === JWT email**.
 
-**Step 4 — exchange the code for tokens.** A `code` isn't a credential you can use; it's a one‑time voucher. The Worker POSTs it to Google's token endpoint **together with the client secret** (this is the moment the client secret earns its keep — it proves the request comes from the real app, not someone who merely intercepted the code). Google responds with `{ access_token, refresh_token, expires_in, scope }`.
+**Step 4 — exchange the code for tokens.** A `code` isn't a credential; it's a one‑time voucher. The Worker POSTs it to Google's token endpoint **together with the client secret** (the moment the client secret earns its keep). Google responds with `{ access_token, refresh_token, expires_in, scope }`.
 
-**Step 5 — store the crown jewel.** The Worker writes the refresh token (and the scope, and a cached copy of the access token) into KV, then redirects the browser back to `/settings?tab=integrations&gcal=connected`.
+**Step 5 — store the crown jewel.** The Worker writes the refresh token (plus scope and a cached access token) into KV under the verified user's keys, then redirects the browser to the state's return target (`/settings?tab=integrations&gcal=connected`, or `/?gcal=connected` for onboarding).
 
-**Step 6 — the UI catches up.** The Settings page notices `?gcal=connected`, calls `/status` to confirm the server really holds a token, flips to **Connected**, and loads your calendar list. (The frontend orchestration lives in [`GoogleCalendarContext.tsx`](../../src/context/GoogleCalendarContext.tsx) and [`GoogleCalendarSetup.tsx`](../../src/components/settings/GoogleCalendarSetup.tsx).)
-
-At the end of this, the refresh token sits safely in KV and the browser has seen nothing more dangerous than a short‑lived access token.
+**Step 6 — the UI catches up.** Wherever the redirect lands, the mounted `GoogleConnectCard` processes `?gcal=…` (via the [`useGcalCallback`](../../src/hooks/useGcalCallback.ts) hook), calls `/status` to confirm the server really holds a token, flips to **Connected**, and loads the calendar list. (Frontend orchestration: [`GoogleCalendarContext.tsx`](../../src/context/GoogleCalendarContext.tsx).)
 
 ---
 
@@ -184,71 +183,62 @@ At the end of this, the refresh token sits safely in KV and the browser has seen
 Connecting is the hard part; using it is easy. Whenever the app needs to call the Calendar API:
 
 1. The provider first checks its **in‑memory** access‑token cache. If it has a token that's still valid, it uses it directly — no backend call at all.
-2. Otherwise it calls [`GET /api/auth/google/token`](../../functions/api/auth/google/token.ts) (with the shared secret). The Worker:
+2. Otherwise it calls [`GET /api/auth/google/token`](../../functions/api/auth/google/token.ts). The Worker:
    - returns the **KV‑cached** access token if it isn't near expiry, otherwise
    - calls Google's token endpoint with `grant_type=refresh_token` to mint a fresh one, re‑caches it in KV (with a TTL matching its lifetime), and returns it.
 3. The browser then calls the Calendar REST API **directly**, using that token as a `Bearer` header ([`googleCalendarApi.ts`](../../src/lib/googleCalendarApi.ts)). Google's API sends CORS headers for browser Bearer requests, so these calls don't need to go through our Worker — only the *token minting* does.
 
 There's a subtle but important consequence here: the browser only ever holds a token that's useless in an hour. If that token leaks, the damage window is tiny, and the refresh token that could renew it indefinitely is never exposed.
 
-**On reload.** When the app starts (and whenever the shared secret changes — the provider watches it reactively via `useAppSecret`), it calls `/status` once. If the server still holds a refresh token, you're **Connected** with no interaction — the connection survives reloads and works on any device once the secret is entered. The persisted `settings.googleCalendarConnected` flag is just a cached hint of the last‑known result, and it's written *only when the value actually changes*, so a Todoist‑only user who never touched Google doesn't pay a settings write on every load.
+**On reload.** When the app starts, the provider calls `/status` once. If the server holds a refresh token for this user, you're **Connected** with no interaction — the connection survives reloads and works on any device (the Access login is the only per‑device step). The persisted `settings.googleCalendarConnected` flag is just a cached hint, written only when the value actually changes.
 
-**Disconnect** ([`disconnect.ts`](../../functions/api/auth/google/disconnect.ts)) revokes the refresh token at Google (best‑effort) and deletes the KV keys; the browser drops its in‑memory token and the connected flag.
+**Disconnect** ([`disconnect.ts`](../../functions/api/auth/google/disconnect.ts)) revokes the refresh token at Google (best‑effort) and deletes that user's KV keys.
 
 ---
 
 ## 8. Walkthrough: Todoist, and why it's a *proxy* instead
 
-Now the contrast that makes the design click. Todoist's credential is a single long‑lived personal token — it *is* the keys to the kingdom, with no short‑lived derivative to hand out. So the Google pattern ("mint a disposable token and let the browser call the API directly") doesn't apply: there's no disposable token to mint. If we want the token to stay off the browser, the browser can never call Todoist directly at all.
+Now the contrast that makes the design click. Todoist's credential is a single long‑lived personal token — it *is* the keys to the kingdom, with no short‑lived derivative to hand out. So the Google pattern ("mint a disposable token and let the browser call the API directly") doesn't apply. If we want the token to stay off the browser, the browser can never call Todoist directly at all.
 
-The answer is a **proxy**. A proxy is a server endpoint that stands in front of the real API: the browser calls *us*, we attach the secret and forward the call to *them*, and relay the response back. The token is added server‑side and never appears in the browser.
+The answer is a **proxy**: the browser calls *us*, we attach the secret and forward the call to *them*, and relay the response back. That's exactly [`functions/api/todoist/[[path]].ts`](../../functions/api/todoist/%5B%5Bpath%5D%5D.ts) — a **catch‑all** route (the `[[path]]` syntax matches any sub‑path). Its job each request:
 
-That's exactly [`functions/api/todoist/[[path]].ts`](../../functions/api/todoist/%5B%5Bpath%5D%5D.ts) — a **catch‑all** route (the `[[path]]` syntax matches any sub‑path). Its job each request:
-
-1. Check the shared secret.
-2. Read `todoist:token` from KV.
+1. Verify the Access JWT → the caller's email.
+2. Read `user:<email>:todoist:token` from KV.
 3. Rewrite `/api/todoist/<anything>` → `https://api.todoist.com/<anything>`, copy the method/body, **inject** `Authorization: Bearer <token>`, and forward.
 4. Relay Todoist's response straight back.
 
-The frontend is none the wiser that it's not talking to Todoist directly: [`todoistApi.ts`](../../src/lib/todoistApi.ts) just points `API_BASE` at `/api/todoist/api/v1` (same origin, in both dev and prod), and [`TodoistContext.tsx`](../../src/context/TodoistContext.tsx) attaches the `X-App-Secret` header instead of a token. (This also retired the old Vite dev proxy — the Function is the proxy now.)
+The frontend is none the wiser that it's not talking to Todoist directly: [`todoistApi.ts`](../../src/lib/todoistApi.ts) just points `API_BASE` at `/api/todoist/api/v1` (same origin, in both dev and prod); no headers to attach — the Access cookie is the authentication.
 
 Storing and checking the token is a tiny trio of endpoints that mirror the Google ones:
 
 | Route | Method | Purpose |
 |---|---|---|
-| [`/api/todoist-auth/token`](../../functions/api/todoist-auth/token.ts) | POST | Validates the pasted token against Todoist's `/projects` endpoint, then stores it in KV. |
-| [`/api/todoist-auth/status`](../../functions/api/todoist-auth/status.ts) | GET | Reports `{ configured }` — whether a token is held. |
-| [`/api/todoist-auth/disconnect`](../../functions/api/todoist-auth/disconnect.ts) | POST | Deletes the token from KV. |
+| [`/api/todoist-auth/token`](../../functions/api/todoist-auth/token.ts) | POST | Validates the pasted token against Todoist's `/projects` endpoint, then stores it under the caller's KV key. |
+| [`/api/todoist-auth/status`](../../functions/api/todoist-auth/status.ts) | GET | Reports `{ configured }` — whether the caller holds a token. |
+| [`/api/todoist-auth/disconnect`](../../functions/api/todoist-auth/disconnect.ts) | POST | Deletes the caller's token from KV. |
 
-One real consequence to be honest about: because the token lives server‑side, **every** Todoist operation — every reschedule, complete, habit sync, task refresh — now goes through the Worker. It's not a one‑time thing. That sounds expensive; §12 shows why, at single‑user scale, it's free. (The UI for all this is [`TodoistSetup.tsx`](../../src/components/todoist/TodoistSetup.tsx).)
+One real consequence to be honest about: because the token lives server‑side, **every** Todoist operation goes through the Worker. That sounds expensive; §12 shows why, at this scale, it's free. (The UI for all this is the reusable [`TodoistConnectCard`](../../src/components/todoist/TodoistConnectCard.tsx), mounted by Settings and onboarding.)
 
 ---
 
 ## 9. The shared plumbing: routing, the guard, and the error model
 
-Both integrations lean on a little common machinery in [`functions/_shared.ts`](../../functions/_shared.ts), worth understanding because it's where the consistency comes from.
+Both integrations lean on common machinery in [`functions/_shared.ts`](../../functions/_shared.ts), worth understanding because it's where the consistency comes from.
 
-**Routing recap.** Everything under `/api/*` is a Function; everything else is a static file. The SPA's client‑side routes (`/settings`, `/focus`, …) are handled by a catch‑all in [`public/_redirects`](../../public/_redirects) (`/* → /index.html 200`) so deep links work. Crucially, Pages matches Functions **before** that static fallback, so `/api/...` calls hit the Worker and aren't swallowed by the SPA fallback.
+**Routing recap.** Everything under `/api/*` is a Function; everything else is a static file. The SPA's client‑side routes (`/settings`, `/focus`, …) are handled by a catch‑all in [`public/_redirects`](../../public/_redirects) (`/* → /index.html 200`) so deep links work. Pages matches Functions **before** that static fallback. And in front of *all* of it sits the Access application (§5).
 
-**One guard to rule them all.** Every secret‑guarded endpoint starts with `requireAppSecret(request, env)`. It returns a ready‑made error `Response` (or `null` if the request is allowed), so each handler is just:
-
-```ts
-const authError = requireAppSecret(request, env);
-if (authError) return authError;
-```
+**One guard to rule them all.** Every endpoint starts with `requireUser(request, env)` — it returns either the verified `{ email }` or a ready‑made error `Response` to relay. There is exactly one implementation of JWT verification, shared by the Google functions (re‑exported through [`_lib.ts`](../../functions/api/auth/google/_lib.ts)), the Todoist proxy/auth trio, the state endpoints, and [`/api/me`](../../functions/api/me.ts) (a tiny "who am I" endpoint).
 
 **A deliberate error vocabulary.** Rather than letting failures collapse into an opaque `500`, the backend distinguishes them — which is what lets the setup screens show a useful message instead of "something broke":
 
 | Condition | Status | `error` code |
 |---|---|---|
-| `APP_SHARED_SECRET` not set on the Worker | `500` | `server_not_configured` |
-| `X-App-Secret` missing or wrong | `401` | `unauthorized` |
-| A KV read/write threw | `503` | `storage_unavailable` |
+| Access env (`CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD`) not set on the Worker | `500` | `server_not_configured` |
+| `Cf-Access-Jwt-Assertion` missing, unverifiable, or without an email claim | `401` | `unauthorized` |
+| A KV/D1 read/write threw | `503` | `storage_unavailable` |
 | Upstream (Todoist or Google) unreachable / non‑JSON | `502` | `todoist_unreachable` / `google_unreachable` |
 
-The split between `server_not_configured` (a *deploy* problem — you forgot to set the secret) and `unauthorized` (a *secret* problem — you typed it wrong) matters: before this distinction, a misconfigured Worker looked exactly like a wrong password, which is maddening to debug. The Google side raises these as a `GoogleWorkerError` from its KV/fetch wrappers in [`_lib.ts`](../../functions/api/auth/google/_lib.ts); the callback turns them into `?gcal=error&reason=<code>`. The frontend maps every code to a human sentence (in [`GoogleCalendarSetup.tsx`](../../src/components/settings/GoogleCalendarSetup.tsx) and [`TodoistSetup.tsx`](../../src/components/todoist/TodoistSetup.tsx)).
-
-> Implementation note: `_lib.ts` re‑exports `json` and `requireAppSecret` from `_shared.ts` rather than keeping its own copies, so the Google and Todoist functions share one guard and one error model.
+The split between `server_not_configured` (a *deploy* problem) and `unauthorized` (an *identity* problem) matters: before this distinction, a misconfigured Worker looked exactly like an auth failure, which is maddening to debug. The Google side raises these as a `GoogleWorkerError` from its KV/fetch wrappers in `_lib.ts`; the callback turns them into `?gcal=error&reason=<code>`. The frontend maps every code to a human sentence (in [`useGcalCallback.ts`](../../src/hooks/useGcalCallback.ts) and [`TodoistConnectCard.tsx`](../../src/components/todoist/TodoistConnectCard.tsx)).
 
 ---
 
@@ -258,18 +248,21 @@ All server config lives on the **Cloudflare Pages project** (per environment —
 
 | Name | Kind | Used by | What it does |
 |---|---|---|---|
+| `CF_ACCESS_TEAM_DOMAIN` | plaintext | every guarded endpoint | The Zero Trust team domain (e.g. `myteam.cloudflareaccess.com`) — where the JWT's public keys live. |
+| `CF_ACCESS_AUD` | secret | every guarded endpoint | The Access application's AUD tag; the JWT's audience must match. |
 | `GOOGLE_CLIENT_ID` | secret | Google `login`/`callback`/`token` | Identifies the app to Google. |
 | `GOOGLE_CLIENT_SECRET` | secret | Google `callback`/`token` | Proves the app's identity during code exchange + refresh. **Never shipped to the browser.** |
-| `APP_SHARED_SECRET` | secret | every guarded endpoint + `state` signing | The single‑user guard, and the HMAC key for OAuth `state`. You enter the same value in the app. |
+| `OAUTH_STATE_SECRET` | secret | Google `login`/`callback` | Server‑only HMAC key signing the OAuth `state` (§6). Nobody types this anywhere but the dashboard. |
 | `APP_ORIGIN` | plaintext (optional) | Google `login`/`callback` | Pins the canonical origin for the redirect URI (see below). Defaults to the request origin. |
-| `OAUTH_KV` | KV binding | all credential storage | Binds the KV namespace (also declared in [`wrangler.toml`](../../wrangler.toml)). |
-| `SYNC_DB` | D1 binding | `/api/state` (v7.9) | Binds the D1 database mirroring the app-data slices (declared in [`wrangler.toml`](../../wrangler.toml); schema in [`db/schema.sql`](../../db/schema.sql)). |
+| `DEV_USER_EMAIL` | `.dev.vars` only | `requireUser` | Local‑dev identity bypass (§5). **Never set in production.** |
+| `OAUTH_KV` | KV binding | credential storage | Binds the KV namespace (declared in [`wrangler.toml`](../../wrangler.toml)). |
+| `SYNC_DB` | D1 binding | `/api/state` | Binds the D1 database mirroring the app‑data slices (schema: [`db/schema.sql`](../../db/schema.sql)). |
 
-The browser side has exactly **one** related value: the shared secret in `localStorage` (`orchestrate-cf-secret`). There are no `VITE_*` build‑time variables for these integrations anymore — the Google client ID moved server‑side along with everything else.
+The browser side holds **no auth-related value at all** — just the `orchestrate-user` identity stamp (§5) and a couple of cached "connected" flags in settings.
 
-**Why `APP_ORIGIN` exists.** Cloudflare Pages serves every deployment at a unique preview URL (`<hash>.<project>.pages.dev`) in addition to your real domain. Google's OAuth, though, requires the `redirect_uri` to *exactly* match one you registered. If the Worker derived the origin from whichever preview URL happened to serve the request, the redirect URI would drift and Google would reject it (`redirect_uri_mismatch`). Setting `APP_ORIGIN` pins one canonical origin, so there's one redirect URI to register and previews don't break it.
+**Why `APP_ORIGIN` exists.** Cloudflare Pages serves every deployment at a unique preview URL (`<hash>.<project>.pages.dev`) in addition to your real domain. Google's OAuth requires the `redirect_uri` to *exactly* match one you registered; pinning `APP_ORIGIN` keeps one canonical redirect URI so previews don't break it.
 
-**Local development.** The same names go in a gitignored `.dev.vars` file, and you run the stack with `wrangler pages dev` (which actually executes the Functions). Note the parity gap: plain `npm run dev` (Vite) serves the SPA but **not** the Functions, so both integrations will just show their connect prompt under it. Use `wrangler pages dev` when you need the backend. (Full steps: [deployment.md](../deployment.md) Part D.)
+**Local development.** The Google/state config goes in a gitignored `.dev.vars` plus `DEV_USER_EMAIL`, and you run the stack with `wrangler pages dev` (which actually executes the Functions). Note the parity gap: plain `npm run dev` (Vite) serves the SPA but **not** the Functions, so both integrations will just show their connect prompt under it. (Full steps: [deployment.md](../deployment.md) Part D.)
 
 ---
 
@@ -277,51 +270,51 @@ The browser side has exactly **one** related value: the shared secret in `localS
 
 Pulling the threads together:
 
-- **The guard.** `login`, `token`, `status`, `disconnect`, and the Todoist proxy all require `X-App-Secret === APP_SHARED_SECRET`. The `callback` can't (Google calls it) and is instead protected by the signed `state` (§6).
-- **Secret separation.** The Google client secret and refresh token, and the Todoist token, never reach the browser. A fully compromised browser leaks only the shared secret and a ≤1‑hour access token — and the shared secret can be rotated without touching Google or Todoist.
-- **Transport.** Everything is HTTPS — same‑origin between browser and Worker, HTTPS out to Google/Todoist. The secret rides a header, never a URL.
-- **What it deliberately is *not*.** The secret comparison isn't constant‑time, and there's no rate limiting or lockout. At single‑user scale with a high‑entropy secret, brute force is out of the threat model. If the secret leaks, rotate it; if you suspect a token leaked, Disconnect (which revokes/clears it) or revoke access from the provider's own settings.
-
-If you ever wanted defense‑in‑depth beyond the single secret, the low‑effort upgrade is to front the whole app with **Cloudflare Access** (Google SSO at the edge), which would gate even the static site behind your Google login — no app code required. It's noted here as a future option, not a current need.
+- **The perimeter is Cloudflare Access.** Nothing — not even the static bundle — is served to an unauthenticated visitor. The allowlist is the Access policy; sessions, expiry, and the login UI are Cloudflare's problem, not app code.
+- **The guard is JWT verification.** Every Function independently verifies `Cf-Access-Jwt-Assertion` (signature, issuer, audience) rather than trusting the edge blindly. The verified email is the tenant key for KV and D1.
+- **Per‑user isolation.** Credentials are namespaced (`user:<email>:…`), sync rows are keyed `(user_id, key)`, and the OAuth `state` binds the initiating identity — so users cannot read, overwrite, or complete flows for each other.
+- **Secret separation.** The Google client secret, per‑user refresh tokens, and Todoist tokens never reach the browser. A fully compromised browser leaks only a ≤1‑hour Google access token and that user's own app data.
+- **Transport.** Everything is HTTPS; identity rides an HttpOnly cookie set by Access, never a URL or app‑managed storage.
+- **What it deliberately is *not*.** There's no app‑level rate limiting or audit logging (Zero Trust's own logs cover sign‑ins). Access session length is a dashboard setting; an expired session shows a "reload to sign in" banner rather than an in‑app re‑auth flow.
 
 ---
 
 ## 12. Cost & quotas
 
-A fair question, given §8 established that *every* Todoist call now hits the Worker: does this rack up Cloudflare charges? For a single user, no — it sits orders of magnitude inside the free tier. The reasoning:
+A fair question, given §8 established that *every* Todoist call hits the Worker: does this rack up Cloudflare charges? For a handful of users, no — it sits orders of magnitude inside the free tiers. The reasoning:
 
-- **What's billed:** Pages **Functions invocations** (your `/api/*` calls) count as Workers requests. Each proxied/OAuth call is **1 invocation + 1 KV read**; KV *writes* happen only when you connect, so they're negligible.
-- **What's free:** **static asset requests** (the SPA itself) are free and unlimited — loading the app costs nothing.
+- **What's billed:** Pages **Functions invocations** (your `/api/*` calls) count as Workers requests. Each proxied/OAuth call is **1 invocation + 1 KV read**; KV *writes* happen only when someone connects, so they're negligible. D1's free tier (5M reads / 100k writes per day) dwarfs a few users' slice pushes.
+- **What's free:** **static asset requests** (the SPA itself) are free and unlimited, and **Zero Trust is free up to 50 users**.
 
-| Resource | Free plan (verify — Cloudflare adjusts these) | Realistic single‑user load |
+| Resource | Free plan (verify — Cloudflare adjusts these) | Realistic small‑group load |
 |---|---|---|
-| Functions / Workers requests | ~100,000 / day | a few hundred → low thousands on a heavy day |
-| KV reads | ~100,000 / day | = the call count (1 per call) |
+| Functions / Workers requests | ~100,000 / day | a few hundred → low thousands per active user‑day |
+| KV reads | ~100,000 / day | ≈ the call count (1 per call) |
 | KV writes | ~1,000 / day | ~0 (only on connect) |
+| Access (Zero Trust) seats | 50 users | a handful |
 
-An intense hour of planning — 100+ reschedules/completes plus the periodic refreshes — is roughly **150–300 invocations**, about 0.2% of the daily free allowance. You'd need ~100,000 Todoist operations *in a day* to approach the ceiling, which one person can't reach by hand. And on the Free plan there's no surprise bill: if you somehow hit the limit, Functions return errors until the UTC reset rather than auto‑charging. (The paid plan is $5/mo for ~10M requests/month, strictly opt‑in.)
-
-Two things keep the count down for free: the frontend's **stale‑while‑revalidate** cache (it won't refetch task/project data younger than 5 minutes, and dedupes focus‑refreshes within 30s — see [synthesis.md §6.2](../synthesis.md)), and Google's **in‑memory + KV access‑token caches** (§7). The only thing that would change this calculus is going multi‑user — which is explicitly out of scope.
+An intense hour of planning — 100+ reschedules/completes plus periodic refreshes — is roughly **150–300 invocations**, about 0.2% of the daily free allowance per person. Two things keep the count down for free: the frontend's **stale‑while‑revalidate** cache (see [synthesis.md §6.2](../synthesis.md)), and Google's **in‑memory + KV access‑token caches** (§7).
 
 ---
 
 ## 13. Assumptions that would force a redesign
 
-Everything above rests on a small set of assumptions. They're sound for a personal tool; the point of listing them is that if one stops holding, the design should be revisited — not patched.
+Everything above rests on a small set of assumptions. They're sound for a personal tool shared with a few people; if one stops holding, the design should be revisited — not patched.
 
-- **Exactly one user / one tenant.** KV keys are global; there is no per‑user namespacing. Multi‑user is not a config change — it's a different design.
-- **The shared secret is the sole guard** (no rate limiting, lockout, or constant‑time compare). Fine for one high‑entropy secret; not fine if the secret must be shared widely.
+- **A small, personally‑approved user set.** Identity is an email allowlist in one Zero Trust dashboard; "signup" is you adding a friend. Beyond ~50 users (the free-plan seat cap) or beyond people you personally trust, this needs real onboarding, quotas, and isolation review.
+- **Cloudflare Access fronts everything.** The Workers trust the edge to have run authentication (they verify the JWT, but there's no second factor). Serving the origin from anywhere that bypasses Access would break the model.
+- **Google's Testing‑mode consent** caps calendar-connected users at 100 test users and shows scary screens; friends must be added to the test‑user list by hand.
 - **KV's ~≤60s eventual consistency is acceptable** for token reads/writes.
-- **Same‑origin** browser↔Worker, so there's no CORS and the secret can ride a header.
-- **The browser is trusted enough** to hold the shared secret and a ≤1‑hour access token — it already holds all the app data anyway.
-- **No app‑data backend.** The Worker is a credential vault + proxy; app state stays in `localStorage`. Whether *that* should change is a separate question, tracked in [persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md).
+- **Same‑origin** browser↔Worker, so the Access cookie rides every request and there's no CORS.
+- **Whole‑slice LWW sync per user.** No concurrent multi‑writer editing of one account; the identity‑switch guard assumes one active identity per browser profile at a time.
 
 And a few sharp edges worth knowing:
 
-- **KV "backup."** If the namespace is deleted or rebound, both connections drop — but the tokens are re‑obtainable (re‑paste Todoist, re‑consent Google), so it's a reconnect, not data loss. No backup story is needed.
-- **Preview environments** return `server_not_configured` unless you copy the vars/bindings into Cloudflare's Preview environment — intentional, so throwaway previews don't carry live secrets.
-- **Secret rotation** changes the HMAC key, so any OAuth login *in flight* during rotation fails with `reason=state` (just retry), and every browser must re‑enter the new value.
-- **Observability.** Failures come back as explicit codes (not opaque 500s), and Worker logs are available via the Cloudflare dashboard or `wrangler tail`, so a broken deploy is diagnosable.
+- **KV "backup."** If the namespace is deleted or rebound, connections drop — but tokens are re‑obtainable (re‑paste Todoist, re‑consent Google), so it's a reconnect, not data loss. D1, in contrast, holds real data — it's included in Cloudflare's Time Travel restore window.
+- **Preview environments** are deliberately not configured: no Access app, no secrets — they return `server_not_configured` rather than carrying live credentials.
+- **Rotating `OAUTH_STATE_SECRET`** invalidates any OAuth login *in flight* (`reason=state` — just retry). Nothing else depends on it.
+- **The service worker** never caches redirected responses, so an Access login page can't be cached as the app shell ([`public/sw.js`](../../public/sw.js)).
+- **Observability.** Failures come back as explicit codes (not opaque 500s); Worker logs are in the Cloudflare dashboard or `wrangler tail`; sign‑in activity is in the Zero Trust logs.
 
 ---
 
@@ -331,21 +324,23 @@ For completeness, the browser half of all this:
 
 | File | Role |
 |---|---|
-| [`src/lib/appSecret.ts`](../../src/lib/appSecret.ts) | Stores/reads the shared secret; notifies subscribers when it changes. |
-| [`src/hooks/useAppSecret.ts`](../../src/hooks/useAppSecret.ts) | Reactive hook so the UI re‑renders the instant the secret is set/cleared. |
-| [`src/lib/googleAuth.ts`](../../src/lib/googleAuth.ts) | Google Worker client: `startGoogleLogin`, `fetchAccessToken`, `fetchConnectionStatus`, `disconnectGoogle`. |
+| [`src/lib/identity.ts`](../../src/lib/identity.ts) | The client's identity utilities: the `orchestrate-user` stamp, `SessionExpiredError`, redirect‑aware `apiFetch`, `/api/me` client. |
+| [`src/lib/googleAuth.ts`](../../src/lib/googleAuth.ts) | Google Worker client: `startGoogleLogin` (with return target), `fetchAccessToken`, `fetchConnectionStatus`, `disconnectGoogle`. |
 | [`src/lib/googleCalendarApi.ts`](../../src/lib/googleCalendarApi.ts) | Thin Calendar REST client; takes a Bearer token (calls Google directly). |
 | [`src/context/GoogleCalendarContext.tsx`](../../src/context/GoogleCalendarContext.tsx) | The provider: in‑memory token cache, connection state, connect/disconnect/refresh, reload reconnect. |
 | [`src/lib/todoistApi.ts`](../../src/lib/todoistApi.ts) | Proxy base URL + `getTodoistStatus`/`storeTodoistToken`/`disconnectTodoist`. |
-| [`src/context/TodoistContext.tsx`](../../src/context/TodoistContext.tsx) | Sends `X-App-Secret` on every call; resolves `isConfigured` from `/status`. |
-| [`GoogleCalendarSetup.tsx`](../../src/components/settings/GoogleCalendarSetup.tsx) / [`TodoistSetup.tsx`](../../src/components/todoist/TodoistSetup.tsx) | The Settings UIs: secret entry, connect/disconnect, post‑redirect handling. |
+| [`src/context/TodoistContext.tsx`](../../src/context/TodoistContext.tsx) | Resolves `isConfigured` from `/status`; session‑expiry and auth‑failure surfacing. |
+| [`src/lib/cloudSync.ts`](../../src/lib/cloudSync.ts) | The sync sidecar client: cold‑start pull‑and‑merge, identity‑switch guard, debounced pushes. |
+| [`src/hooks/useGcalCallback.ts`](../../src/hooks/useGcalCallback.ts) | Processes the OAuth callback redirect wherever it lands (Settings or onboarding). |
+| [`TodoistConnectCard.tsx`](../../src/components/todoist/TodoistConnectCard.tsx) / [`GoogleConnectCard.tsx`](../../src/components/settings/GoogleConnectCard.tsx) | Reusable connect/status cards, mounted by Settings and the onboarding flow. |
+| [`src/components/onboarding/Onboarding.tsx`](../../src/components/onboarding/Onboarding.tsx) | First‑run journey: what the app is → connect Todoist (required) → connect Google Calendar (encouraged). |
 
-The only client‑persisted state is the `orchestrate-cf-secret` key and a couple of cached "connected" flags in settings; the Google access token is memory‑only, and both the refresh token and the Todoist token are server‑only.
+The only client‑persisted auth‑adjacent state is the `orchestrate-user` identity stamp and a couple of cached "connected" flags in settings; the Google access token is memory‑only, and both the refresh token and the Todoist token are server‑only.
 
 ---
 
 ## See also
 
-- [../deployment.md](../deployment.md) — the step‑by‑step setup (Google Cloud client, Cloudflare project, KV, secrets, local dev, troubleshooting).
+- [../deployment.md](../deployment.md) — the step‑by‑step setup (Google Cloud client, Cloudflare project, Zero Trust/Access, KV, D1, secrets, local dev, troubleshooting).
 - [../synthesis.md](../synthesis.md) §7 (integrations), §11 (persistence) — where this fits in the app.
 - [../roadmap/engagement_record_strategy.md](../roadmap/engagement_record_strategy.md) — option E1 vs E2, and the calendar‑write feature this unlocks.

@@ -82,7 +82,32 @@ export function UserGuide() {
                         </Callout>
                     </Section>
 
-                    <Section id="layers" title="2. Where your data lives">
+                    <Section id="layers" title="2. Getting set up & where your data lives">
+                        <SubHeading>Getting set up</SubHeading>
+                        <p>
+                            Orchestrate is a personal deployment: you sign in with a <strong>pre-approved Google
+                            account</strong> (the login screen before the app loads), and everything you see belongs
+                            to that account. Two integrations shape what the app can do:
+                        </p>
+                        <ul className="list-disc pl-5 space-y-1.5">
+                            <li>
+                                <strong>Todoist — required.</strong> Orchestrate keeps no task list of its own; it
+                                plans your day <em>from</em> your Todoist tasks and writes completions back. Without
+                                it, planning is unavailable.
+                            </li>
+                            <li>
+                                <strong>Google Calendar — strongly recommended.</strong> Your meetings appear where
+                                you shape sessions, scheduled tasks can be time-blocked against them, and sessions
+                                sync back to a dedicated "Orchestrate" calendar.
+                            </li>
+                        </ul>
+                        <p className="text-text-light">
+                            The first-run flow walks you through both; you can manage them anytime in
+                            Settings → Integrations. Connections are held server-side, so they follow your account
+                            across devices.
+                        </p>
+
+                        <SubHeading>Where your data lives</SubHeading>
                         <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
                             <thead className="bg-surface-dark text-left">
                                 <tr>
@@ -104,14 +129,17 @@ export function UserGuide() {
                                 </Tr>
                                 <Tr>
                                     <Td><strong>Settings</strong></Td>
-                                    <Td>Capacity defaults, encrypted Todoist token, calendar config</Td>
+                                    <Td>Capacity defaults, calendar config, preferences</Td>
                                     <Td>Durable — independent of the day.</Td>
                                 </Tr>
                             </tbody>
                         </table>
                         <p className="text-text-light">
                             You don't need to think about this much. The important takeaway: your habits and seasons
-                            are safe across day boundaries. Today's task plan is ephemeral by design.
+                            are safe across day boundaries. Today's task plan is ephemeral by design. Everything is
+                            mirrored to a per-account cloud store, so your plan follows you across devices — and your
+                            integration credentials (the Todoist token, the Google connection) live only on the
+                            server, never in this browser.
                         </p>
                     </Section>
 
@@ -800,7 +828,7 @@ function Intro() {
 
 const TOC_ENTRIES: { id: string; label: string }[] = [
     { id: 'big-picture', label: '1. How Orchestrate sees your day' },
-    { id: 'layers', label: '2. Where your data lives' },
+    { id: 'layers', label: '2. Setup & where data lives' },
     { id: 'habit-entity', label: '3. Habits: the recurring backbone' },
     { id: 'pathways', label: '4. The three work pathways' },
     { id: 'true-rest', label: '5. True Rest' },

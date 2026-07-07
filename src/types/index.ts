@@ -218,7 +218,7 @@ export interface AppSettings {
     notificationPreference: NotificationPreference;
     sessionSlots: SessionSlot[];
     // v7.2: the Todoist token lives server-side (Cloudflare Worker + KV) — never in the browser, never
-    // in a backup. The app authenticates to the Worker proxy with the shared secret (`orchestrate-cf-secret`).
+    // in a backup. v7.10: requests authenticate via the Cloudflare Access session cookie (no in-app secret).
     googleCalendarIds?: GoogleCalendarEntry[]; // v7.2: the *selected* calendars to overlay (sourced from the Calendar API list)
     googleCalendarConnected?: boolean;         // v7.2: user has authorized Google Calendar via the server-mediated OAuth flow (Cloudflare Worker holds the refresh token); drives the connection re-check on load. Access tokens are minted server-side on demand and held only in memory.
     calendarViewMode?: CalendarViewMode;
@@ -239,6 +239,12 @@ export interface AppSettings {
     // v7.8: idle minutes before the engagement nudge fires (notif + persistent dashboard banner).
     // Default 10; 0 disables it.
     engagementNudgeMinutes?: number;
+    // v7.10: the first-run onboarding flow (what Orchestrate is → connect Todoist → connect Google
+    // Calendar) has been completed. Synced via D1, so it runs once per *account*, not per device.
+    onboardingComplete?: boolean;
+    // v7.10: the wizard Step 1 "connect Google Calendar" nudge was dismissed (persisted, unlike the
+    // old component-local wizard banner).
+    calendarNudgeDismissed?: boolean;
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────

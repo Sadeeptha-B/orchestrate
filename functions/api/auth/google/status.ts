@@ -1,14 +1,14 @@
 // GET /api/auth/google/status
-// Guarded by the shared secret. Reports whether a refresh token is held (i.e. connected) and the
+// Identity-guarded. Reports whether the caller's refresh token is held (i.e. connected) and the
 // granted scope. Drives the app's auto-reconnect / connected-state on load.
 
-import { isConnected, isGoogleWorkerError, json, requireAppSecret, type Env } from './_lib';
+import { isConnected, isGoogleWorkerError, json, requireUser, type Env } from './_lib';
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-    const authError = requireAppSecret(request, env);
-    if (authError) return authError;
+    const auth = await requireUser(request, env);
+    if (auth instanceof Response) return auth;
     try {
-        const { connected, scope } = await isConnected(env);
+        const { connected, scope } = await isConnected(env, auth.email);
         return json({ connected, scope });
     } catch (error) {
         if (isGoogleWorkerError(error)) return json({ error: error.code }, error.status);
