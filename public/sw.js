@@ -47,8 +47,10 @@ sw.addEventListener('fetch', (event) => {
     event.respondWith(
         fetch(event.request)
             .then((response) => {
-                // Cache successful responses
-                if (response.ok) {
+                // Cache successful, non-redirected responses. An expired Cloudflare Access session
+                // turns a navigation into a redirect chain ending at the Access login page — a 200
+                // that must never be cached as the app shell.
+                if (response.ok && !response.redirected) {
                     const clone = response.clone();
                     caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
                 }

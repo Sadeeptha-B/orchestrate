@@ -61,14 +61,15 @@ export function HeaderControls({ aboutTriggerRef }: HeaderControlsProps) {
                     }}
                 />
                 <p className="text-xs pt-1 border-t border-border mt-3 text-text-light">
-                    Connect Todoist and Google Calendar in{' '}
+                    Orchestrate plans from your Todoist tasks (required) and works best with Google
+                    Calendar connected. Manage both in{' '}
                     <button
                         onClick={() => { setShowAbout(false); navigate('/settings?tab=integrations'); }}
                         className="text-accent hover:underline cursor-pointer"
                     >
                         Settings
-                    </button>{' '}
-                    to get the most out of this app.
+                    </button>
+                    .
                 </p>
             </Modal>
         </>

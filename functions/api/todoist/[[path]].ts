@@ -1,18 +1,18 @@
 // Catch-all proxy: /api/todoist/* → https://api.todoist.com/*
 //
-// Guarded by the shared secret. Reads the Todoist personal token from Workers KV and injects it as
+// Identity-guarded. Reads the caller's Todoist personal token from Workers KV and injects it as
 // the Authorization header, so the token never reaches the browser (it used to live encrypted-but-
 // recoverable in localStorage). The frontend calls this same-origin proxy in both dev and prod.
 
-import { KV_TODOIST_TOKEN, TODOIST_API, type TodoistEnv, json, requireAppSecret } from '../../_shared';
+import { TODOIST_API, type TodoistEnv, json, requireUser, todoistTokenKey } from '../../_shared';
 
 export const onRequest: PagesFunction<TodoistEnv> = async ({ request, env }) => {
-    const authError = requireAppSecret(request, env);
-    if (authError) return authError;
+    const auth = await requireUser(request, env);
+    if (auth instanceof Response) return auth;
 
     let token: string | null;
     try {
-        token = await env.OAUTH_KV.get(KV_TODOIST_TOKEN);
+        token = await env.OAUTH_KV.get(todoistTokenKey(auth.email));
     } catch {
         return json({ error: 'storage_unavailable' }, 503);
     }

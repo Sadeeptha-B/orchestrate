@@ -36,6 +36,7 @@ function lazyWithReload<T extends ComponentType<object>>(factory: () => Promise<
     });
 }
 
+const Onboarding = lazyWithReload(() => import('./components/onboarding/Onboarding').then((mod) => ({ default: mod.Onboarding })));
 const Wizard = lazyWithReload(() => import('./components/wizard/Wizard').then((mod) => ({ default: mod.Wizard })));
 const Dashboard = lazyWithReload(() => import('./components/dashboard/Dashboard').then((mod) => ({ default: mod.Dashboard })));
 const Welcome = lazyWithReload(() => import('./components/Welcome').then((mod) => ({ default: mod.Welcome })));
@@ -61,16 +62,18 @@ function RouteFallback() {
 }
 
 function AppRoutes() {
-    const { plan } = useDayPlan();
+    const { plan, settings } = useDayPlan();
     const location = useLocation();
     const fromWelcome = (location.state as { fromWelcome?: boolean })?.fromWelcome === true;
+    // First-run onboarding (per account — the flag syncs via D1) runs before the daily Welcome hub.
+    const needsOnboarding = !settings.onboardingComplete;
 
     return (
         <Suspense fallback={<RouteFallback />}>
             <Routes>
                 <Route
                     path="/"
-                    element={plan.setupComplete ? <Dashboard /> : <Welcome />}
+                    element={needsOnboarding ? <Onboarding /> : plan.setupComplete ? <Dashboard /> : <Welcome />}
                 />
                 <Route
                     path="/setup"

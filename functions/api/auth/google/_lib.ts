@@ -1,26 +1,29 @@
 // Shared helpers for the Google Calendar OAuth Pages Functions.
 //
-// This is the *server-mediated* auth-code flow (engagement_record_strategy.md option E2),
-// the successor to the browser-only GIS token client (E1). The Worker holds the client
-// secret, performs the code→token exchange, and stores the long-lived refresh token in KV.
-// The browser never sees the refresh token — it asks the Worker for a short-lived access
-// token on demand. All guarded endpoints require the single shared secret.
+// This is the *server-mediated* auth-code flow (engagement_record_strategy.md option E2): the
+// Worker holds the client secret, performs the code→token exchange, and stores the long-lived
+// refresh token in KV. The browser never sees the refresh token — it asks the Worker for a
+// short-lived access token on demand.
+//
+// Multi-user: every endpoint resolves the caller's identity from the Cloudflare Access JWT
+// (requireUser), and all KV keys are namespaced per user email. The OAuth `state` binds the
+// initiating user's email so a callback can only store tokens under the same identity.
 //
 // Files prefixed with `_` are treated as modules, not routes, by Pages Functions.
 
-import { hasSharedSecret } from '../../../_shared';
+import { type AccessEnv, userKey } from '../../../_shared';
 
-export { json, requireAppSecret } from '../../../_shared';
+export { json, requireUser } from '../../../_shared';
 
-export interface Env {
-    /** KV namespace holding the refresh token + cached access token (single user). */
+export interface Env extends AccessEnv {
+    /** KV namespace holding per-user refresh tokens + cached access tokens. */
     OAUTH_KV: KVNamespace;
     /** Google OAuth "Web application" client ID. */
     GOOGLE_CLIENT_ID: string;
     /** Google OAuth client secret (server-only — never shipped to the browser). */
     GOOGLE_CLIENT_SECRET: string;
-    /** The single shared secret guarding every browser→Worker request + signing OAuth state. */
-    APP_SHARED_SECRET: string;
+    /** Server-only HMAC key signing the OAuth `state` (stateless CSRF protection). */
+    OAUTH_STATE_SECRET: string;
     /** Optional: force the public origin (defaults to the request origin). Must match the
         redirect URI registered in Google Cloud Console. */
     APP_ORIGIN?: string;
@@ -34,9 +37,9 @@ export interface Env {
 export const SCOPES =
     'https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.app.created';
 
-const KV_REFRESH = 'google:refresh_token';
-const KV_ACCESS = 'google:access_token'; // JSON: { access_token, expires_at }
-const KV_SCOPE = 'google:scope';
+const kvRefresh = (email: string) => userKey(email, 'google:refresh_token');
+const kvAccess = (email: string) => userKey(email, 'google:access_token'); // JSON: { access_token, expires_at }
+const kvScope = (email: string) => userKey(email, 'google:scope');
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -44,6 +47,17 @@ const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 
 const STATE_TTL_SEC = 600; // OAuth state is valid for 10 minutes
 const ACCESS_SKEW_MS = 60_000; // refresh a minute before the cached token expires
+
+/** Where the callback may send the browser after the exchange (allowlisted slugs, never raw URLs). */
+export const RETURN_TARGETS = {
+    settings: '/settings?tab=integrations',
+    home: '/',
+} as const;
+export type ReturnTarget = keyof typeof RETURN_TARGETS;
+
+export function isReturnTarget(value: string): value is ReturnTarget {
+    return value in RETURN_TARGETS;
+}
 
 export class GoogleWorkerError extends Error {
     constructor(
@@ -98,7 +112,7 @@ async function kvDelete(env: Env, key: string): Promise<void> {
 }
 
 export function hasGoogleOAuthConfig(env: Env): boolean {
-    return hasSharedSecret(env) && Boolean(env.GOOGLE_CLIENT_ID) && Boolean(env.GOOGLE_CLIENT_SECRET);
+    return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.OAUTH_STATE_SECRET);
 }
 
 export function appOrigin(request: Request, env: Env): string {
@@ -109,7 +123,19 @@ export function redirectUri(request: Request, env: Env): string {
     return `${appOrigin(request, env)}/api/auth/google/callback`;
 }
 
-// ── HMAC-signed OAuth state (stateless CSRF protection) ──────────────────────
+// ── HMAC-signed OAuth state (stateless CSRF protection, identity-bound) ──────
+//
+// state = base64url(JSON payload) + '.' + hex(HMAC-SHA256(base64url payload)).
+// The payload carries the timestamp, a nonce, the initiating user's email, and the allowlisted
+// return target. The signature is self-verifying (no KV round-trip), and binding the email means
+// a callback can only complete for the same Access identity that started the flow.
+
+interface StatePayload {
+    t: number; // unix seconds
+    n: string; // nonce
+    e: string; // initiating user's email
+    r: ReturnTarget;
+}
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
     return crypto.subtle.importKey(
@@ -125,29 +151,59 @@ function toHex(buf: ArrayBuffer): string {
     return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function b64urlEncode(text: string): string {
+    return btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
+
+function b64urlDecode(encoded: string): string {
+    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    return new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)));
+}
+
 async function sign(secret: string, message: string): Promise<string> {
     const key = await hmacKey(secret);
     return toHex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message)));
 }
 
-/** Produce a `<ts>.<nonce>.<sig>` state token tied to the shared secret. */
-export async function signState(env: Env): Promise<string> {
-    const ts = Math.floor(Date.now() / 1000).toString();
-    const nonce = toHex(crypto.getRandomValues(new Uint8Array(16)).buffer);
-    const sig = await sign(env.APP_SHARED_SECRET, `${ts}.${nonce}`);
-    return `${ts}.${nonce}.${sig}`;
+/** Produce a signed state token bound to the initiating user + return target. */
+export async function signState(env: Env, email: string, returnTo: ReturnTarget): Promise<string> {
+    const payload: StatePayload = {
+        t: Math.floor(Date.now() / 1000),
+        n: toHex(crypto.getRandomValues(new Uint8Array(16)).buffer),
+        e: email,
+        r: returnTo,
+    };
+    const encoded = b64urlEncode(JSON.stringify(payload));
+    const sig = await sign(env.OAUTH_STATE_SECRET, encoded);
+    return `${encoded}.${sig}`;
 }
 
-/** Verify a state token's signature and freshness. */
-export async function verifyState(env: Env, state: string | null): Promise<boolean> {
-    if (!state) return false;
-    const parts = state.split('.');
-    if (parts.length !== 3) return false;
-    const [ts, nonce, sig] = parts;
-    const expected = await sign(env.APP_SHARED_SECRET, `${ts}.${nonce}`);
-    if (sig !== expected) return false;
-    const age = Math.floor(Date.now() / 1000) - Number(ts);
-    return Number.isFinite(age) && age >= 0 && age <= STATE_TTL_SEC;
+/** Verify a state token's signature and freshness; returns its payload or null. */
+export async function verifyState(
+    env: Env,
+    state: string | null,
+): Promise<{ email: string; returnTo: ReturnTarget } | null> {
+    if (!state) return null;
+    const dot = state.lastIndexOf('.');
+    if (dot <= 0) return null;
+    const encoded = state.slice(0, dot);
+    const sig = state.slice(dot + 1);
+    if (sig !== (await sign(env.OAUTH_STATE_SECRET, encoded))) return null;
+
+    let payload: StatePayload;
+    try {
+        payload = JSON.parse(b64urlDecode(encoded)) as StatePayload;
+    } catch {
+        return null;
+    }
+    if (typeof payload.e !== 'string' || !payload.e) return null;
+    const returnTo: ReturnTarget = typeof payload.r === 'string' && isReturnTarget(payload.r) ? payload.r : 'settings';
+    const age = Math.floor(Date.now() / 1000) - Number(payload.t);
+    if (!Number.isFinite(age) || age < 0 || age > STATE_TTL_SEC) return null;
+    return { email: payload.e, returnTo };
 }
 
 // ── Google authorization URL ─────────────────────────────────────────────────
@@ -236,26 +292,38 @@ export async function revokeToken(token: string): Promise<void> {
     }
 }
 
-// ── KV-backed token storage ──────────────────────────────────────────────────
+// ── KV-backed token storage (per user) ───────────────────────────────────────
 
-export async function storeConnection(env: Env, tokens: GoogleTokenResponse): Promise<void> {
-    if (tokens.refresh_token) await kvPut(env, KV_REFRESH, tokens.refresh_token);
-    if (tokens.scope) await kvPut(env, KV_SCOPE, tokens.scope);
+export async function storeConnection(
+    env: Env,
+    email: string,
+    tokens: GoogleTokenResponse,
+): Promise<void> {
+    if (tokens.refresh_token) await kvPut(env, kvRefresh(email), tokens.refresh_token);
+    if (tokens.scope) await kvPut(env, kvScope(email), tokens.scope);
     if (tokens.access_token && tokens.expires_in) {
-        await cacheAccessToken(env, tokens.access_token, tokens.expires_in);
+        await cacheAccessToken(env, email, tokens.access_token, tokens.expires_in);
     }
 }
 
-async function cacheAccessToken(env: Env, accessToken: string, expiresIn: number): Promise<void> {
+async function cacheAccessToken(
+    env: Env,
+    email: string,
+    accessToken: string,
+    expiresIn: number,
+): Promise<void> {
     const expiresAt = Date.now() + expiresIn * 1000;
-    await kvPut(env, KV_ACCESS, JSON.stringify({ access_token: accessToken, expires_at: expiresAt }), {
+    await kvPut(env, kvAccess(email), JSON.stringify({ access_token: accessToken, expires_at: expiresAt }), {
         expirationTtl: Math.max(60, expiresIn),
     });
 }
 
-export async function isConnected(env: Env): Promise<{ connected: boolean; scope: string | null }> {
-    const refresh = await kvGet(env, KV_REFRESH);
-    const scope = await kvGet(env, KV_SCOPE);
+export async function isConnected(
+    env: Env,
+    email: string,
+): Promise<{ connected: boolean; scope: string | null }> {
+    const refresh = await kvGet(env, kvRefresh(email));
+    const scope = await kvGet(env, kvScope(email));
     return { connected: Boolean(refresh), scope };
 }
 
@@ -264,8 +332,8 @@ export type AccessTokenResult =
     | { ok: false; status: number; error: string; disconnected?: boolean };
 
 /** Return a valid access token, using the KV cache and refreshing via the stored refresh token. */
-export async function getAccessToken(env: Env): Promise<AccessTokenResult> {
-    const cachedRaw = await kvGet(env, KV_ACCESS);
+export async function getAccessToken(env: Env, email: string): Promise<AccessTokenResult> {
+    const cachedRaw = await kvGet(env, kvAccess(email));
     if (cachedRaw) {
         try {
             const cached = JSON.parse(cachedRaw) as { access_token: string; expires_at: number };
@@ -281,26 +349,26 @@ export async function getAccessToken(env: Env): Promise<AccessTokenResult> {
         }
     }
 
-    const refresh = await kvGet(env, KV_REFRESH);
+    const refresh = await kvGet(env, kvRefresh(email));
     if (!refresh) return { ok: false, status: 404, error: 'not_connected', disconnected: true };
 
     const tokens = await refreshTokens(env, refresh);
     if (!tokens.access_token || !tokens.expires_in) {
         // invalid_grant ⇒ the refresh token was revoked/expired; clear the connection.
         if (tokens.error === 'invalid_grant') {
-            await clearConnection(env);
+            await clearConnection(env, email);
             return { ok: false, status: 401, error: 'invalid_grant', disconnected: true };
         }
         return { ok: false, status: 502, error: tokens.error || 'refresh_failed' };
     }
-    await cacheAccessToken(env, tokens.access_token, tokens.expires_in);
+    await cacheAccessToken(env, email, tokens.access_token, tokens.expires_in);
     return { ok: true, access_token: tokens.access_token, expires_in: tokens.expires_in };
 }
 
-export async function clearConnection(env: Env): Promise<string | null> {
-    const refresh = await kvGet(env, KV_REFRESH);
-    await kvDelete(env, KV_REFRESH);
-    await kvDelete(env, KV_ACCESS);
-    await kvDelete(env, KV_SCOPE);
+export async function clearConnection(env: Env, email: string): Promise<string | null> {
+    const refresh = await kvGet(env, kvRefresh(email));
+    await kvDelete(env, kvRefresh(email));
+    await kvDelete(env, kvAccess(email));
+    await kvDelete(env, kvScope(email));
     return refresh;
 }

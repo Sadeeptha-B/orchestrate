@@ -1,13 +1,12 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useDayPlan } from '../hooks/useDayPlan';
-import { useAppSecret } from '../hooks/useAppSecret';
+import { SessionExpiredError } from '../lib/identity';
 import {
-    AppSecretError,
     disconnectGoogle,
     fetchAccessToken,
     fetchConnectionStatus,
-    setStoredSecret,
     startGoogleLogin,
+    type ConnectReturnTarget,
 } from '../lib/googleAuth';
 import {
     createCalendar,
@@ -29,13 +28,11 @@ import { isVisibleOnSurface, type CalendarSurface } from '../lib/googleCalendar'
 // ─── Context shapes (mirrors the Todoist data/actions split) ───────────────────
 
 export interface GoogleCalendarDataValue {
-    /** The shared app secret is set. When false, the UI prompts to enter it. */
-    isConfigured: boolean;
     /** The Worker is holding a Google refresh token (i.e. signed in). */
     isConnected: boolean;
     /** An interactive connect() is in flight. */
     connecting: boolean;
-    /** Most recent request failed auth (bad secret or expired session) — surface a reconnect affordance. */
+    /** Most recent request failed auth (expired Access session) — surface a reconnect affordance. */
     authFailed: boolean;
     /** The user's calendars from the Calendar API (for the setup picker). */
     availableCalendars: GoogleCalendarListEntry[];
@@ -46,10 +43,8 @@ export interface GoogleCalendarDataValue {
 }
 
 export interface GoogleCalendarActionsValue {
-    /** Store/replace the shared secret guarding the Worker endpoints, then re-check connection. */
-    setAppSecret: (secret: string) => void;
-    /** Begin interactive consent (navigates to Google). */
-    connect: () => Promise<void>;
+    /** Begin interactive consent (navigates to Google). `returnTo` picks where the callback lands. */
+    connect: (returnTo?: ConnectReturnTarget) => Promise<void>;
     /** Revoke the server-held refresh token + clear local state. */
     disconnect: () => Promise<void>;
     /** Re-check whether the server is connected; refreshes the calendar list when it is. */
@@ -104,7 +99,6 @@ const EXPIRY_SKEW_MS = 60_000; // refresh a minute before the cached access toke
 
 export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     const { dispatch, settings } = useDayPlan();
-    const { secret, hasSecret: isConfigured } = useAppSecret();
 
     const [isConnected, setIsConnected] = useState(false);
     const [connecting, setConnecting] = useState(false);
@@ -128,6 +122,17 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         connectedFlagRef.current = settings.googleCalendarConnected;
     }, [settings.googleCalendarConnected]);
 
+    const calendarSettingsRef = useRef({
+        googleCalendarIds: settings.googleCalendarIds,
+        orchestrateCalendarId: settings.orchestrateCalendarId,
+    });
+    useEffect(() => {
+        calendarSettingsRef.current = {
+            googleCalendarIds: settings.googleCalendarIds,
+            orchestrateCalendarId: settings.orchestrateCalendarId,
+        };
+    }, [settings.googleCalendarIds, settings.orchestrateCalendarId]);
+
     // In-memory access-token cache (the refresh token lives server-side; this is just a short-lived
     // access token, re-minted by the Worker).
     const tokenRef = useRef<{ accessToken: string; expiresAt: number } | null>(null);
@@ -141,15 +146,36 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             setError('Google Calendar authentication failed — reconnect in Settings.');
             return;
         }
-        if (e instanceof AppSecretError) {
-            console.error('[GCal] app secret rejected:', e);
+        if (e instanceof SessionExpiredError) {
+            console.error('[GCal] session expired:', e);
             setAuthFailed(true);
-            setError('App secret was rejected — re-enter it in Settings.');
+            setError('Your session expired — reload the page to sign in again.');
             return;
         }
         console.error(`[GCal] ${fallback}:`, e);
         setError(e instanceof Error ? e.message : fallback);
     }, []);
+
+    const reconcileCalendarSettings = useCallback((calendars: GoogleCalendarListEntry[]) => {
+        const currentSelections = calendarSettingsRef.current.googleCalendarIds ?? [];
+        const availableIds = new Set(calendars.map((cal) => cal.id));
+        const nextSelections = currentSelections.filter((entry) => availableIds.has(entry.id));
+        const nextOrchestrateId = calendarSettingsRef.current.orchestrateCalendarId;
+        const hasOrchestrateId = typeof nextOrchestrateId === 'string' && nextOrchestrateId.length > 0;
+        const keepOrchestrateId = hasOrchestrateId && availableIds.has(nextOrchestrateId);
+
+        if (nextSelections.length === currentSelections.length && (keepOrchestrateId || !hasOrchestrateId)) {
+            return;
+        }
+
+        dispatch({
+            type: 'UPDATE_SETTINGS',
+            settings: {
+                googleCalendarIds: nextSelections.length > 0 ? nextSelections : undefined,
+                orchestrateCalendarId: keepOrchestrateId ? nextOrchestrateId : undefined,
+            },
+        });
+    }, [dispatch]);
 
     /** Return a valid access token from the Worker, caching it in memory until near expiry. */
     const getAccessToken = useCallback(async (): Promise<string | null> => {
@@ -170,7 +196,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
                 setIsConnected(false);
                 if (out.reason === 'unauthorized') {
                     setAuthFailed(true);
-                    setError('App secret was rejected — re-enter it in Settings.');
+                    setError('Your session expired — reload the page to sign in again.');
                 } else if (out.reason === 'error') {
                     setError(out.message ?? 'Failed to get a Google access token');
                 }
@@ -190,14 +216,14 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         try {
             const cals = await listCalendars(token);
             setAvailableCalendars(cals);
+            reconcileCalendarSettings(cals);
             setError(null);
         } catch (e) {
             handleError(e, 'Failed to list calendars');
         }
-    }, [getAccessToken, handleError]);
+    }, [getAccessToken, handleError, reconcileCalendarSettings]);
 
     const checkConnection = useCallback(async () => {
-        if (!isConfigured) return;
         try {
             const status = await fetchConnectionStatus();
             setIsConnected(status.connected);
@@ -216,41 +242,39 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         } catch (e) {
             handleError(e, 'Failed to check Google connection');
         }
-    }, [dispatch, isConfigured, refreshCalendars, handleError]);
+    }, [dispatch, refreshCalendars, handleError]);
 
-    const setAppSecret = useCallback(
-        (secret: string) => {
-            setStoredSecret(secret);
-            setError(null);
-            setAuthFailed(false);
-            tokenRef.current = null;
-        },
-        [],
-    );
-
-    const connect = useCallback(async () => {
-        if (!isConfigured) return;
+    const connect = useCallback(async (returnTo: ConnectReturnTarget = 'settings') => {
         setConnecting(true);
         setError(null);
         try {
             // Navigates the browser to Google's consent screen; nothing after this runs on success.
-            await startGoogleLogin();
+            await startGoogleLogin(returnTo);
         } catch (e) {
             setConnecting(false);
             handleError(e, 'Failed to start Google sign-in');
         }
-    }, [handleError, isConfigured]);
+    }, [handleError]);
 
     const disconnect = useCallback(async () => {
+        try {
+            await disconnectGoogle();
+        } catch (e) {
+            handleError(e, 'Failed to disconnect Google Calendar');
+            return;
+        }
+
         tokenRef.current = null;
         setIsConnected(false);
         setAuthFailed(false);
         setAvailableCalendars([]);
         setGrantedScope(null);
         setError(null);
-        dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: false } });
-        await disconnectGoogle();
-    }, [dispatch]);
+        if (connectedFlagRef.current) {
+            connectedFlagRef.current = false;
+            dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: false } });
+        }
+    }, [dispatch, handleError]);
 
     const createEvent = useCallback(
         async (calendarId: string, event: CalendarEventInput): Promise<CalendarEventResult | null> => {
@@ -407,17 +431,10 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         ],
     );
 
+    // On load: ask the Worker whether this user's refresh token is held (auto-reconnect).
     useEffect(() => {
-        tokenRef.current = null;
-        setConnecting(false);
-        if (!isConfigured) {
-            setIsConnected(false);
-            setAuthFailed(false);
-            setAvailableCalendars([]);
-            return;
-        }
         void checkConnection();
-    }, [secret, isConfigured, checkConnection]);
+    }, [checkConnection]);
 
     // v7.7: once connected with the creation scope, provision the Orchestrate calendar if missing.
     // Waits for the calendar list (so same-named reuse works) and skips when already provisioned.
@@ -441,13 +458,12 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     ]);
 
     const dataValue = useMemo<GoogleCalendarDataValue>(
-        () => ({ isConfigured, isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error }),
-        [isConfigured, isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error],
+        () => ({ isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error }),
+        [isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error],
     );
 
     const actionsValue = useMemo<GoogleCalendarActionsValue>(
         () => ({
-            setAppSecret,
             connect,
             disconnect,
             checkConnection,
@@ -462,7 +478,6 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             renameOrchestrateCalendar,
         }),
         [
-            setAppSecret,
             connect,
             disconnect,
             checkConnection,

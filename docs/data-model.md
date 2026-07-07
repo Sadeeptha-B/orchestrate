@@ -117,7 +117,11 @@ Persistent user preferences. Survives daily plan resets.
 
 **`sessionSlots`** (v7.1): no longer the live source for the day's sessions — retained only as a legacy seed/reset fallback and the source for the one-time "My sessions" template migration. The live per-day list is `DayPlan.sessionSlots`.
 
-**Todoist token (v7.2):** held **server-side in Workers KV**, not in the browser and not in any backup. The app sends the shared `X-App-Secret` to the same-origin Worker proxy (`/api/todoist/*`), which injects the `Authorization` header. (The legacy `todoistToken`/`todoistTokenIV`/`todoistTokenKey` settings fields were removed — the historical browser-encrypted token is gone.)
+**Todoist token (v7.2, per-user v7.10):** held **server-side in Workers KV** under the caller's Access identity (`user:<email>:todoist:token`), not in the browser and not in any backup. Calls to the same-origin Worker proxy (`/api/todoist/*`) are authenticated by the Cloudflare Access session cookie; the proxy injects the `Authorization` header. (The legacy `todoistToken`/`todoistTokenIV`/`todoistTokenKey` settings fields were removed — the historical browser-encrypted token is gone.)
+
+**`onboardingComplete`** (v7.10): the first-run onboarding flow (what Orchestrate is → connect Todoist → connect Google Calendar) has been completed. Additive, default absent/false; because settings sync via D1 per account, onboarding runs once per *account*, not per device.
+
+**`calendarNudgeDismissed`** (v7.10): the wizard Step 1 "connect Google Calendar" nudge was dismissed. Additive; persisted (unlike the old component-local Step 2 banner).
 
 **`habitsTodoistProjectId`:** Lazily created on first 'habit'-kind save. Resolved by `ensureHabitsProject(...)`. Included in a Full Backup (it's an ID, not a credential).
 
@@ -279,7 +283,7 @@ All state mutations flow through the `DayPlanContext` reducer (`src/context/DayP
 | `ADD_CHECKIN` | `checkIn` | Appends to `plan.checkIns` |
 | `MARK_FOCUS_SEEDED` | `focusId` | v6.7: records a recurring-focus id in `plan.seededFocusIds` so the Step 1 banner chip doesn't re-offer it today. Idempotent. |
 | `RESET_DAY` | *(none)* | Replaces plan with `freshPlan(seedSessionSlots(...))` (sessions re-seeded from settings/defaults), clears `editingStep`. Other slices (settings, history, life) untouched. Surfaced from Settings → Data → Reset Today's Plan. |
-| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings = defaultSettings()`. Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). **Does not** clear the server-side tokens in KV (Todoist/Google) or the `orchestrate-cf-secret` — disconnect those from Settings → Integrations. Surfaced from Settings → Data → Reset Everything. |
+| `RESET_ALL` | *(none)* | Factory reset: replaces every reducer-managed slice with defaults — `plan = freshPlan(defaultSessionSlots)`, `history = []`, `life = emptyLifeContext()`, `settings = defaultSettings()`. Caller is responsible for clearing aux localStorage keys outside the reducer (`orchestrate-todoist-cache`). **Does not** clear the server-side tokens in KV (Todoist/Google) — disconnect those from Settings → Integrations. Surfaced from Settings → Data → Reset Everything. |
 | `UPDATE_SETTINGS` | `settings` | Shallow-merges into settings |
 | `SET_EDITING_STEP` | `step` | Tracks which wizard step the user is re-editing from the dashboard |
 
@@ -394,7 +398,7 @@ it doesn't.
 | `orchestrate-sync-meta` | `{ [slice]: updatedAtMs }` | v7.9: per-slice last-write clock for the D1 sync sidecar (§7). **Device-local** — never in a backup, survives `RESET_ALL`. Owned by `lib/cloudSync.ts` |
 | `orchestrate-sync-reset-pending` | `{ [slice]: true }` | v7.9: explicit local-clear marker for the D1 sidecar. Distinguishes a deliberate reset from an accidentally missing slice during cold-start merge. **Device-local** — never in a backup, survives `RESET_ALL` until the next local write or remote adoption. Owned by `lib/cloudSync.ts` |
 | `orchestrate-todoist-cache` | `{ tasks, projects, sections, fetchedAt }` | Stale-while-revalidate (5min hydration / 30s focus) |
-| `orchestrate-cf-secret` | Shared secret guarding the Worker endpoints | Installation-specific; never backed up |
+| `orchestrate-user` | The Access identity (email) this browser last synced as | v7.10: drives the identity-switch guard in `lib/cloudSync.ts` (a different account signing in clears local app state before merging). Device-local; never backed up |
 | `orchestrate-theme` | `"light"` or `"dark"` | Written by `useTheme` |
 | `orchestrate-active-playlist` | Playlist ID string | Written by `MusicProvider` |
 | `orchestrate-custom-playlist-urls` | `Record<playlistId, spotifyUrl>` | Written by `MusicProvider` |
@@ -408,23 +412,24 @@ A **Full Backup** is the JSON `{ settings, life, history, _backupVersion, _schem
 integration references/preferences — never credentials.**
 
 **Todoist**
-- **Not in the backup:** the personal API token (server-side, Workers KV `todoist:token`).
+- **Not in the backup:** the personal API token (server-side, Workers KV `user:<email>:todoist:token`).
 - **In the backup:** `settings.habitsTodoistProjectId`; and every embedded **task reference** —
   `LinkedTask.todoistId` + `titleSnapshot` inside `history[].plan`, and `todoistTaskId` on `life.habits[]`
   and habit instances. IDs/labels, not auth.
-- **After restore (new device/deployment):** re-enter the **app secret** and **reconnect Todoist** (paste
-  token) in Settings → Integrations. Imported task IDs re-link automatically for the same Todoist account.
+- **After restore (new deployment):** **reconnect Todoist** (paste token) in Settings → Integrations.
+  Imported task IDs re-link automatically for the same Todoist account.
 
 **Google Calendar**
-- **Not in the backup:** the OAuth refresh token (KV `google:refresh_token`) or access tokens (KV cache /
-  in-memory).
+- **Not in the backup:** the OAuth refresh token (KV `user:<email>:google:refresh_token`) or access tokens
+  (KV cache / in-memory).
 - **In the backup:** `settings.googleCalendarConnected` (flag), `settings.googleCalendarIds`
   (`GoogleCalendarEntry[]`), `settings.calendarViewMode`.
 - **Caveat:** imported `googleCalendarConnected: true` is provisional — `GoogleCalendarProvider` re-checks
   `/api/auth/google/status` on load, so a device whose KV has no token self-corrects to disconnected.
   Re-authorize Google if it shows disconnected.
 
-**Shared secret** (`orchestrate-cf-secret`) is **not** in any backup — re-enter per device.
+**No credentials are in any backup** — authentication is the Cloudflare Access session (v7.10), and the
+integration tokens are server-side per user.
 
 **Not in the Full Backup by design:** today's `plan` (only saved sessions in `history`), the Todoist cache,
 and theme/music/pomodoro prefs.
@@ -466,16 +471,16 @@ All mutations are optimistic — local state updates immediately. API failures s
 A cloud mirror of the four reducer slices so multiple deployments/devices converge on one logical store (rather than diverging into separate localStorage installations — the failure that duplicated the Orchestrate calendar and habit tasks). **localStorage stays the offline-first working store**; this is a push/pull layer on top, not a replacement.
 
 ### Store & endpoints
-- D1 table `slices(key, value, schema_version, updated_at)` — one row per slice (`plan` | `settings` | `history` | `life`); `value` is the exact JSON string the persist effect writes to localStorage (so the client's existing loaders migrate/validate it unchanged). Bound as `SYNC_DB` on the Pages project ([`db/schema.sql`](../db/schema.sql)).
-- `GET /api/state` → `{ slices: { [key]: { value, schemaVersion, updatedAt } } }`. `PUT /api/state/:key` upserts one slice. Both guarded by the shared `X-App-Secret` (same as the other Functions). Server code: [`functions/api/state/`](../functions/api/state/). Single-user — no `user_id`.
+- D1 table `slices(user_id, key, value, schema_version, updated_at)`, primary key `(user_id, key)` — one row per user per slice (`plan` | `settings` | `history` | `life`); `user_id` is the verified Cloudflare Access email (v7.10); `value` is the exact JSON string the persist effect writes to localStorage (so the client's existing loaders migrate/validate it unchanged). Bound as `SYNC_DB` on the Pages project ([`db/schema.sql`](../db/schema.sql); pre-multi-user migration: [`db/migrate_add_user_id.sql`](../db/migrate_add_user_id.sql)).
+- `GET /api/state` → `{ user, slices: { [key]: { value, schemaVersion, updatedAt } } }` (`user` = the caller's email, consumed by the identity-switch guard below). `PUT /api/state/:key` upserts one slice. Both identity-guarded by the Access JWT (`requireUser`, same as the other Functions) and scoped to the caller's rows. Server code: [`functions/api/state/`](../functions/api/state/).
 
 ### Conflict model — last-write-wins per slice
 - Each device keeps a per-slice `updatedAt` (ms) in `orchestrate-sync-meta` (§5). A local mutation bumps it to `Date.now()`; adopting a remote slice copies the *remote* stamp.
 - Explicit local clears additionally set `orchestrate-sync-reset-pending`, so a cold-start merge can tell "the user intentionally cleared this slice" from "this device just doesn't have that slice anymore".
-- The server enforces LWW inside the upsert: `... ON CONFLICT(key) DO UPDATE SET ... WHERE excluded.updated_at >= slices.updated_at`. A losing write gets **409 + the current row** (`>=` keeps identical re-pushes idempotent). No field-level merge — sufficient for a single user across a couple of devices ([roadmap/persistence_and_backend_migration.md](roadmap/persistence_and_backend_migration.md) §4).
+- The server enforces LWW inside the upsert: `... ON CONFLICT(user_id, key) DO UPDATE SET ... WHERE excluded.updated_at >= slices.updated_at`. A losing write gets **409 + the current row** (`>=` keeps identical re-pushes idempotent). No field-level merge — sufficient for one person's couple of devices; slices never cross user boundaries ([roadmap/persistence_and_backend_migration.md](roadmap/persistence_and_backend_migration.md) §4).
 
 ### Client flow ([`lib/cloudSync.ts`](../src/lib/cloudSync.ts))
-- **Pull (cold start).** `SyncGate` calls `pullAndMerge` before `DayPlanProvider` mounts (≤2s cap; skipped offline / no secret). Per slice, the winner (by `updatedAt`, missing meta = 0 so a never-synced device adopts the cloud) is written into localStorage; the loaders then migrate/validate/roll it over. A remote slice stamped **newer than this build's `SCHEMA_VERSION`** is neither adopted nor overwritten (stale-client safety); one **below `MIN_SUPPORTED_SCHEMA`** is ignored and overwritten by local.
+- **Pull (cold start).** `SyncGate` calls `pullAndMerge` before `DayPlanProvider` mounts (≤2s cap; skipped offline). **Identity-switch guard (v7.10):** the response's `user` is compared against the `orchestrate-user` stamp — a mismatch (a different Access identity on this browser profile) clears the four slices, the sync meta, and the Todoist cache before merging, so accounts sharing a machine never cross-pollinate. Per slice, the winner (by `updatedAt`, missing meta = 0 so a never-synced device adopts the cloud) is written into localStorage; the loaders then migrate/validate/roll it over. A remote slice stamped **newer than this build's `SCHEMA_VERSION`** is neither adopted nor overwritten (stale-client safety); one **below `MIN_SUPPORTED_SCHEMA`** is ignored and overwritten by local.
 - **Push (mutation).** Each persist effect calls `notifyChanged(slice, serialized)` after writing localStorage. The **first mount fire is skipped** (records a baseline only) unless an init-time event marked the slice via `markInitChange` — day-rollover marks `plan` (+ `life` if it harvested), a merge that found local newer marks the slice, and a missing remote row marks a bootstrap. Genuine later changes bump the clock, mark dirty, and **debounce-push (~2.5s)**. Dirty slices retry on `online` / tab-visible and flush on `pagehide` / tab-hidden via `keepalive` fetch. A 409 clears dirty (the next cold-start pull reconciles) rather than retry-looping.
 - **Reset/import.** `RESET_ALL` and `IMPORT_BACKUP` push like any mutation (the cloud mirrors the working store). Recovery is D1 Time Travel (7 days) or the manual Full Backup file. `markLocalReset('plan')` (ErrorBoundary "Reset Day & Reload") forces local to win the next merge so a crashing plan isn't re-adopted from the cloud.
-- **Not synced:** the Todoist cache, the shared secret (per-device by design), theme/music prefs, and the sync sidecar's own device-local bookkeeping keys (`orchestrate-sync-meta`, `orchestrate-sync-reset-pending`).
+- **Not synced:** the Todoist cache, theme/music prefs, and the sync sidecar's own device-local bookkeeping keys (`orchestrate-sync-meta`, `orchestrate-sync-reset-pending`, `orchestrate-user`).

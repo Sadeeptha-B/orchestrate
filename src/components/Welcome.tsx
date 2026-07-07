@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useDayPlan } from '../hooks/useDayPlan';
+import { useTodoistData } from '../hooks/useTodoist';
+import { useGoogleCalendarData } from '../hooks/useGoogleCalendar';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Logo } from './ui/Logo';
@@ -19,15 +21,50 @@ function getGreeting(): string {
     return 'Good evening';
 }
 
+/** Small connected/connect chip for the Welcome integration strip. */
+function IntegrationChip({ label, connected, pending, onConnect }: {
+    label: string;
+    connected: boolean;
+    pending?: boolean;
+    onConnect: () => void;
+}) {
+    if (connected) {
+        return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/10 text-success text-xs">
+                ✓ {label}
+            </span>
+        );
+    }
+    if (pending) {
+        return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-dark text-text-light/60 text-xs">
+                {label}…
+            </span>
+        );
+    }
+    return (
+        <button
+            onClick={onConnect}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-border text-text-light text-xs hover:text-accent hover:border-accent cursor-pointer"
+        >
+            {label} — Connect →
+        </button>
+    );
+}
+
 export function Welcome() {
     const { plan, history, life } = useDayPlan();
     const navigate = useNavigate();
+    const { isConfigured: todoistConnected, statusResolved } = useTodoistData();
+    const { isConnected: calendarConnected } = useGoogleCalendarData();
     const aboutTriggerRef = useRef<(() => void) | null>(null);
     const [quickStartOpen, setQuickStartOpen] = useState(false);
     const [restoreOpen, setRestoreOpen] = useState(false);
 
     const isResuming = plan.intentions.length > 0 || plan.wizardStep > 1;
     const isFirstEver = !isResuming && history.length === 0;
+    // Hard gate: planning is Todoist-driven, so the primary CTA routes to connect when unconfigured.
+    const todoistMissing = statusResolved && !todoistConnected;
     const today = format(new Date(), 'EEEE, MMMM d');
 
     const activeSeason = findActiveSeason(life);
@@ -66,19 +103,44 @@ export function Welcome() {
                         <div className="space-y-2">
                             <h2 className="text-base font-medium text-text">Today</h2>
                             <p className="text-sm text-text-light">{todayStatus}</p>
+                            {/* Integration status strip — the requirements, visible every day. */}
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                <IntegrationChip
+                                    label="Todoist"
+                                    connected={todoistConnected}
+                                    pending={!statusResolved}
+                                    onConnect={() => navigate('/settings?tab=integrations')}
+                                />
+                                <IntegrationChip
+                                    label="Google Calendar"
+                                    connected={calendarConnected}
+                                    onConnect={() => navigate('/settings?tab=integrations')}
+                                />
+                            </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Button size="lg" className="w-full" onClick={goPlan}>
-                                {isResuming ? 'Resume Planning' : 'Plan Your Day'}
-                            </Button>
-                            <button
-                                onClick={() => setQuickStartOpen(true)}
-                                className="w-full text-xs text-text-light hover:text-accent transition-colors cursor-pointer py-1"
-                            >
-                                ⚡ Quick start — skip planning, drop into Focus
-                            </button>
-                        </div>
+                        {todoistMissing ? (
+                            <div className="space-y-2">
+                                <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2.5 text-xs text-amber-900 dark:text-amber-200">
+                                    Orchestrate plans your day from your Todoist tasks — connect it to start planning.
+                                </div>
+                                <Button size="lg" className="w-full" onClick={() => navigate('/settings?tab=integrations')}>
+                                    Connect Todoist →
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                <Button size="lg" className="w-full" onClick={goPlan} disabled={!statusResolved}>
+                                    {isResuming ? 'Resume Planning' : 'Plan Your Day'}
+                                </Button>
+                                <button
+                                    onClick={() => setQuickStartOpen(true)}
+                                    className="w-full text-xs text-text-light hover:text-accent transition-colors cursor-pointer py-1"
+                                >
+                                    ⚡ Quick start — skip planning, drop into Focus
+                                </button>
+                            </div>
+                        )}
 
                         {/* Step timeline */}
                         <div className="flex items-start w-full">

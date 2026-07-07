@@ -1,30 +1,29 @@
 import { useState, useRef, useCallback, useMemo, type KeyboardEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WizardLayout } from './WizardLayout';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData } from '../../hooks/useTodoist';
 import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
 import { EditableTaskList } from '../ui/EditableTaskList';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { useIntentionRemoval } from '../../hooks/useIntentionRemoval';
 import type { Intention } from '../../types';
 import { TodoistPanel } from '../todoist/TodoistPanel';
-import { TodoistSetup } from '../todoist/TodoistSetup';
 import { getTaskTitle } from '../../lib/tasks';
 import { useTodaysHabitsSync } from '../../hooks/useTodaysHabitsSync';
 import type { LinkedTask } from '../../types';
 
 export function Step2Intentions() {
-    const { plan, settings, dispatch } = useDayPlan();
-    const { taskMap, isConfigured: todoistConfigured } = useTodoistData();
+    const { plan, dispatch } = useDayPlan();
+    const { taskMap } = useTodoistData();
+    const navigate = useNavigate();
 
     // v6.3/v6.7: surface today's habit + micro-gap instances on the timeline / dashboard. Shared
     // with the dashboard so the two surfaces can't drift.
     useTodaysHabitsSync();
 
     const [input, setInput] = useState('');
-    const [showSetup, setShowSetup] = useState(false);
     const [mappingStarted, setMappingStarted] = useState(
         () => plan.intentions.some((i) => i.brokenDown || i.linkedTaskIds.length > 0),
     );
@@ -89,12 +88,6 @@ export function Step2Intentions() {
         },
         [commitTitleEdit],
     );
-
-    const calendarConfigured = Boolean(
-        settings.googleCalendarIds && settings.googleCalendarIds.length > 0,
-    );
-    const fullyConfigured = todoistConfigured && calendarConfigured;
-    const [bannerDismissed, setBannerDismissed] = useState(false);
 
     // Build intention title lookup for linking mode
     const intentionTitleMap = useMemo(
@@ -180,33 +173,6 @@ export function Step2Intentions() {
 
     return (
         <WizardLayout canAdvance={plan.intentions.length > 0 && mappingStarted} onNext={handleNext} wide>
-            {/* Onboarding banner when integrations are not configured */}
-            {!fullyConfigured && !bannerDismissed && (
-                <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle/20 px-5 py-4 flex items-start gap-4">
-                    <span className="text-2xl leading-none mt-0.5">🔗</span>
-                    <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-text">
-                            Orchestrate works best with Todoist and Google Calendar
-                        </p>
-                        <p className="text-xs text-text-light mt-1">
-                            {!todoistConfigured && !calendarConfigured
-                                ? 'Connect your Todoist account and add your Google Calendar to get the full planning experience.'
-                                : !todoistConfigured
-                                    ? 'Connect your Todoist account to manage tasks directly from here.'
-                                    : 'Add your Google Calendar to see your schedule alongside your tasks.'}
-                        </p>
-                        <div className="flex gap-2 mt-3">
-                            <Button size="sm" variant="primary" onClick={() => setShowSetup(true)}>
-                                Set up integrations
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => setBannerDismissed(true)}>
-                                Dismiss
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             <div className="flex flex-col lg:flex-row gap-6 mt-4" style={{ minHeight: '60vh' }}>
                 {/* Left panel */}
                 <div className="lg:w-[40%] flex-shrink-0 space-y-5 overflow-y-auto scrollbar-subtle">
@@ -653,7 +619,7 @@ export function Step2Intentions() {
                     <div className="flex-1 rounded-lg border border-border overflow-hidden bg-card min-h-[400px] max-h-[70vh]">
                         <TodoistPanel
                             mode="full"
-                            onSetup={() => setShowSetup(true)}
+                            onSetup={() => navigate('/settings?tab=integrations')}
                             showFilterToggle
                             linking={mappingStarted && currentMappingIntention ? {
                                 linkingIntentionId: currentMappingIntention.id,
@@ -667,11 +633,6 @@ export function Step2Intentions() {
                     </div>
                 </div>
             </div>
-
-            {/* Integrations setup modal */}
-            <Modal open={showSetup} onClose={() => setShowSetup(false)} title="Integrations">
-                <TodoistSetup />
-            </Modal>
 
             <ConfirmModal
                 open={confirmDeleteCurrent.value !== null}

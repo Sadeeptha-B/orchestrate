@@ -9,24 +9,34 @@
 # (Settings → Environment variables / Secrets) or via the CLI, e.g.:
 #   npx wrangler pages secret put GOOGLE_CLIENT_ID
 #   npx wrangler pages secret put GOOGLE_CLIENT_SECRET
-#   npx wrangler pages secret put APP_SHARED_SECRET
-# Optional override (defaults to the request origin):
-#   APP_ORIGIN = "https://orchestrate.example.com"
+#   npx wrangler pages secret put OAUTH_STATE_SECRET
+#   npx wrangler pages secret put CF_ACCESS_AUD
+# Plaintext vars: CF_ACCESS_TEAM_DOMAIN (Zero Trust team domain — the whole origin sits
+# behind a Cloudflare Access application; Functions verify the Access JWT per request),
+# and optionally APP_ORIGIN = "https://orchestrate.example.com" (defaults to the request
+# origin). Local dev uses .dev.vars with DEV_USER_EMAIL instead of Access — see
+# docs/deployment.md Part E.
 
 name = "orchestrate"
 compatibility_date = "2025-01-01"
 pages_build_output_dir = "dist"
 
-# KV namespace that stores the single user's Google refresh token + a cached
-# access token. Create it once and paste the id below:
+[vars]
+APP_ORIGIN = "https://orchestrate-3gq.pages.dev"
+CF_ACCESS_TEAM_DOMAIN = "solitary-dust-4e42.cloudflareaccess.com"
+
+# KV namespace that stores each user's Google refresh token + cached access token and
+# Todoist token, keyed per Access identity (user:<email>:…). Create it once and paste
+# the id below:
 #   npx wrangler kv namespace create OAUTH_KV
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "bea5f764eb0e422798cef203dee4f481"
 
 # D1 database holding the synced state slices (see functions/api/state/*). This is
-# the cloud mirror of the localStorage working store — one row per slice, last-write-wins.
-# Create it once and paste the id below, then apply the schema (local + remote):
+# the cloud mirror of the localStorage working store — one row per user per slice,
+# last-write-wins. Create it once and paste the id below, then apply the schema
+# (local + remote; migrating a pre-multi-user DB: db/migrate_add_user_id.sql):
 #   npx wrangler d1 create orchestrate-sync
 #   npx wrangler d1 execute orchestrate-sync --remote --file db/schema.sql
 #   npx wrangler d1 execute orchestrate-sync --local  --file db/schema.sql

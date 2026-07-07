@@ -1,7 +1,6 @@
 import { createContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { useAppSecret } from '../hooks/useAppSecret';
 import { useDayPlan } from '../hooks/useDayPlan';
-import { getStoredSecret } from '../lib/appSecret';
+import { SessionExpiredError, apiFetch as guardedFetch } from '../lib/identity';
 import { API_BASE, TodoistAuthError, getTodoistStatus } from '../lib/todoistApi';
 import { collectDescendantIds } from '../lib/tasks';
 import type { TodoistTask, TodoistProject, TodoistSection } from '../hooks/useTodoist';
@@ -16,13 +15,13 @@ const CACHE_STALENESS_MS = 5 * 60_000;  // 5min — skip initial fetch if cache 
 
 interface PaginatedResponse<T> { results: T[]; next_cursor: string | null }
 
-// All calls go through the same-origin proxy (`/api/todoist/*`) with the shared `X-App-Secret`; the
-// Worker injects the Todoist token server-side (see lib/todoistApi.ts). The token is never in the browser.
+// All calls go through the same-origin proxy (`/api/todoist/*`), authenticated by the Cloudflare
+// Access session cookie; the Worker injects the caller's Todoist token server-side (see
+// lib/todoistApi.ts). The token is never in the browser.
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await guardedFetch(`${API_BASE}${path}`, {
         ...opts,
         headers: {
-            'X-App-Secret': getStoredSecret(),
             'Content-Type': 'application/json',
             ...(opts?.headers ?? {}),
         },
@@ -104,6 +103,9 @@ export interface TodoistDataValue {
     loading: boolean;
     error: string | null;
     isConfigured: boolean;
+    /** True once the first /status check has settled — lets gates render neutrally instead of
+     *  flashing "not connected" while the check is in flight. */
+    statusResolved: boolean;
     /** True when the most recent API call returned 401 (token revoked/expired). Clears on token change. */
     authFailed: boolean;
 }
@@ -137,7 +139,6 @@ export { TodoistDataContext, TodoistActionsContext };
 
 export function TodoistProvider({ children }: { children: ReactNode }) {
     const { plan, dispatch } = useDayPlan();
-    const { secret } = useAppSecret();
 
     // ── Initial state from cache ──
     const cache = useRef(loadCache());
@@ -157,10 +158,11 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const tasksRef = useRef<TodoistTask[]>(tasks);
     useEffect(() => { tasksRef.current = tasks; }, [tasks]);
 
-    // Connection lives server-side now: the Worker either holds a Todoist token or it doesn't.
-    // `isConfigured` is resolved from /status (requires the shared secret). A ref mirrors it so the
-    // mutation callbacks can early-return when disconnected without taking it as a dep.
+    // Connection lives server-side: the Worker either holds this user's Todoist token or it doesn't.
+    // `isConfigured` is resolved from /status. A ref mirrors it so the mutation callbacks can
+    // early-return when disconnected without taking it as a dep.
     const [isConfigured, setIsConfigured] = useState(false);
+    const [statusResolved, setStatusResolved] = useState(false);
     const isConfiguredRef = useRef(false);
     useEffect(() => { isConfiguredRef.current = isConfigured; }, [isConfigured]);
 
@@ -172,6 +174,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
      * without inspecting React state. Per project rule on Todoist/habit integration paths.
      */
     const handleApiError = useCallback((e: unknown, fallback: string) => {
+        if (e instanceof SessionExpiredError) {
+            console.error('[Todoist] session expired:', e);
+            setAuthFailed(true);
+            setError('Your session expired — reload the page to sign in again.');
+            return;
+        }
         if (e instanceof TodoistAuthError) {
             console.error('[Todoist] auth failed (401):', e);
             setAuthFailed(true);
@@ -196,21 +204,17 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // ── Connection status ──
     const refreshConnection = useCallback(async () => {
-        if (!secret) {
-            setIsConfigured(false);
-            setAuthFailed(false);
-            setError(null);
-            return;
-        }
         try {
             const { configured } = await getTodoistStatus();
             setIsConfigured(configured);
             setAuthFailed(false);
         } catch (e) {
             setIsConfigured(false);
-            if (e instanceof TodoistAuthError) setAuthFailed(true);
+            if (e instanceof TodoistAuthError || e instanceof SessionExpiredError) setAuthFailed(true);
+        } finally {
+            setStatusResolved(true);
         }
-    }, [secret]);
+    }, []);
 
     // Resolve connection on mount (cache still renders synchronously meanwhile).
     useEffect(() => { void refreshConnection(); }, [refreshConnection]);
@@ -573,8 +577,9 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         loading,
         error,
         isConfigured,
+        statusResolved,
         authFailed,
-    }), [tasks, projects, sections, taskMap, tasksHydrated, loading, error, isConfigured, authFailed]);
+    }), [tasks, projects, sections, taskMap, tasksHydrated, loading, error, isConfigured, statusResolved, authFailed]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
         createTask, updateTask, moveTask, reorderTasks, completeTask, reopenTask, deleteTask, createTaskComment,
