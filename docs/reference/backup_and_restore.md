@@ -91,6 +91,77 @@ The Google side has a softer aftermath: `reconcileCalendarSettings` ([GoogleCale
 
 Verdict key: ✅ behaves well · ⚠️ works with sharp edges · ❌ produces duplicates or silent data displacement.
 
+### The catalog at a glance
+
+Follow the tree from the situation you're in down to a scenario node (colored by verdict). Dotted edges point at the gaps (§5) that make that outcome possible or worse. The prose below remains the authoritative detail; this is the navigation aid.
+
+```mermaid
+flowchart TD
+    Start(["Data is about to move — what's the situation?"])
+
+    Start --> DEVICE["New real device<br/>joining prod"]
+    Start --> BACKUP["Importing a<br/>Full Backup"]
+    Start --> DEV["Setting up local dev<br/>(separate D1 by design)"]
+    Start --> RESET["Resetting"]
+    Start --> SESSIONS["Sessions file<br/>(Export All / Import Day Plan)"]
+
+    %% Shared database — sync, not backup
+    DEVICE --> A1["A1 ✅ Sync handles it:<br/>cold-start pull adopts the cloud snapshot,<br/>the ID registry arrives with it — nothing created"]
+
+    %% Sessions-only files
+    SESSIONS --> E1["E1 ✅ Merge into history, savedAt dedup,<br/>no external writes, idempotent"]
+
+    %% Resets
+    RESET --> RQ{Which reset?}
+    RQ -->|Reset Today's Plan| D2["D2 ✅ Plan slice only —<br/>registry and accounts untouched"]
+    RQ -->|Reset Everything| D1["D1 ❌ Registry wiped, habit tasks orphaned;<br/>re-created habits duplicate them.<br/>Wipe propagates to all synced devices"]
+
+    %% Full Backup import
+    BACKUP --> BQ{"Same external accounts<br/>on both sides?<br/>(the file won't tell you)"}
+    BQ -->|Yes| AGEQ{"Backup older than<br/>the data it replaces?"}
+    AGEQ -->|"No, or target is empty"| A2["A2 ✅ IDs resolve → reconciliation re-links,<br/>nothing created — the flagship recovery path"]
+    AGEQ -->|Yes| A3["A3 ⚠️ Import stamps 'now' → old snapshot<br/>pushed to cloud → every synced device<br/>rolls back, silently"]
+    BQ -->|"No — different account<br/>(incl. B4: dev backup carrying<br/>sandbox IDs into prod)"| C1["C1 ❌ Every habit reads missing-in-todoist →<br/>next repair pass mass-creates tasks in the<br/>connected account, no confirmation"]
+
+    %% Local dev
+    DEV --> DQ{Which accounts is<br/>dev connected to?}
+    DQ -->|Disposable sandbox| B3["B3 ✅ Different accounts can't touch<br/>each other's tasks — recommended default"]
+    DQ -->|"Real accounts, seeded<br/>from a prod backup"| B1["B1 ⚠️ Re-links like A2, but dev must never<br/>originate habits — separate D1s never converge,<br/>and dev writes hit the real accounts live"]
+    DQ -->|"Real accounts,<br/>fresh empty store"| B2["B2 ❌ First habit synced has no ID →<br/>createTask → duplicate recurring task<br/>in real Todoist (C2 ⚠️ if the<br/>Orchestrate calendar was renamed)"]
+
+    %% Gap register
+    subgraph GAPS["Gap register (§5) — dotted edges = enabled/worsened by"]
+        G1["G1 auto-create on missing-in-todoist,<br/>no confirmation"]
+        G2["G2 no provenance /<br/>account fingerprint"]
+        G3["G3 no name-based adoption<br/>for habit tasks"]
+        G4["G4 propagation & age<br/>unstated at restore"]
+        G5["G5 RESET_ALL orphan<br/>consequence unstated"]
+        G6["G6 Todoist cache not<br/>cleared on import"]
+        G7["G7 rename defeats<br/>calendar name-adoption"]
+        G8["G8 backups are<br/>manual-only"]
+    end
+
+    C1 -.-> G1 & G2 & G6
+    B2 -.-> G1 & G3 & G7
+    B1 -.-> G2
+    D1 -.-> G1 & G3 & G5
+    A3 -.-> G4 & G8
+
+    classDef safe fill:#e8f5e9,stroke:#2e7d32,color:#1b3c1e
+    classDef warn fill:#fff8e1,stroke:#f9a825,color:#4d3b00
+    classDef danger fill:#fdecea,stroke:#c62828,color:#5c1210
+    classDef gap fill:#fdecea00,stroke:#c62828,stroke-dasharray:4 3,color:#c62828
+    classDef q fill:#ede7f6,stroke:#5e35b1,color:#2c1a52
+
+    class A1,A2,B3,D2,E1 safe
+    class A3,B1 warn
+    class B2,C1,D1 danger
+    class G1,G2,G3,G4,G5,G6,G7,G8 gap
+    class BQ,AGEQ,DQ,RQ q
+```
+
+Two things the tree encodes that are easy to miss in prose: the first question on the backup branch ("same accounts?") is one **the system cannot answer for you** — that's G2, which is why it's phrased as something you must know yourself; and every ❌ node routes through G1's unprompted create-path — remove that one behaviour and all three red nodes degrade to recoverable ⚠️s.
+
 ### A. Same database, same accounts (the sanctioned paths)
 
 **A1 — New device joins prod. ✅ No backup involved.** Sign in, cold-start pull adopts the cloud snapshot, external IDs arrive *with* their registry, reconciliation finds every `todoistTaskId` present and does nothing. This is the design working; backup is not the cross-device mechanism — sync is.

@@ -7,6 +7,7 @@ import { GoogleCalendarProvider } from './context/GoogleCalendarContext';
 import { ReconciliationProvider } from './context/ReconciliationContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { NotificationBridge } from './components/ui/NotificationBridge';
+import { AsciiBuddy } from './components/buddy/AsciiBuddy';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { SyncGate } from './components/SyncGate';
 
@@ -110,6 +111,8 @@ export default function App() {
                             <TodoistProvider>
                                 <ReconciliationProvider>
                                     <NotificationBridge />
+                                    {/* Mounted outside <Routes> so the buddy survives navigation without its animation resetting. */}
+                                    <AsciiBuddy />
                                     <AppRoutes />
                                 </ReconciliationProvider>
                             </TodoistProvider>
