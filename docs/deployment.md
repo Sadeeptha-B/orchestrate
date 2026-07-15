@@ -2,7 +2,7 @@
 
 The **step-by-step setup** to host Orchestrate on Cloudflare Pages, gate it behind Cloudflare Access (Google sign-in for pre-approved accounts), and wire up the Google Calendar OAuth.
 
-> **How it all works** — the Functions, the Access identity model, the OAuth flow, every variable/secret and how each is used, the KV/D1 storage, and the security model — lives in the reference: [reference/cloudflare_workers.md](./reference/cloudflare_workers.md). This page is just the procedure.
+> **How it all works** — the Functions, the Access identity model, the OAuth flow, every variable/secret and how each is used, the KV/D1 storage, and the security model — lives in the reference: [reference/backend.md](./reference/backend.md). This page is just the procedure.
 
 **In one paragraph:** the app is a static Vite SPA on Cloudflare Pages (served at the domain root), plus serverless **Pages Functions** that run Google's auth-code flow (`functions/api/auth/google/`), proxy Todoist (`functions/api/todoist*`), and mirror app state to D1 (`functions/api/state/`). The whole origin sits behind a **Cloudflare Access** application: users sign in with a pre-approved Google account at the edge, and every Function resolves the caller's identity from the Access JWT — credentials in KV and sync rows in D1 are namespaced per user. To deploy you'll: create a Google OAuth client (Part A), create the Cloudflare Pages project with KV + D1 + secrets (Part B), set up Zero Trust/Access (Part C), then connect Todoist and Google Calendar inside the app (Part D).
 

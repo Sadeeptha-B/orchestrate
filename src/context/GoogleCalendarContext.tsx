@@ -156,6 +156,20 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         setError(e instanceof Error ? e.message : fallback);
     }, []);
 
+    const applyDisconnectedState = useCallback((opts?: { clearError?: boolean; clearAuthFailed?: boolean }) => {
+        tokenRef.current = null;
+        setConnecting(false);
+        setIsConnected(false);
+        setAvailableCalendars([]);
+        setGrantedScope(null);
+        if (opts?.clearAuthFailed ?? true) setAuthFailed(false);
+        if (opts?.clearError ?? true) setError(null);
+        if (connectedFlagRef.current) {
+            connectedFlagRef.current = false;
+            dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: false } });
+        }
+    }, [dispatch]);
+
     const reconcileCalendarSettings = useCallback((calendars: GoogleCalendarListEntry[]) => {
         const currentSelections = calendarSettingsRef.current.googleCalendarIds ?? [];
         const availableIds = new Set(calendars.map((cal) => cal.id));
@@ -192,12 +206,16 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
                     setIsConnected(true);
                     return out.accessToken;
                 }
-                tokenRef.current = null;
-                setIsConnected(false);
                 if (out.reason === 'unauthorized') {
+                    tokenRef.current = null;
+                    setIsConnected(false);
                     setAuthFailed(true);
                     setError('Your session expired — reload the page to sign in again.');
+                } else if (out.reason === 'not_connected') {
+                    applyDisconnectedState({ clearError: false });
                 } else if (out.reason === 'error') {
+                    tokenRef.current = null;
+                    setIsConnected(false);
                     setError(out.message ?? 'Failed to get a Google access token');
                 }
                 // 'not_connected' is a normal signed-out state — no error surfaced.
@@ -208,7 +226,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         })();
         refreshInflight.current = promise;
         return promise;
-    }, []);
+    }, [applyDisconnectedState]);
 
     const refreshCalendars = useCallback(async () => {
         const token = await getAccessToken();
@@ -234,15 +252,15 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
                     dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: true } });
                 }
                 await refreshCalendars();
-            } else if (connectedFlagRef.current) {
-                // Server has no refresh token (revoked / expired). Clear the persisted flag so the
-                // app's state matches reality and auto-reconnect stops re-checking on every load.
-                dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: false } });
+            } else {
+                // Server has no refresh token. Clear the derived state so stale calendar metadata
+                // does not survive a revoke or out-of-band disconnect.
+                applyDisconnectedState({ clearError: false });
             }
         } catch (e) {
             handleError(e, 'Failed to check Google connection');
         }
-    }, [dispatch, refreshCalendars, handleError]);
+    }, [dispatch, refreshCalendars, handleError, applyDisconnectedState]);
 
     const connect = useCallback(async (returnTo: ConnectReturnTarget = 'settings') => {
         setConnecting(true);
@@ -264,17 +282,8 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             return;
         }
 
-        tokenRef.current = null;
-        setIsConnected(false);
-        setAuthFailed(false);
-        setAvailableCalendars([]);
-        setGrantedScope(null);
-        setError(null);
-        if (connectedFlagRef.current) {
-            connectedFlagRef.current = false;
-            dispatch({ type: 'UPDATE_SETTINGS', settings: { googleCalendarConnected: false } });
-        }
-    }, [dispatch, handleError]);
+        applyDisconnectedState();
+    }, [handleError, applyDisconnectedState]);
 
     const createEvent = useCallback(
         async (calendarId: string, event: CalendarEventInput): Promise<CalendarEventResult | null> => {
