@@ -50,7 +50,7 @@ export async function storeTodoistToken(token: string): Promise<{ ok: boolean; e
     return { ok: true };
 }
 
-/** Clear the server-held Todoist token (best-effort). */
+/** Clear the server-held Todoist token. Returns an error code when the server rejects the request. */
 export async function disconnectTodoist(): Promise<{ ok: boolean; error?: string }> {
     const res = await apiFetch(`${AUTH_BASE}/disconnect`, { method: 'POST' });
     if (res.status === 401) return { ok: false, error: 'unauthorized' };

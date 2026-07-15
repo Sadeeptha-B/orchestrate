@@ -250,11 +250,11 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                     setData(data);
                     lastFetchedRef.current[kind] = Date.now();
                 } catch (e) {
-                    // 401s always flip auth-failed, even for silent project/section fetches —
-                    // otherwise a revoked token would show no error anywhere.
-                    if (e instanceof TodoistAuthError) {
-                        setAuthFailed(true);
-                        setError('Todoist authentication failed — reconnect in Settings.');
+                    // Auth failures always route through the shared auth funnel, even for silent
+                    // project/section refreshes — otherwise a revoked token or expired Access
+                    // session would fail in the background without surfacing the real problem.
+                    if (e instanceof TodoistAuthError || e instanceof SessionExpiredError) {
+                        handleApiError(e, errorMessage ?? 'Failed to refresh Todoist data');
                     } else if (errorMessage !== undefined) {
                         setError(e instanceof Error ? e.message : errorMessage);
                     }
@@ -267,7 +267,7 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
             promise.finally(() => { inflightRef.current[kind] = null; });
             return promise;
         },
-        [],
+        [handleApiError],
     );
 
     const refreshTasks = useCallback(

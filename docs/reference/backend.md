@@ -1,6 +1,8 @@
 # Orchestrate's Cloudflare backend — a walkthrough
 
-This is the conceptual tour of Orchestrate's small serverless backend: the part that lets a browser-first app talk to Google Calendar and Todoist *safely*, sync its state across devices, and serve a handful of pre-approved users independently. It's written to be read top‑to‑bottom — each piece introduces the concept it needs (OAuth, refresh tokens, serverless Functions, KV, Cloudflare Access, JWTs, proxies) right where that concept first matters, and explains *why* the code is shaped the way it is, not just what it does.
+This is the conceptual tour of Orchestrate's small serverless backend: the part that lets a browser-first app **talk to Google Calendar and Todoist safely** and **serve a handful of pre-approved users independently**. It's written to be read top‑to‑bottom — each piece introduces the concept it needs (OAuth, refresh tokens, serverless Functions, KV, Cloudflare Access, JWTs, proxies) right where that concept first matters, and explains *why* the code is shaped the way it is, not just what it does.
+
+This doc is scoped to the **server, auth, and deployment** side. Its sibling — [persistence.md](./persistence.md) — owns **data**: the `localStorage` working store, the D1 sync sidecar's merge/conflict model, local-vs-remote databases, and the integration caches. The two cross-reference each other; read this one for "how do we authenticate and hold secrets," that one for "where does data live and how does it stay consistent."
 
 If you just want the click‑by‑click setup (Google Cloud console, Cloudflare dashboard, Zero Trust), that's a separate page: [../deployment.md](../deployment.md). For where this sits in the wider app, see [synthesis.md §7](../synthesis.md); for the design history and the alternatives that were weighed, see the roadmap docs ([engagement_record_strategy.md](../roadmap/engagement_record_strategy.md) — this is **option E2** — and [persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md)).
 
@@ -19,7 +21,7 @@ Both require a **credential** — a secret string that proves "this app is allow
 
 > A credential that can act as you, indefinitely, must **not** live in the browser.
 
-Anything the browser holds is recoverable by anyone with access to that browser profile (and, for anything in the JS bundle, by literally anyone on the internet who views source). So the job of this backend is narrow and specific: **hold the credentials that can't safely live in the browser, mirror the app's data slices, and nothing else.** It is a credential vault, a request broker, and a small sync store — not an app server.
+Anything the browser holds is recoverable by anyone with access to that browser profile (and, for anything in the JS bundle, by literally anyone on the internet who views source). So the job of this backend is narrow and specific: **hold the credentials that can't safely live in the browser, broker the calls that need them, and mirror the app's data — and nothing else.** It is a credential vault, a request broker, and a small sync store — not an app server. (This doc covers the first two; the sync store is [persistence.md](./persistence.md).)
 
 The two integrations need *different* kinds of credential, and that difference drives almost every decision below.
 
@@ -80,15 +82,13 @@ The `user:<email>:` prefix (built by `userKey()` in [`functions/_shared.ts`](../
 
 ---
 
-## 4a. Where the app data lives: D1 (the sync sidecar)
+## 4a. A second store for app data: D1
 
-The KV store above holds *credentials*. The app's actual **data** (the day plan, settings, saved history, life context) lives in each browser's `localStorage`, mirrored to a **D1 sync sidecar** (v7.9): a cloud copy of the four slices, so every origin/device converges on one logical store per user.
+The KV namespace above holds *credentials*. The app's actual **data** (day plan, settings, history, life context) lives in each browser's `localStorage`, mirrored to a per-user **Cloudflare D1** database (SQLite) bound as `SYNC_DB`. This section only explains *why there are two Cloudflare stores* — the full sync model lives in **[persistence.md](./persistence.md)**.
 
-Why D1 here when KV was right for credentials? Different requirements: this is **durable app data** the user edits and reloads across devices, needing **read‑your‑writes** (you change a setting and expect it on the next load) — exactly where KV's eventual consistency is wrong and D1's strong consistency is right. It's also the natural home for future relational reads (v8 reviews over engagement history).
+Why a different product than KV? Opposite consistency needs. Credentials are tiny, rarely written, read on every request — a perfect fit for KV's fast, globally-replicated, *eventually*-consistent reads. App data is edited and immediately reloaded, so it needs **read-your-writes** — exactly where KV's ~60s propagation is wrong and D1's strong consistency is right. (D1 is also the natural home for future relational reads, e.g. v8 reviews over engagement history.)
 
-- **Binding:** `SYNC_DB` (D1), declared in [`wrangler.toml`](../../wrangler.toml). Schema in [`db/schema.sql`](../../db/schema.sql): one table `slices(user_id, key, value, schema_version, updated_at)` with primary key `(user_id, key)` — one row per user per slice. `user_id` is the verified Access email (§5), so each account has its own four rows; v7.10 added the column (migration: [`db/migrate_add_user_id.sql`](../../db/migrate_add_user_id.sql)).
-- **Endpoints** (identity‑guarded like everything else): `GET /api/state` returns the caller's identity plus their slices (`{ user, slices }` — the `user` field drives the client's identity‑switch guard, §5); `PUT /api/state/:key` upserts one slice with a last‑write‑wins guard inside the SQL (`WHERE excluded.updated_at >= slices.updated_at`, else **409** with the current row). Error vocabulary matches the rest: `unauthorized` (401), `server_not_configured` (500), `storage_unavailable` (503), plus `unknown_slice` (404) / `invalid_body` (400) / `conflict` (409). Code: [`functions/api/state/`](../../functions/api/state/).
-- **Client half:** [`src/lib/cloudSync.ts`](../../src/lib/cloudSync.ts) + the `SyncGate` cold‑start gate. The conflict model and merge rules are documented in [data-model.md](../data-model.md) §7.
+The Functions in [`functions/api/state/`](../../functions/api/state/) (`GET /api/state`, `PUT /api/state/:key`) are **identity-guarded like every other endpoint** — that's the only part relevant here; each user reads and writes only their own rows (`slices` is keyed `(user_id, key)`, `user_id` being the verified Access email from §5). How the client merges those rows, resolves conflicts, and handles offline is [persistence.md §3](./persistence.md).
 
 ---
 
@@ -123,11 +123,22 @@ Errors reuse the established vocabulary: missing/invalid JWT → `401 unauthoriz
 
 ### What multi‑user means for the browser
 
-One subtlety: `localStorage` is per **browser profile**, not per Access identity. If you sign out and a friend signs in on the same machine, their cloud data must not merge with your local slices. The client handles this with an **identity‑switch guard**: `GET /api/state` returns the caller's email, the client compares it with the `orchestrate-user` stamp in localStorage, and on a mismatch clears all local app state before merging ([`src/lib/cloudSync.ts`](../../src/lib/cloudSync.ts)). And when the Access session **expires**, `/api/*` fetches stop returning JSON (the edge redirects to the login page) — the client detects this (`redirect: 'manual'` + `SessionExpiredError` in [`src/lib/identity.ts`](../../src/lib/identity.ts)) and surfaces a "reload to sign in again" banner; a reload re-runs the SSO, usually silently.
+One subtlety: `localStorage` is per **browser profile**, not per Access identity. If you sign out and a friend signs in on the same machine, their cloud data must not merge with your local slices. The client handles this with an **identity‑switch guard** — the mechanics are in [persistence.md §5.4](./persistence.md), but the shape is: `GET /api/state` returns the caller's email, and on a mismatch with the last-synced identity the client wipes local app state before merging. And when the Access session **expires**, `/api/*` fetches stop returning JSON (the edge redirects to the login page) — the client detects this (`redirect: 'manual'` + `SessionExpiredError` in [`src/lib/identity.ts`](../../src/lib/identity.ts)) and surfaces a "reload to sign in again" banner; a reload re-runs the SSO, usually silently.
 
 ### Two allowlists, one Google client
 
 Being allowed **into the app** (the Access policy) and letting the app **touch your calendar** (Google's consent) are separate grants. Because the Google OAuth client is in **Testing** mode, each user who connects their calendar must also be listed as a **test user** in the Google Cloud console (cap 100). Both lists are managed against the same Google client; [deployment.md](../deployment.md) covers both.
+
+### Why the door is a genuine necessity, not just identification
+
+It's tempting to read the gate as *only* about telling users apart for multi-user, and to assume security is already handled because "you'd need to sign in with Google, and Todoist needs its token anyway." That reasoning has a hole worth spelling out, because it's the crux of why this backend must be gated at all.
+
+The Google consent and the Todoist token are **one-time grants, not per-request checks**. Once you connect, the refresh token / personal token sits in KV, and from then on the endpoints are a **standing, durable capability** to act on your accounts: `/api/auth/google/token` mints a fresh Google access token *from the stored refresh token*, and `/api/todoist/*` forwards to Todoist *with the stored token injected server-side*. The browser never re-authenticates and never holds the token. So whoever can *invoke* those endpoints as your identity drives your calendar and your Todoist **without ever knowing the token or passing a Google login** — the delegation already happened. Something therefore has to authorize *each invocation*, and that per-request check **is** the identity check. Here, identification and gating are not two features: the identity check is simultaneously the security boundary, because it's what decides whether a request may use the stored credentials. (The old single-user design had the same necessity — its gate was just the shared secret instead of per-user identity.)
+
+Two refinements keep the model honest:
+
+- **Gating the *API* is mandatory; gating the *static bundle* is a bonus.** The SPA is inert JavaScript with no secrets — anyone could download it and it does nothing without a valid session. Access happens to gate the whole origin in one move, so "strangers can't even see the app" comes free, but only the `/api/*` gate is load-bearing.
+- **You could get identity without Access's hard perimeter** — roll your own Google Sign-In, mint a session JWT, verify it per request — but that rebuilds the login/session/expiry machinery Access hands you for free. Access is simply the pragmatic way to get the mandatory per-request gate *and* identity together.
 
 ---
 
@@ -306,7 +317,7 @@ Everything above rests on a small set of assumptions. They're sound for a person
 - **Google's Testing‑mode consent** caps calendar-connected users at 100 test users and shows scary screens; friends must be added to the test‑user list by hand.
 - **KV's ~≤60s eventual consistency is acceptable** for token reads/writes.
 - **Same‑origin** browser↔Worker, so the Access cookie rides every request and there's no CORS.
-- **Whole‑slice LWW sync per user.** No concurrent multi‑writer editing of one account; the identity‑switch guard assumes one active identity per browser profile at a time.
+- **Whole‑slice LWW sync per user.** No concurrent multi‑writer editing of one account; the identity‑switch guard assumes one active identity per browser profile at a time. (Full conflict model: [persistence.md §5](./persistence.md).)
 
 And a few sharp edges worth knowing:
 
@@ -341,6 +352,8 @@ The only client‑persisted auth‑adjacent state is the `orchestrate-user` iden
 
 ## See also
 
+- [persistence.md](./persistence.md) — the data side: `localStorage` working store, the D1 sync sidecar's merge/conflict model, local-vs-remote databases, and the Todoist/Google caches.
+- [backup_and_restore.md](./backup_and_restore.md) — the feature-level scenario catalog for backup/import/export/reset across backends and accounts.
 - [../deployment.md](../deployment.md) — the step‑by‑step setup (Google Cloud client, Cloudflare project, Zero Trust/Access, KV, D1, secrets, local dev, troubleshooting).
 - [../synthesis.md](../synthesis.md) §7 (integrations), §11 (persistence) — where this fits in the app.
 - [../roadmap/engagement_record_strategy.md](../roadmap/engagement_record_strategy.md) — option E1 vs E2, and the calendar‑write feature this unlocks.

@@ -113,16 +113,13 @@ export function TodoistConnectCard() {
                             {testing ? 'Testing…' : 'Test & Save'}
                         </Button>
                     </div>
-                    {status === 'error' && (
-                        <p className="text-xs text-red-500">{errorMsg}</p>
-                    )}
                     {status === 'success' && (
                         <p className="text-xs text-success">Token saved on the server.</p>
                     )}
                 </div>
             )}
 
-            {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
+            {status === 'error' && errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
         </div>
     );
 }
