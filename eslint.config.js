@@ -22,4 +22,15 @@ export default defineConfig([
             globals: globals.browser,
         },
     },
+    {
+        files: ['src/components/buddy/AsciiBuddy.tsx'],
+        // The ASCII buddy intentionally uses timer refs and state transitions inside effects.
+        // These React Compiler-era rules are too strict for this local animation widget, but we
+        // keep the rest of the app on the default rule set.
+        rules: {
+            'react-hooks/set-state-in-effect': 'off',
+            'react-hooks/purity': 'off',
+            'react-hooks/refs': 'off',
+        },
+    },
 ])

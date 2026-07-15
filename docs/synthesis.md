@@ -53,6 +53,7 @@ StrictMode                         (main.tsx)
                             `-- TodoistProvider          <-- Todoist data + API actions
                                 `-- ReconciliationProvider  <-- v6.5: central habit reconcile
                                     `-- NotificationBridge  <-- v7.8: engagement nudge + sync-error toasts
+                                    `-- AsciiBuddy          <-- ASCII slice-of-life companion (fixed overlay, all routes)
                                     `-- AppRoutes        <-- router switch
 ```
 
@@ -61,6 +62,7 @@ StrictMode                         (main.tsx)
 - `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The **refresh token lives server-side** (Cloudflare Worker + KV, per user); the provider holds only a short-lived access token **in memory** (re-minted by the Worker on demand). Requests are authenticated by the Cloudflare Access session cookie — there is no in-app credential (v7.10).
 - `TodoistProvider` reads `settings` (connection state + habits project preference) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
 - `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
+- `AsciiBuddy` is a purely cosmetic ASCII companion rendered once beside `NotificationBridge` (fixed overlay, default bottom-left — toasts own the bottom-right) so it persists across route changes without its animation resetting. Its activity is derived from day state (`useBuddyActivity`, top wins): asleep outside the settings day window, planning pose on `/setup`, working out while a habit instance is engaged, watering a plant or coding during a task engagement (deterministic per-task pick), swimming when the clock sits in a gap between sessions (True Rest), idle otherwise. The widget layers three one-shots on top: a celebration burst when the day's completed count (tasks + habits) rises, a pet burst, and occasional idle dances. Interactions: **drag to move** (position persists device-locally), **click to expand in place into the ambient view** — a small diorama with a faint accent ASCII backdrop per activity (meadow/garden/sea/night/study), a caption, and a **mode picker** that pins any activity (or auto, following the day; pin persists device-locally). Click the buddy in the diorama to pet; click the card or Esc to shrink. Hover shows the minimize chip control. Decoration glyphs (sparkles, plants, waves…) render in the accent green; the figure stays neutral. Honors `prefers-reduced-motion`; defaults to the minimized chip on `/focus` (the distraction-free surface). All preferences are device-local localStorage — deliberately outside the synced schema. Frames live in `src/components/buddy/animations.ts`.
 - `NotificationProvider` (v7.8) sits above the integration providers so they (and any view) can raise in-app banners via `useNotify`. It owns the toast queue and renders `NotificationViewport` (fixed, bottom-right, themed by kind: info/success/warning/error; info/success auto-dismiss, errors persist; de-duped by `dedupeKey`). `NotificationBridge` — a headless component under all providers — runs the engagement nudge app-wide and watches the Todoist / Google Calendar / reconciliation contexts, raising an **error banner on a sync failure** (linking to Integrations). Native browser notifications are now a **background-only fallback** in `useNotifications` (fired only when the tab is hidden and the preference allows the browser channel).
 
 ### 3.2 Routing
@@ -599,6 +601,7 @@ src/
 |   +-- useConfirmModal.ts
 |   +-- useHabitReconciliation.ts, useSyncHabit.ts, useHabitMutations.ts, useHabitForms.tsx
 |   +-- useHabitReschedule.ts, useToggleHabitInstance.ts, useTodaysHabitsSync.ts
+|   +-- useBuddyActivity.ts     # ASCII buddy activity mapping (day window / engaged habit / engaged task)
 |   `-- useGcalCallback.ts       # v7.10: OAuth callback (?gcal=…) processing, shared by Settings + onboarding
 |
 +-- lib/
@@ -627,6 +630,8 @@ src/
 |
 +-- components/
     +-- Welcome.tsx
+    +-- buddy/
+    |   `-- AsciiBuddy.tsx, animations.ts   # ASCII slice-of-life companion overlay + frame data
     +-- wizard/
     |   +-- Wizard.tsx, WizardLayout.tsx
     |   +-- Step1Sessions.tsx, Step2Intentions.tsx, Step3Refine.tsx, Step4Schedule.tsx, Step5Launch.tsx
