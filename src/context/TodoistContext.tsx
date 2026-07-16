@@ -78,6 +78,9 @@ interface CreateTaskOpts {
 
 interface UpdateTaskOpts {
     content?: string;
+    /** v7.11: replaces the task's description (callers merge the habit-id token with any
+     *  user-written text themselves — see `withHabitIdToken`). */
+    description?: string;
     /** v6.2: explicit `null` clears the field in Todoist (used to unschedule on intention discard). */
     due_datetime?: string | null;
     due_date?: string | null;
@@ -85,6 +88,8 @@ interface UpdateTaskOpts {
     due_lang?: string;
     duration?: number | null;
     duration_unit?: string;
+    /** v7.11: replaces the task's label set (callers merge with existing labels themselves). */
+    labels?: string[];
 }
 
 interface CreateProjectOpts {
@@ -103,6 +108,16 @@ export interface TodoistDataValue {
     loading: boolean;
     error: string | null;
     isConfigured: boolean;
+    /** v7.11: the connected Todoist account's id (from GET /user), or null while unresolved /
+     *  disconnected. Compared against `settings.todoistAccount` before any auto-provisioning
+     *  write — see ReconciliationProvider's account-mismatch gate. */
+    accountId: string | null;
+    /** Human-readable label for the connected account (email), for mismatch messages. */
+    accountEmail: string | null;
+    /** v7.11: true once the identity fetch has settled (success or failure). Lets the reconcile
+     *  gate wait for the verdict instead of racing it — while still degrading to ungated behavior
+     *  when the fetch fails (accountResolved true, accountId null). */
+    accountResolved: boolean;
     /** True once the first /status check has settled — lets gates render neutrally instead of
      *  flashing "not connected" while the check is in flight. */
     statusResolved: boolean;
@@ -119,7 +134,7 @@ export interface TodoistActionsValue {
     reorderTasks: (items: { id: string; child_order: number }[]) => Promise<boolean>;
     completeTask: (taskId: string) => Promise<boolean>;
     reopenTask: (taskId: string) => Promise<void>;
-    deleteTask: (taskId: string) => Promise<void>;
+    deleteTask: (taskId: string) => Promise<boolean>;
     createTaskComment: (taskId: string, content: string) => Promise<void>;
     createProject: (name: string, opts?: CreateProjectOpts) => Promise<TodoistProject | null>;
     deleteProject: (projectId: string) => Promise<void>;
@@ -165,6 +180,12 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
     const [statusResolved, setStatusResolved] = useState(false);
     const isConfiguredRef = useRef(false);
     useEffect(() => { isConfiguredRef.current = isConfigured; }, [isConfigured]);
+
+    // v7.11: the connected account's identity (GET /user through the proxy). Best-effort — a
+    // failure leaves it null, which downstream reads as "unknown" and skips provenance gating
+    // rather than blocking anything. `accountResolved` marks the fetch as settled either way.
+    const [account, setAccount] = useState<{ id: string; email: string | null } | null>(null);
+    const [accountResolved, setAccountResolved] = useState(false);
 
     /**
      * Single error-handling funnel: 401s flip `authFailed` and route to a re-auth message;
@@ -218,6 +239,30 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
 
     // Resolve connection on mount (cache still renders synchronously meanwhile).
     useEffect(() => { void refreshConnection(); }, [refreshConnection]);
+
+    // v7.11: resolve the connected account's identity once per connection; cleared on disconnect.
+    // Best-effort — on failure it stays null and provenance gating simply remains inactive.
+    useEffect(() => {
+        if (!isConfigured) {
+            setAccount(null);
+            setAccountResolved(false);
+            return;
+        }
+        let cancelled = false;
+        void (async () => {
+            try {
+                const user = await apiFetch<{ id: string | number; email?: string }>('/user');
+                if (!cancelled && user && user.id != null) {
+                    setAccount({ id: String(user.id), email: user.email ?? null });
+                }
+            } catch (e) {
+                console.error('[Todoist] failed to resolve account identity:', e);
+            } finally {
+                if (!cancelled) setAccountResolved(true);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [isConfigured]);
 
     // ── Refresh functions with dedup + staleness ──
 
@@ -520,16 +565,18 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [handleApiError]);
 
-    const deleteTask = useCallback(async (taskId: string) => {
-        if (!isConfiguredRef.current) return;
+    const deleteTask = useCallback(async (taskId: string): Promise<boolean> => {
+        if (!isConfiguredRef.current) return false;
         try {
             await apiFetch(`/tasks/${taskId}`, { method: 'DELETE' });
             setTasks((prev) => {
                 const removed = collectDescendantIds(prev, [taskId], (t) => t.parent_id);
                 return prev.filter((t) => !removed.has(t.id));
             });
+            return true;
         } catch (e) {
             handleApiError(e, 'Failed to delete task');
+            return false;
         }
     }, [handleApiError]);
 
@@ -579,7 +626,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         isConfigured,
         statusResolved,
         authFailed,
-    }), [tasks, projects, sections, taskMap, tasksHydrated, loading, error, isConfigured, statusResolved, authFailed]);
+        accountId: account?.id ?? null,
+        accountEmail: account?.email ?? null,
+        accountResolved,
+    }), [tasks, projects, sections, taskMap, tasksHydrated, loading, error, isConfigured, statusResolved, authFailed, account, accountResolved]);
 
     const actionsValue = useMemo<TodoistActionsValue>(() => ({
         createTask, updateTask, moveTask, reorderTasks, completeTask, reopenTask, deleteTask, createTaskComment,

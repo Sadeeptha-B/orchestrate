@@ -522,16 +522,18 @@ A thin cloud mirror so a user's **real devices** (all on the production store) c
 - **Push (mutation).** Each persist effect calls `notifyChanged(slice, serialized)` after writing localStorage; genuine changes bump the meta clock and debounce-push (~2.5s), flushed on `pagehide`/tab-hidden with `keepalive`. The **first mount fire is skipped** unless an init-time event (day-rollover, bootstrap, local-newer merge) marked the slice — so merely opening the app never claims "newest" and clobbers another device. `RESET_ALL` / `IMPORT_BACKUP` push like any mutation; recovery paths are D1 Time Travel (7 days) + the manual Full Backup file.
 - **Not synced:** the Todoist cache, theme/music prefs, and the sync sidecar's own device-local bookkeeping keys (`orchestrate-sync-meta`, `orchestrate-sync-reset-pending`, `orchestrate-user`).
 
-**Backup**: Settings page Data tab has Full Backup (bundles settings + life + history **+ the live `currentDay`**, stamped `_schemaVersion`; `_backupVersion: 2`), Import Backup (**authoritative restore** — see below; refuses non-`7.1` files), and **Import Day Plan** (renamed from "Import Sessions"; imports a single day plan, or an exported day-plans array, into Saved Sessions; refuses non-`7.1` plans). `HistorySidebar` has per-session Restore/Export/Delete. **`IMPORT_BACKUP` is authoritative**: each slice the backup carries *replaces* the local one (settings/life/history), and `currentDay` replaces today's plan (re-dated to today) — recovery means "make this device match the backup", not merge. Because that's destructive, `useDataImport` parks a validated backup in `pendingBackup` and the UI confirms (`ConfirmModal`, "Replace & Restore") before dispatching whenever local data exists; a pristine install imports straight through. The shared parse/validate/dispatch logic lives in `useDataImport` (over `lib/dataImport.ts`); the Welcome page's "Restore from a backup" opens an in-place `RestoreModal` that imports and then loads any restored day as today's plan (`RESTORE_DAY`) without leaving the page — no Settings round-trip.
+**Backup**: Settings page Data tab has Full Backup (bundles settings + life + history **+ the live `currentDay`**, stamped `_schemaVersion` — built by `lib/backup.ts`), Import Backup (**authoritative restore** — see below; refuses non-`7.1` files), and **Import Day Plan** (renamed from "Import Sessions"; imports a single day plan, or an exported day-plans array, into Saved Sessions; refuses non-`7.1` plans). `HistorySidebar` has per-session Restore/Export/Delete. **`IMPORT_BACKUP` is authoritative**: each slice the backup carries *replaces* the local one (settings/life/history), and `currentDay` replaces today's plan (re-dated to today) — recovery means "make this device match the backup", not merge. Because that's destructive, `useDataImport` parks every validated backup in `pendingBackup` and the shared `RestoreConfirmModal` ("Replace & Restore") always confirms before dispatching — offering a default-on **download of the current data first**, the same escape hatch Reset Everything has. The shared parse/validate/dispatch logic lives in `useDataImport` (over `lib/dataImport.ts`); the Welcome page's "Restore from a backup" opens an in-place `RestoreModal` that imports and then loads any restored day as today's plan (`RESTORE_DAY`) without leaving the page — no Settings round-trip.
 
 **Backup scope & integrations** — a Full Backup is **data + integration references/preferences, never credentials**:
 - **Todoist.** *Not* in the backup: the personal API token (server-side in Workers KV `todoist:token`; the browser never holds it). *In* the backup: `settings.habitsTodoistProjectId`, and every embedded **task reference** — `LinkedTask.todoistId` + `titleSnapshot` inside `history[].plan`, and `todoistTaskId` on `life.habits[]` and habit instances (IDs/labels, not auth). After restoring on a fresh deployment, **reconnect Todoist** (paste token) in Settings → Integrations; the imported IDs re-link automatically for the same account.
 - **Google Calendar.** *Not* in the backup: the OAuth refresh/access tokens (Workers KV / in-memory, server-side). *In* the backup: `settings.googleCalendarConnected` (flag), `settings.googleCalendarIds` (selected `GoogleCalendarEntry[]`), `settings.calendarViewMode`. The imported `googleCalendarConnected: true` is provisional — `GoogleCalendarProvider` re-checks `/api/auth/google/status` on load, so a device whose KV has no token self-corrects to disconnected; re-authorize Google if it shows disconnected.
-- **Not in the full backup by design:** the Todoist cache, the identity stamp, and theme/music/pomodoro prefs. (As of `_backupVersion: 2`, today's live `plan` **is** included as `currentDay`.)
+- **Provenance (v7.11 / schema 7.7).** Backups stamp `_exportedAt` + `_originHost`, and the **account fingerprints** ride inside `settings`: `todoistAccount` (Todoist user id/email via `GET /user`) and `googleAccount` (primary calendar id = account email), stamped at connect when absent. At import, `useDataImport` compares them (plus the origin host, plus `_exportedAt` against the sync meta clock — an **"Older backup"** warning when the file predates the live data by >5 min) against the live connections and surfaces warnings in the confirm modal (which every backup import passes through), whose copy states that a restore syncs to other devices. At runtime, a fingerprint↔live-account **mismatch pauses all habit-task writes** (red "account changed" chip/banner with an explicit adopt action) and pauses the Google calendar prune/auto-provision (notice + adopt in Settings) — so a foreign registry can no longer trigger mass re-creation in the wrong account. The stamp/compare/adopt cycle is one shared hook (`useAccountFingerprint`, whose ok/wait/blocked `fingerprintVerdict` gates `ReconciliationProvider`, `useSyncHabit`, and the Google writers alike), and the notice is one shared `AccountMismatchBanner`. See [reference/backup_and_restore.md](./reference/backup_and_restore.md).
+- **Durable markers (v7.11).** The same-account complement to the fingerprints: every habit task carries the **`orchestrate-habit` label** (class marker: "ours") plus an **`[orchestrate:habit:<uuid>]` description token** (instance marker: which habit — exact, rename-proof pairing for stores that share a backup lineage, since backups carry habit uuids), and the Orchestrate calendar carries an **`orchestrate:managed-calendar` token in its description** (stamped at create; backfilled on rename and on the linked calendar). Provisioning resolves **id → marker adoption → create** (task adoption: uuid token first, then label + exact name): a registry-less store on the same account (fresh local dev, post-`RESET_ALL`, backup-seeded) adopts the existing task / the marker-carrying calendar (taking over its live name) instead of duplicating. The **create rung is consent-gated for previously-linked habits**: automatic reconcile passes are adopt-only when a habit's task has vanished (a deliberate deletion in Todoist stays deleted); re-creation happens only from the Habits page — the bulk Re-sync, or the per-habit recreate on each missing habit's chip. Residuals: renames pair with nothing only when no uuid is shared (hand-recreated habits), and the calendar description patch is best-effort under the narrow `calendar.app.created` scope.
+- **Not in the full backup by design:** the Todoist cache, the identity stamp, and theme/music/pomodoro prefs. (Today's live `plan` **is** included, as `currentDay`, whenever it has content.)
 
 **Reset**: Settings → Data → Reset section has two destructive actions, each gated by a `ConfirmModal`:
 - **Reset Today's Plan** dispatches `RESET_DAY` — replaces `plan` with a fresh plan (sessions re-seeded from settings/defaults) and clears `editingStep`. Settings, history, life (seasons / habits / backlog / rest cues / session templates), and Todoist auth are untouched. Useful for cleaning up after a `RESTORE_DAY` that imported an unwanted session.
-- **Reset Everything** dispatches `RESET_ALL` and manually clears `orchestrate-todoist-cache` — a factory reset of all four reducer-managed slices (plan + settings + history + life). It does **not** touch the server-side integration tokens (Todoist/Google in KV) — disconnect those from Settings → Integrations. Tasks/projects in Todoist itself are not modified. Theme and music prefs (separate localStorage keys outside the reducer) survive.
+- **Reset Everything** dispatches `RESET_ALL` and manually clears `orchestrate-todoist-cache` — a factory reset of all four reducer-managed slices (plan + settings + history + life). It does **not** touch the server-side integration tokens (Todoist/Google in KV) — disconnect those from Settings → Integrations. The confirm modal offers a **Full Backup download first** (default on) and an opt-in **delete of the habit tasks Orchestrate created in Todoist** (default off; ids snapshotted before the wipe, deleted best-effort after) — declined, those tasks stay as orphans that keep the `orchestrate-habit` marker, so re-creating same-named habits later *adopts* them rather than duplicating (renamed habits still create fresh tasks). Other Todoist tasks/projects are never modified. Theme and music prefs (separate localStorage keys outside the reducer) survive.
 
 ---
 
@@ -561,7 +563,9 @@ A thin cloud mirror so a user's **real devices** (all on the production store) c
 | `useIntentionRemoval` | `hooks/useIntentionRemoval.ts` | moveToBacklog, removeIntention, discardFromBacklog |
 | `useConfirmModal` | `hooks/useConfirmModal.ts` | Reusable confirm-dialog state |
 | `useHabitReconciliation` | `hooks/useHabitReconciliation.ts` | v6.5: read central reconcile status — counts, the **named needs-sync habit list**, error, in-flight — + manual trigger |
-| `useSyncHabit` | `hooks/useSyncHabit.ts` | Per-habit →Todoist sync + habit-patch write-back (**'habit' kind only** — micro-gaps early-return). Shared by HabitsLibrary save flow and `ReconciliationProvider`. |
+| `useSyncHabit` | `hooks/useSyncHabit.ts` | Per-habit →Todoist sync + habit-patch write-back (**'habit' kind only** — micro-gaps early-return). Shared by HabitsLibrary save flow and `ReconciliationProvider`. v7.11: gated by `fingerprintVerdict` (waits for identity, blocks on mismatch) and resolves via the adoption ladder with an `allowCreate` opt-out. |
+| `useAccountFingerprint` | `hooks/useAccountFingerprint.ts` | v7.11: the shared account-provenance cycle for both integrations — stamp-when-absent, mismatch object (for `AccountMismatchBanner`), adopt action, and the pure `fingerprintVerdict` (`ok`/`wait`/`blocked`) every auto-writer gates on. |
+| `useDataImport` | `hooks/useDataImport.ts` | Shared restore/import logic (Settings → Data + Welcome `RestoreModal`): parse/validate via `dataImport.ts`, provenance warnings (accounts, origin host, backup age vs the sync meta clock), and the parked `pendingBackup` the shared `RestoreConfirmModal` confirms. |
 | `useHabitMutations` | `hooks/useHabitMutations.ts` | Shared habit create/edit/delete with best-effort Todoist sync (project resolution + `useSyncHabit`), plus the `HabitForm` Todoist props and `syncError`. Used (via `useHabitForms`) by `HabitsLibrary` and `LifeView` so both surfaces share one CRUD path. |
 | `useHabitForms` | `hooks/useHabitForms.tsx` | Wraps `useHabitMutations` and owns the shared create/edit/anchor-delete **modal stack** + open/edit/`requestDelete` triggers. Returns a ready-to-render `modals` node so `HabitsLibrary` and `LifeView` render the same form/confirm plumbing instead of duplicating the JSX. |
 | `useHabitReschedule` | `hooks/useHabitReschedule.ts` | Shared inline-reschedule state for `TodaysHabitInstance` rows (HabitInstanceCard + Step3HabitsPanel); pairs with `HabitTimeEditor`. |
@@ -587,7 +591,7 @@ src/
 |   +-- DayPlanContext.tsx          # Core reducer, migration, persistence
 |   +-- TodoistContext.tsx          # Todoist API layer, cache, reconciliation
 |   +-- GoogleCalendarContext.tsx   # v7.2: server-mediated OAuth state + calendar list + createEvent plumbing
-|   `-- ReconciliationContext.tsx   # v6.5: central habit reconcile (overdue + needs-sync)
+|   `-- ReconciliationContext.tsx   # v6.5: central habit reconcile (overdue + needs-sync); v7.11: fingerprint gate, marker backfill, adopt-only autos + recreateHabitTask
 |
 +-- hooks/
 |   +-- useCurrentSession.ts
@@ -602,6 +606,8 @@ src/
 |   +-- useHabitReconciliation.ts, useSyncHabit.ts, useHabitMutations.ts, useHabitForms.tsx
 |   +-- useHabitReschedule.ts, useToggleHabitInstance.ts, useTodaysHabitsSync.ts
 |   +-- useBuddyActivity.ts     # ASCII buddy activity mapping (day window / engaged habit / engaged task)
+|   +-- useAccountFingerprint.ts # v7.11: shared account-provenance cycle (stamp/compare/adopt + fingerprintVerdict gate)
+|   +-- useDataImport.ts        # shared backup/day-plan import logic (validation, provenance warnings, pendingBackup)
 |   `-- useGcalCallback.ts       # v7.10: OAuth callback (?gcal=…) processing, shared by Settings + onboarding
 |
 +-- lib/
@@ -611,7 +617,7 @@ src/
 |   +-- schema.ts               # SCHEMA_VERSION / MIN_SUPPORTED_SCHEMA + gate (isSupportedSchemaVersion) + migrateToCurrent seam — shared by DayPlanContext loaders + DataManagement import
 |   +-- time.ts                 # Time utilities (timeToMinutes, todayISO, etc.)
 |   +-- habits.ts               # habitMatchesDate/recurrenceMatchesDate, habitKindOf, partitionByKind, computeTodaysMicroGapInstances, getActiveHabits, getAnchorHabits
-|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist, computeTodaysHabitInstances, findStaleTodaysHabitInstances, findOverdueHabits, reconcileOverdueHabits, findNeedsSyncHabits
+|   +-- habitsTodoistSync.ts    # buildDueString, ensureHabitsProject, syncHabitToTodoist (id → uuid token → marker+name → create ladder, allowCreate), findAdoptableTask, marker helpers (hasHabitMarker, habitIdTokenOf, withHabitIdToken), computeTodaysHabitInstances, findStaleTodaysHabitInstances, findOverdueHabits, reconcileOverdueHabits, findNeedsSyncHabits
 |   +-- backlog.ts              # hasUnfinishedWork, buildBacklogEntry, harvestStalePlan, rebuildLinkedTasksForBacklogEntry
 |   +-- engagementHistory.ts    # v7.4 P2: durable engagement archive — buildRecordFromClosedSegment, appendEngagementRecord, pruneEngagementHistory (90d), computeReentryStats, lastEndedFor
 |   +-- intentionUnschedule.ts  # unscheduleIntentionTasks pure helper
@@ -620,6 +626,10 @@ src/
 |   +-- capacity.ts             # computeSessionCapacity / computeAllSessionCapacities
 |   +-- timeline.ts             # time<->position geometry (formatHour, minutesToPct/pctToMinutes)
 |   +-- spotify.ts              # spotifyPlaylistId, isValidSpotifyUrl
+|   +-- cloudSync.ts            # v7.9: D1 sync sidecar client — pullAndMerge, notifyChanged, markLocalReset, latestLocalChangeMs, identity-switch guard
+|   +-- dataImport.ts           # FullBackup shape + validateBackup (discriminated rejection reasons), validateSessions, validateDayPlan
+|   +-- backup.ts               # v7.11: downloadFullBackup — one builder for the Export button, reset opt-in, and restore escape hatch
+|   +-- download.ts             # downloadJSON helper
 |   `-- todoistApi.ts           # v7.2: proxy API_BASE + TodoistAuthError, getTodoistStatus, storeTodoistToken, disconnectTodoist
 |
 +-- data/
@@ -630,6 +640,8 @@ src/
 |
 +-- components/
     +-- Welcome.tsx
+    +-- RestoreModal.tsx        # Welcome-page in-place restore (import + load a day as today)
+    +-- RestoreConfirmModal.tsx # v7.11: shared restore confirm — warnings + backup-first escape hatch
     +-- buddy/
     |   `-- AsciiBuddy.tsx, animations.ts   # ASCII slice-of-life companion overlay + frame data
     +-- wizard/
@@ -657,6 +669,7 @@ src/
         +-- Button.tsx, Card.tsx, Modal.tsx, ConfirmModal.tsx, ProgressBar.tsx
         +-- ErrorBoundary.tsx, EditableTaskList.tsx, SessionTimelineBar.tsx, SessionEditorTimeline.tsx
         +-- AboutContent.tsx, Logo.tsx, HeaderControls.tsx, ThemeToggle.tsx
+        +-- HabitSyncChip.tsx, AccountMismatchBanner.tsx   # header sync/mismatch chip; v7.11 shared mismatch notice
         `-- formStyles.ts
 ```
 
@@ -666,6 +679,7 @@ src/
 
 The remaining proposals in [backlog.md](./backlog.md) are NOT implemented. Key items:
 
+- **Per-slice D1 snapshots.** No automatic point-in-time restore yet — backups remain manual-only (both destructive flows offer a pre-action download). Design settled in the backlog entry.
 - **Modes, rituals, recovery mode.** No `DayPlan.mode`, no ritual templates / `RitualPlayer`, no Minimum Viable Day. (Targeted for v7.)
 - **Reviews and drift detection.** No `/review` route, no weekly/seasonal review flows, no drift-signal aggregation. (Targeted for v8.)
 

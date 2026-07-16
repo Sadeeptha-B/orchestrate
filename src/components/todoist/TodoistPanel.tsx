@@ -325,12 +325,16 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
     const handleDeleteTask = useCallback(
         (taskId: string) => {
             const toRemove = collectDescendantIds(tasks, [taskId], (t) => t.parent_id);
-            deleteTask(taskId);
-            for (const id of toRemove) {
-                if (plan.linkedTasks.some((lt) => lt.todoistId === id)) {
-                    dispatch({ type: 'UNLINK_TASK', todoistId: id });
+            void deleteTask(taskId).then((deleted) => {
+                // Only unlink once the delete actually landed — a failed delete leaves the task
+                // alive in Todoist, and silently unlinking it would orphan a live task.
+                if (!deleted) return;
+                for (const id of toRemove) {
+                    if (plan.linkedTasks.some((lt) => lt.todoistId === id)) {
+                        dispatch({ type: 'UNLINK_TASK', todoistId: id });
+                    }
                 }
-            }
+            });
         },
         [deleteTask, tasks, plan.linkedTasks, dispatch],
     );

@@ -245,6 +245,20 @@ export interface AppSettings {
     // v7.10: the wizard Step 1 "connect Google Calendar" nudge was dismissed (persisted, unlike the
     // old component-local wizard banner).
     calendarNudgeDismissed?: boolean;
+    // v7.11 (schema 7.7): account fingerprints — which external accounts this store's external IDs
+    // (habit todoistTaskIds, orchestrateCalendarId, …) were minted against. Stamped when absent on
+    // connect; compared against the live account before any auto-provisioning write. A mismatch
+    // means the registry is foreign to the connected account (imported backup, switched account) —
+    // auto-creation is halted until the user explicitly adopts the current account.
+    todoistAccount?: ExternalAccountRef;
+    googleAccount?: ExternalAccountRef;
+}
+
+/** v7.11: identity of an external account, for provenance checks. `id` is the comparison key. */
+export interface ExternalAccountRef {
+    id: string;
+    /** Human-readable label for mismatch messages (email where available). */
+    email?: string;
 }
 
 // ─── v5: Life scaffolding primitives ──────────────────────────────────────────

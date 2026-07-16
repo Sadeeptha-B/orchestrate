@@ -1,13 +1,13 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
+import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useDataImport } from '../../hooks/useDataImport';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { RestoreConfirmModal } from '../RestoreConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { downloadJSON } from '../../lib/download';
-import { SCHEMA_VERSION } from '../../lib/schema';
-import type { FullBackup } from '../../lib/dataImport';
-import type { DayPlan } from '../../types';
+import { downloadFullBackup } from '../../lib/backup';
 
 interface DataManagementProps {
     /** Optional handler to surface the Saved Sessions sidebar (closes modal + reveals panel). */
@@ -27,13 +27,33 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
         cancelBackupImport,
         reset: resetImportStatus,
     } = useDataImport();
+    const { isConfigured } = useTodoistData();
+    const { deleteTask } = useTodoistActions();
     const [resetInfo, setResetInfo] = useState<string | null>(null);
     const dayPlanInputRef = useRef<HTMLInputElement>(null);
     const backupInputRef = useRef<HTMLInputElement>(null);
     const confirmResetDay = useConfirmModal<true>();
     const confirmResetAll = useConfirmModal<true>();
+    // Reset Everything options, re-defaulted each time the modal opens.
+    const [backupBeforeReset, setBackupBeforeReset] = useState(true);
+    const [deleteHabitTasks, setDeleteHabitTasks] = useState(false);
 
     const showRestoreHint = (importedDayCount ?? 0) > 0;
+
+    // The habit-task registry: the recurring Todoist tasks Orchestrate created for habits.
+    // RESET_ALL wipes the registry but not the tasks, leaving them orphaned. They keep the
+    // orchestrate-habit marker label, so a same-named habit re-adopts its orphan later
+    // instead of duplicating it (see habitsTodoistSync) — the optional delete below is for
+    // leaving Todoist clean, or when the habits won't be re-created under the same names.
+    const habitTaskIds = useMemo(
+        () => [...new Set(
+            life.habits
+                .filter((h) => h.kind === 'habit' && h.todoistTaskId)
+                .map((h) => h.todoistTaskId as string),
+        )],
+        [life.habits],
+    );
+    const canDeleteHabitTasks = isConfigured && habitTaskIds.length > 0;
 
     const handleResetDay = () => {
         dispatch({ type: 'RESET_DAY' });
@@ -41,31 +61,55 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
         setResetInfo("Today's plan has been cleared.");
     };
 
-    const handleResetAll = () => {
-        // Clear the Todoist cache too — it's keyed off the token we're about to wipe.
+    const openResetAll = () => {
+        setBackupBeforeReset(true);
+        setDeleteHabitTasks(false);
+        confirmResetAll.open(true);
+    };
+
+    const handleResetAll = async () => {
+        // Snapshot the linked task ids before the wipe — RESET_ALL clears life.habits.
+        const idsToDelete = deleteHabitTasks && canDeleteHabitTasks ? habitTaskIds : [];
+        const backedUp = backupBeforeReset;
+        if (backedUp) exportFullBackup();
+        // Drop the Todoist snapshot cache too — it's rebuildable, and a factory-reset store
+        // shouldn't render pre-reset task data. (Server-side tokens are untouched.)
         try { localStorage.removeItem('orchestrate-todoist-cache'); } catch { /* ignore */ }
         dispatch({ type: 'RESET_ALL' });
         resetImportStatus();
-        setResetInfo('All data has been reset to defaults.');
+        const base = backedUp
+            ? 'Backup downloaded; all data has been reset to defaults.'
+            : 'All data has been reset to defaults.';
+        if (idsToDelete.length === 0) {
+            setResetInfo(base);
+            return;
+        }
+        const plural = idsToDelete.length !== 1 ? 's' : '';
+        setResetInfo(`All data reset. Deleting ${idsToDelete.length} habit task${plural} in Todoist…`);
+        let deletedCount = 0;
+        // Sequential, best-effort: deleteTask logs + surfaces failures via the Todoist error
+        // state; the summary below reports honestly rather than assuming success.
+        for (const id of idsToDelete) {
+            if (await deleteTask(id)) deletedCount += 1;
+        }
+        const failedCount = idsToDelete.length - deletedCount;
+        if (failedCount === 0) {
+            setResetInfo(`${base} ${deletedCount} habit task${plural} deleted in Todoist.`);
+            return;
+        }
+        const failedPlural = failedCount !== 1 ? 's' : '';
+        if (deletedCount === 0) {
+            setResetInfo(
+                `${base} None of the ${failedCount} habit task${failedPlural} could be deleted in Todoist — they remain as orphans (their markers still allow later re-adoption).`,
+            );
+            return;
+        }
+        setResetInfo(
+            `${base} Deleted ${deletedCount} habit task${deletedCount !== 1 ? 's' : ''} in Todoist; ${failedCount} could not be deleted.`,
+        );
     };
 
-    const exportFullBackup = () => {
-        // v2: bundle the live working day so a backup captures "today" even before it's
-        // manually saved to history. Skip it when nothing's been entered yet.
-        const planHasContent = plan.intentions.length > 0 || plan.setupComplete;
-        const payload: FullBackup = {
-            settings,
-            life,
-            history,
-            currentDay: planHasContent
-                ? ({ ...plan, _schemaVersion: SCHEMA_VERSION } as DayPlan)
-                : undefined,
-            _backupVersion: 2,
-            _schemaVersion: SCHEMA_VERSION,
-        };
-        const stamp = new Date().toISOString().slice(0, 10);
-        downloadJSON(payload, `orchestrate-backup-${stamp}.json`);
-    };
+    const exportFullBackup = () => downloadFullBackup({ settings, life, history, plan });
 
     const exportAllSessions = () => {
         downloadJSON(history, `orchestrate-all-sessions.json`);
@@ -147,8 +191,8 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                 </h4>
                 <p className="text-xs text-text-light">
                     Clear today's plan after a messy import, or wipe everything and start
-                    from scratch. Reset Everything also removes your Todoist connection
-                    and saved sessions; it does not touch tasks in Todoist itself.
+                    from scratch. Reset Everything clears saved sessions too, and can
+                    optionally delete the habit tasks Orchestrate created in Todoist.
                 </p>
                 <div className="flex flex-wrap gap-2">
                     <Button
@@ -163,7 +207,7 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => confirmResetAll.open(true)}
+                        onClick={openResetAll}
                         className="text-red-500 hover:text-red-600"
                         title="Wipe all local data: plan, history, seasons, habits, settings"
                     >
@@ -211,23 +255,11 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                 </p>
             )}
 
-            <ConfirmModal
-                open={pendingBackup !== null}
-                onClose={cancelBackupImport}
+            <RestoreConfirmModal
+                pending={pendingBackup}
                 onConfirm={confirmBackupImport}
-                title="Restore from this backup?"
-                confirmLabel="Replace & Restore"
-            >
-                <p className="text-sm text-text-light mb-3">
-                    This <strong>replaces</strong> your current{' '}
-                    {pendingBackup?.summary.join(', ')} with the backup's. Local entries not in the
-                    backup are removed — this is a restore, not a merge.
-                </p>
-                <p className="text-sm text-text-light mb-4">
-                    Export a Full Backup first if you want to keep your current data. This cannot be
-                    undone.
-                </p>
-            </ConfirmModal>
+                onCancel={cancelBackupImport}
+            />
 
             <ConfirmModal
                 open={confirmResetDay.value !== null}
@@ -253,13 +285,61 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
             >
                 <p className="text-sm text-text-light mb-2">
                     This wipes all local Orchestrate data: today's plan, saved sessions,
-                    seasons, habits, the intentions backlog, rest cues, capacity settings,
-                    and your Todoist connection.
+                    seasons, habits, the intentions backlog, rest cues, and capacity
+                    settings. The wipe syncs to your other devices. Todoist and Google
+                    stay connected — disconnect those in Settings → Integrations.
                 </p>
-                <p className="text-sm text-text-light mb-4">
-                    Tasks and projects in Todoist itself are not modified. Export a Full
-                    Backup first if you want to keep a copy. This cannot be undone.
+                <p className="text-sm text-text-light mb-3">
+                    Habit tasks left in Todoist become orphans, but they keep their
+                    Orchestrate label — re-creating a habit under the <em>same name</em> later
+                    adopts its old task instead of duplicating it. Delete them below if you'd
+                    rather leave Todoist clean.
                 </p>
+                <div className="space-y-2 mb-3">
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="mt-0.5 accent-accent"
+                            checked={backupBeforeReset}
+                            onChange={(e) => setBackupBeforeReset(e.target.checked)}
+                        />
+                        <span>
+                            Download a Full Backup first{' '}
+                            <span className="text-text-light text-xs">
+                                (recommended — the only way back)
+                            </span>
+                        </span>
+                    </label>
+                    <label
+                        className={`flex items-start gap-2 text-sm ${canDeleteHabitTasks ? 'cursor-pointer' : 'opacity-60'}`}
+                    >
+                        <input
+                            type="checkbox"
+                            className="mt-0.5 accent-accent"
+                            disabled={!canDeleteHabitTasks}
+                            checked={deleteHabitTasks && canDeleteHabitTasks}
+                            onChange={(e) => setDeleteHabitTasks(e.target.checked)}
+                        />
+                        <span>
+                            Also delete{' '}
+                            {habitTaskIds.length > 0
+                                ? `the ${habitTaskIds.length} habit task${habitTaskIds.length !== 1 ? 's' : ''}`
+                                : 'the habit tasks'}{' '}
+                            Orchestrate created in Todoist{' '}
+                            {!isConfigured && (
+                                <span className="text-text-light text-xs">
+                                    (Todoist is not connected)
+                                </span>
+                            )}
+                            {isConfigured && habitTaskIds.length === 0 && (
+                                <span className="text-text-light text-xs">
+                                    (no habits are linked to Todoist)
+                                </span>
+                            )}
+                        </span>
+                    </label>
+                </div>
+                <p className="text-sm text-text-light mb-4">This cannot be undone.</p>
             </ConfirmModal>
         </div>
     );

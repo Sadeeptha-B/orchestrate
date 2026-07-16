@@ -3,17 +3,32 @@ import type { AppSettings, DayPlan, LifeContext, SavedDayPlan } from '../types';
 
 /**
  * Shape of a Full Backup export (settings + life + history, schema-stamped). `currentDay`
- * (v2 backups) carries the live, not-yet-saved working day so a backup captures "today"
- * — not just the manually saved sessions in `history`.
+ * carries the live, not-yet-saved working day so a backup captures "today" — not just the
+ * manually saved sessions in `history`. Older backups without it simply leave the plan
+ * slice untouched on import; `_schemaVersion` is the only version stamp (the retired
+ * `_backupVersion` field was never read and is ignored if present in old files).
+ *
+ * v7.11 provenance: `_exportedAt` / `_originHost` record when and from which origin the
+ * backup was taken, so the import confirm can warn about age and prod↔dev crossings. The
+ * account fingerprints (`settings.todoistAccount` / `settings.googleAccount`) ride inside
+ * `settings` — the import flow compares them against the live connections.
  */
 export interface FullBackup {
     settings?: AppSettings;
     life?: LifeContext;
     history?: SavedDayPlan[];
     currentDay?: DayPlan;
-    _backupVersion?: number;
     _schemaVersion?: number;
+    _exportedAt?: string;
+    _originHost?: string;
 }
+
+/** Why a candidate backup file was rejected — each maps to a distinct user-facing message. */
+export type BackupInvalidReason = 'sessions-file' | 'not-a-backup' | 'unsupported-schema' | 'malformed';
+
+export type BackupValidation =
+    | { ok: true; data: FullBackup }
+    | { ok: false; reason: BackupInvalidReason };
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -59,35 +74,39 @@ export function validateSessions(data: unknown): SavedDayPlan[] | null {
 }
 
 /**
- * Validate a Full Backup payload. Returns the normalised backup, or `null` if it is
- * not a recognised backup / is outside the supported schema range.
+ * Validate a Full Backup payload. Returns the normalised backup, or the reason it was
+ * rejected — including the one shape mix-up worth a pointed message: an Export All
+ * Sessions file (a bare array) fed to the backup importer.
  */
-export function validateBackup(data: unknown): FullBackup | null {
+export function validateBackup(data: unknown): BackupValidation {
+    if (Array.isArray(data)) {
+        return { ok: false, reason: 'sessions-file' };
+    }
     if (!isRecord(data) || (!data.settings && !data.life && !data.history && !data.currentDay)) {
-        return null;
+        return { ok: false, reason: 'not-a-backup' };
     }
     // Schema guard: accept backups within the supported range (floor → current).
     if (!isSupportedSchemaVersion(data._schemaVersion)) {
-        return null;
+        return { ok: false, reason: 'unsupported-schema' };
     }
-    if (data.settings !== undefined && !isRecord(data.settings)) {
-        return null;
-    }
-    if (data.life !== undefined && !isRecord(data.life)) {
-        return null;
-    }
-    if (data.history !== undefined && validateSessions(data.history) === null) {
-        return null;
-    }
-    if (data.currentDay !== undefined && validateDayPlan(data.currentDay) === null) {
-        return null;
+    if (
+        (data.settings !== undefined && !isRecord(data.settings)) ||
+        (data.life !== undefined && !isRecord(data.life)) ||
+        (data.history !== undefined && validateSessions(data.history) === null) ||
+        (data.currentDay !== undefined && validateDayPlan(data.currentDay) === null)
+    ) {
+        return { ok: false, reason: 'malformed' };
     }
     return {
-        settings: data.settings as AppSettings | undefined,
-        life: data.life as LifeContext | undefined,
-        history: data.history as SavedDayPlan[] | undefined,
-        currentDay: data.currentDay as DayPlan | undefined,
-        _backupVersion: typeof data._backupVersion === 'number' ? data._backupVersion : undefined,
-        _schemaVersion: typeof data._schemaVersion === 'number' ? data._schemaVersion : undefined,
+        ok: true,
+        data: {
+            settings: data.settings as AppSettings | undefined,
+            life: data.life as LifeContext | undefined,
+            history: data.history as SavedDayPlan[] | undefined,
+            currentDay: data.currentDay as DayPlan | undefined,
+            _schemaVersion: typeof data._schemaVersion === 'number' ? data._schemaVersion : undefined,
+            _exportedAt: typeof data._exportedAt === 'string' ? data._exportedAt : undefined,
+            _originHost: typeof data._originHost === 'string' ? data._originHost : undefined,
+        },
     };
 }

@@ -233,6 +233,17 @@ export function markInitChange(slice: SliceKey): void {
 }
 
 /**
+ * v7.11: the newest change stamp across the four slices (0 when unknown). The meta clock is
+ * bumped on every genuine local mutation AND set to the remote stamp when a merge adopts cloud
+ * data — so this reflects the age of whatever data a backup restore would displace, even on a
+ * freshly-synced device. Used by the import flow's "older backup" warning.
+ */
+export function latestLocalChangeMs(): number {
+    const meta = readMeta();
+    return Math.max(0, ...Object.values(meta).filter((v): v is number => typeof v === 'number'));
+}
+
+/**
  * Force a slice's local state to win the next merge (meta = now), without pushing here. Used by the
  * ErrorBoundary "Reset Day & Reload" path so the cleared plan isn't re-adopted from the cloud on reload.
  */

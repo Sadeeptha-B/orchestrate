@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useHabitReconciliation } from '../../hooks/useHabitReconciliation';
 import { useHabitForms } from '../../hooks/useHabitForms';
+import { AccountMismatchBanner } from '../ui/AccountMismatchBanner';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
@@ -70,8 +71,11 @@ export function HabitsLibrary() {
         missingTaskCount,
         isReconciling,
         lastError: reconcileError,
+        accountMismatch,
+        adoptCurrentAccount,
         clearError,
         triggerReconcile,
+        recreateHabitTask,
     } = useHabitReconciliation();
 
     const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -108,7 +112,9 @@ export function HabitsLibrary() {
 
     const handleMigrate = () => {
         setSyncError(null);
-        void triggerReconcile();
+        // The explicit Re-sync button is the consent to re-*create* missing tasks (R4) —
+        // automatic passes only adopt for previously-linked habits.
+        void triggerReconcile({ recreateMissing: true });
     };
 
     // Delete every habit currently flagged as needing sync — the escape hatch for habits the
@@ -186,16 +192,31 @@ export function HabitsLibrary() {
             title="Habits"
             subtitle="Habits sync to Todoist and surface in Today's Habits (timed on the timeline, or anytime). Micro-gaps are light, repeatable fillers — no Todoist, pulled from their own panel when you have a gap."
         >
+            {/* ── v7.11: account-mismatch banner — sync is paused; outranks the needs-sync banner
+                 (whose counts are meaningless against a foreign account). ── */}
+            {accountMismatch && (
+                <div className="mb-4">
+                    <AccountMismatchBanner
+                        provider="Todoist"
+                        mismatch={accountMismatch}
+                        intro="These habits were synced against"
+                        paused="Habit sync is paused so nothing gets duplicated in the wrong account."
+                        guidance="Reconnect the original account in Settings → Integrations, or adopt the current one. Adopting re-points these habits here — re-syncing will then create their recurring tasks in this account (fine if that's the intent, e.g. a sandbox)."
+                        onAdopt={adoptCurrentAccount}
+                    />
+                </div>
+            )}
+
             {/* ── Sync banner ── */}
-            {needsSyncCount > 0 && (
+            {!accountMismatch && needsSyncCount > 0 && (
                 <div className="mb-4 rounded-lg border border-accent/30 bg-accent-subtle p-3 space-y-2.5">
                     <div className="text-sm">
                         <strong>{needsSyncCount} habit{needsSyncCount === 1 ? '' : 's'}</strong>{' '}
                         {missingTaskCount === 0
                             ? 'need to be synced as recurring Todoist tasks.'
                             : neverSyncedCount === 0
-                                ? "have a Todoist task that's gone missing — re-sync to recreate it."
-                                : `need syncing (${neverSyncedCount} new, ${missingTaskCount} missing in Todoist).`}
+                                ? "have a Todoist task that's gone missing — Re-sync recreates it."
+                                : `need syncing (${neverSyncedCount} new, ${missingTaskCount} missing in Todoist — Re-sync recreates missing tasks).`}
                         {isTodoistConfigured ? (
                             <span className="text-text-light">
                                 {' '}Will sync to{' '}
@@ -204,9 +225,18 @@ export function HabitsLibrary() {
                         ) : (
                             <span className="text-text-light"> Connect Todoist in Settings first.</span>
                         )}
+                        {missingTaskCount > 0 && (
+                            <span className="text-text-light">
+                                {' '}Missing tasks are never recreated automatically — if you deleted
+                                one in Todoist on purpose, deactivate or delete its habit here instead
+                                of re-syncing.
+                            </span>
+                        )}
                     </div>
 
-                    {/* Name the habits so it's clear exactly what will be synced or deleted. */}
+                    {/* Name the habits so it's clear exactly what will be synced or deleted.
+                        Missing ones get a per-row recreate (R4) so a mixed batch — some deleted
+                        deliberately, some lost — doesn't force the all-or-nothing Re-sync. */}
                     <div className="flex flex-wrap gap-1.5">
                         {needsSyncHabits.map(({ habit, reason }) => (
                             <span
@@ -218,7 +248,20 @@ export function HabitsLibrary() {
                             >
                                 <span className="truncate max-w-[12rem]">{habit.name}</span>
                                 {reason === 'missing-in-todoist' && (
-                                    <span aria-hidden className="text-amber-600 dark:text-amber-400">⚠</span>
+                                    <>
+                                        <span aria-hidden className="text-amber-600 dark:text-amber-400">⚠</span>
+                                        <button
+                                            onClick={() => {
+                                                setSyncError(null);
+                                                void recreateHabitTask(habit.id);
+                                            }}
+                                            disabled={isReconciling || !isTodoistConfigured}
+                                            className="text-accent hover:underline cursor-pointer disabled:opacity-50 disabled:cursor-default disabled:no-underline"
+                                            title={`Recreate only "${habit.name}" in Todoist`}
+                                        >
+                                            recreate
+                                        </button>
+                                    </>
                                 )}
                             </span>
                         ))}

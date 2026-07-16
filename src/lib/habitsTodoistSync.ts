@@ -15,6 +15,52 @@ const HABITS_PROJECT_NAME = 'Habits';
 const DOW_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
 /**
+ * v7.11: durable marker label stamped on every habit task Orchestrate creates (and backfilled onto
+ * existing ones by the reconcile pass). It survives in the *account*, unlike the uuid→taskId
+ * registry which is store-local — so a store that lost/never had the registry can recognize
+ * Orchestrate-created tasks and adopt them instead of duplicating. The marker identifies the
+ * *class* ("ours"); pairing a specific task to a specific habit still uses the id first
+ * (exact, rename-proof), with marker+name adoption as the fallback rung.
+ */
+export const ORCHESTRATE_HABIT_LABEL = 'orchestrate-habit';
+
+/** True when a task carries the Orchestrate marker label. */
+export function hasHabitMarker(task: TodoistTask): boolean {
+    return Array.isArray(task.labels) && task.labels.includes(ORCHESTRATE_HABIT_LABEL);
+}
+
+/**
+ * v7.11: durable *instance* token carried in the task's description — the second half of the
+ * marker pair. The `orchestrate-habit` label answers "is this task ours?" (class); this token
+ * answers "*which habit* is it?" with the habit's uuid. Backups carry habit uuids, so every
+ * store seeded from the same backup shares them — making adoption exact (rename- and
+ * project-move-proof) across those stores. Hand-recreated habits get fresh uuids by
+ * construction and fall back to the label + exact-name rung.
+ *
+ * Why a description token and not a second label: a label is an account-level shared tag —
+ * a per-habit label would mint a permanent, never-garbage-collected personal label per habit
+ * in the user's Todoist. A description token is task-local and dies with its task.
+ */
+const HABIT_ID_TOKEN_RE = /\[orchestrate:habit:([^\]\s]+)\]/;
+
+/** The habit uuid a task's description token claims, or null when untokened. */
+export function habitIdTokenOf(task: TodoistTask): string | null {
+    const match = task.description?.match(HABIT_ID_TOKEN_RE);
+    return match ? match[1] : null;
+}
+
+/**
+ * Merge the token for `habitId` into a description: replace a stale token in place, else
+ * append on its own line — never touching the user's own description text.
+ */
+export function withHabitIdToken(description: string | undefined, habitId: string): string {
+    const token = `[orchestrate:habit:${habitId}]`;
+    const existing = description ?? '';
+    if (HABIT_ID_TOKEN_RE.test(existing)) return existing.replace(HABIT_ID_TOKEN_RE, token);
+    return existing ? `${existing}\n${token}` : token;
+}
+
+/**
  * Translate a Habit's recurrence + targetTime into a Todoist `due_string`.
  * Examples: "every day at 7:00", "every weekday", "every mon, wed, fri at 18:30".
  */
@@ -90,14 +136,63 @@ export function resolveHabitProjectId(
 }
 
 /**
+ * v7.11: find a task a link-less habit can adopt instead of creating a duplicate. Two rungs,
+ * exact-first:
+ *
+ * 1. **uuid token** — a task whose description token names this habit's uuid *is* this habit
+ *    (stores seeded from the same backup share uuids). Rename- and project-move-proof; the
+ *    sync that follows moves/renames the task to match this store's state.
+ * 2. **marker label + exact name** — for pairs with no shared uuid (hand-recreated habit,
+ *    pre-token task, stripped token): the task must carry the `orchestrate-habit` label (only
+ *    tasks we created qualify), live in the resolved target project, and match the habit's
+ *    name exactly (trimmed).
+ *
+ * Both rungs skip checked tasks and tasks another habit already links to.
+ */
+export function findAdoptableTask(args: {
+    habit: Habit;
+    projectId: string;
+    taskMap: Map<string, TodoistTask>;
+    /** todoistTaskIds other habits already link to — never adopt a task another habit owns. */
+    claimedTaskIds: Set<string>;
+}): TodoistTask | undefined {
+    const { habit, projectId, taskMap, claimedTaskIds } = args;
+    const name = habit.name.trim();
+    let byName: TodoistTask | undefined;
+    for (const task of taskMap.values()) {
+        if (task.checked) continue;
+        if (claimedTaskIds.has(task.id)) continue;
+        if (habitIdTokenOf(task) === habit.id) return task;
+        if (
+            !byName && name &&
+            hasHabitMarker(task) &&
+            task.project_id === projectId &&
+            task.content.trim() === name
+        ) {
+            byName = task;
+        }
+    }
+    return byName;
+}
+
+/**
  * Sync a 'habit'-kind Habit to Todoist as a recurring task (v6.7: micro-gaps never sync —
  * early-returns null for them). Timed habits carry a time-of-day via `buildDueString`; untimed
  * habits are "every day". Caller resolves the target project id (via `ensureHabitsProject` +
  * `resolveHabitProjectId`) so a batch operation can resolve once and reuse the id across iterations.
  *
- * - If the habit has no `todoistTaskId`: creates a new recurring task in `projectId`.
- * - If a task exists but in a different project: moves it via the Sync API.
- * - Always pushes the latest content / due_string / duration onto the existing task.
+ * Resolution ladder (v7.11): **id → uuid token → marker + name → create.**
+ * - A live `todoistTaskId` wins outright (exact, rename-proof).
+ * - Otherwise an unclaimed task is **adopted** (`findAdoptableTask`) and updated in place —
+ *   by its description's uuid token first (exact instance identity, shared by backup-seeded
+ *   stores), then by marker label + exact name (the fallback when uuids can't match). This is
+ *   what stops a registry-less store (fresh dev, post-reset) from duplicating tasks that
+ *   already exist in the account.
+ * - Only then is a new task created — stamped with the `orchestrate-habit` label and the
+ *   `[orchestrate:habit:<uuid>]` description token.
+ * - The update path also backfills both markers onto tasks that predate them (preserving the
+ *   user's other labels and description text) and corrects a stale uuid token in place
+ *   (e.g. an orphan adopted by a re-created habit).
  *
  * Returns the resulting todoistTaskId on success; null on failure.
  */
@@ -106,14 +201,26 @@ export async function syncHabitToTodoist(args: {
     projectId: string;
     actions: TodoistActionsValue;
     taskMap: Map<string, TodoistTask>;
+    /** Task ids other habits already link to (adoption guard). Omitted = adopt freely. */
+    claimedTaskIds?: Set<string>;
+    /** v7.11 (R4): `false` runs the benign rungs only (id re-link, adoption) and skips the
+     *  create rung — used by the automatic reconcile pass for previously-linked habits, so a
+     *  task deliberately deleted in Todoist isn't silently resurrected. Default `true`. */
+    allowCreate?: boolean;
 }): Promise<string | null> {
-    const { habit, projectId, actions, taskMap } = args;
+    const { habit, projectId, actions, taskMap, claimedTaskIds, allowCreate = true } = args;
     if (habit.kind !== 'habit') return null; // v6.7: micro-gaps never sync to Todoist.
 
     const dueString = buildDueString(habit);
     const duration = habit.targetDurationMinutes;
 
-    const existing = habit.todoistTaskId ? taskMap.get(habit.todoistTaskId) : undefined;
+    const linked = habit.todoistTaskId ? taskMap.get(habit.todoistTaskId) : undefined;
+    const existing = linked ?? findAdoptableTask({
+        habit,
+        projectId,
+        taskMap,
+        claimedTaskIds: claimedTaskIds ?? new Set(),
+    });
     if (existing) {
         if (existing.project_id !== projectId) {
             const moved = await actions.moveTask(existing.id, projectId);
@@ -124,14 +231,27 @@ export async function syncHabitToTodoist(args: {
             due_string: dueString,
             due_lang: 'en',
             ...(duration ? { duration, duration_unit: 'minute' } : {}),
+            // Backfill the durable markers onto tasks that predate them: the class label is
+            // write-once (preserving the user's other labels); the instance token is replaced
+            // in place when it names a stale uuid (preserving the user's description text).
+            ...(hasHabitMarker(existing)
+                ? {}
+                : { labels: [...(existing.labels ?? []), ORCHESTRATE_HABIT_LABEL] }),
+            ...(habitIdTokenOf(existing) === habit.id
+                ? {}
+                : { description: withHabitIdToken(existing.description, habit.id) }),
         });
         return updated?.id ?? null;
     }
+
+    if (!allowCreate) return null; // adopt-only pass: leave the miss for an explicit re-sync.
 
     const created = await actions.createTask(habit.name, {
         project_id: projectId,
         due_string: dueString,
         due_lang: 'en',
+        labels: [ORCHESTRATE_HABIT_LABEL],
+        description: withHabitIdToken(undefined, habit.id),
         ...(duration ? { duration, duration_unit: 'minute' } : {}),
     });
     return created?.id ?? null;

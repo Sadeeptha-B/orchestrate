@@ -21,10 +21,26 @@ export function HabitSyncChip() {
         isReconciling,
         lastError,
         isConfigured,
+        accountMismatch,
     } = useHabitReconciliation();
     const navigate = useNavigate();
 
     if (!isConfigured) return null;
+
+    // v7.11: account mismatch outranks everything — sync is paused, and the needs-sync count
+    // (every habit reads as missing against a foreign account) would be misleading noise.
+    if (accountMismatch) {
+        return (
+            <button
+                onClick={() => navigate('/habits')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-800 dark:text-red-200 text-xs cursor-pointer transition-colors"
+                title={`Connected Todoist account (${accountMismatch.current.email ?? accountMismatch.current.id}) differs from the account these habits were synced against. Habit sync is paused — click to review.`}
+            >
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                <span className="hidden sm:inline">account changed</span>
+            </button>
+        );
+    }
 
     if (needsSyncCount > 0) {
         return (
