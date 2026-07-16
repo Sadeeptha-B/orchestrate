@@ -15,6 +15,8 @@ Frozen historical artifacts live in [docs/history/](./docs/history/) — impleme
 
 Requirement sketches live in [docs/roadmap/](./docs/roadmap/) — aspirational requirements and framing that haven't been consolidated into the backlog yet. **Agents: ignore these unless the user explicitly directs you to them.**
 
+**Knowledge graph:** when `graphify-out/graph.json` exists, answer architecture/relationship questions ("what calls X?", "what connects A to B?", "trace the flow through Y") by querying the graph first — `graphify query "<question>"` — instead of sweeping files. See [docs/graphify.md](./docs/graphify.md) for the full guide (querying, maintenance, rebuild after doc changes).
+
 ## Key conventions
 
 - **Types live in code, not docs.** For current type definitions, read [`src/types/index.ts`](./src/types/index.ts) directly. `data-model.md` describes semantics, invariants, lifecycle rules, and relationships — not type shapes. Do not add type mirrors to docs.

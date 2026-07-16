@@ -1,0 +1,8 @@
+# graphify-only exclusions (gitignore syntax; can only exclude, never re-include).
+# Brand/PWA icon assets and starter-template leftovers: they produce isolated
+# 2-3 node "branding" communities that add noise to the knowledge graph.
+# See docs/graphify.md.
+public/*.png
+public/*.svg
+src/assets/react.svg
+src/assets/vite.svg

@@ -13,6 +13,7 @@ The docs are tiered by *purpose and volatility*: the **living docs** describe th
 | [data-model.md](./data-model.md) | **Authoritative** entity semantics, invariants, lifecycle rules, reducer action catalog, schema/migration chain, localStorage shape. Type *shapes* live in code, not here. |
 | [backlog.md](./backlog.md) | Forward-looking proposals **not yet built**. |
 | [deployment.md](./deployment.md) | Click-by-click setup (Google Cloud, Cloudflare, Zero Trust). |
+| [graphify.md](./graphify.md) | The repo's knowledge graph (tooling): building, querying, agent integration, maintenance. Artifacts live in `graphify-out/` (gitignored, per-machine). |
 
 ## reference/ — subsystem walkthroughs
 
