@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useGoogleCalendarData, useGoogleCalendarActions } from '../../hooks/useGoogleCalendar';
+import { AccountMismatchBanner } from '../ui/AccountMismatchBanner';
 import { Button } from '../ui/Button';
 import { inputClass } from '../ui/formStyles';
 import { isVisibleInCalendar, isVisibleOnTimeline, type CalendarSurface } from '../../lib/googleCalendar';
@@ -18,8 +19,8 @@ import type { GoogleCalendarListEntry } from '../../lib/googleCalendarApi';
  */
 export function GoogleCalendarSetup() {
     const { settings, dispatch } = useDayPlan();
-    const { isConnected, availableCalendars, hasCalendarManageScope } = useGoogleCalendarData();
-    const { connect, disconnect, refreshCalendars, ensureOrchestrateCalendar, recreateOrchestrateCalendar, renameOrchestrateCalendar } =
+    const { isConnected, availableCalendars, hasCalendarManageScope, accountMismatch } = useGoogleCalendarData();
+    const { connect, disconnect, refreshCalendars, ensureOrchestrateCalendar, recreateOrchestrateCalendar, renameOrchestrateCalendar, adoptCurrentAccount } =
         useGoogleCalendarActions();
 
     const orchestrateName = settings.orchestrateCalendarName ?? 'Orchestrate';
@@ -88,6 +89,17 @@ export function GoogleCalendarSetup() {
             <h3 className="text-sm font-semibold mb-2">Google Calendar</h3>
 
             <div className="space-y-3">
+                {/* v7.11: account-mismatch notice — calendar selections/provisioning are paused so a
+                    foreign store's references aren't pruned or re-provisioned silently. */}
+                {accountMismatch && (
+                    <AccountMismatchBanner
+                        provider="Google"
+                        mismatch={accountMismatch}
+                        intro="Your calendar setup was made on"
+                        paused="Calendar selections and the Orchestrate calendar are left untouched until you reconnect the original account or adopt this one."
+                        onAdopt={adoptCurrentAccount}
+                    />
+                )}
                 <GoogleConnectCard
                     returnTo="settings"
                     manageControls={

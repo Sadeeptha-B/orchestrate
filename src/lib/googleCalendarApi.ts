@@ -29,6 +29,17 @@ async function calFetch<T>(token: string, path: string, opts?: RequestInit): Pro
     return res.json();
 }
 
+/**
+ * v7.11: durable marker token carried in the Orchestrate calendar's `description`. Unlike the
+ * store-local `orchestrateCalendarId`, it lives in the *account* — so a store with neither the id
+ * nor the current name (fresh install after the calendar was renamed elsewhere) can still
+ * recognize the calendar as Orchestrate's and adopt it instead of creating a second one. Because
+ * the calendar is a per-account singleton, the marker alone identifies it — no name involved.
+ */
+export const ORCHESTRATE_CALENDAR_MARKER = 'orchestrate:managed-calendar';
+export const ORCHESTRATE_CALENDAR_DESCRIPTION =
+    `Managed by Orchestrate — session blocks are written here. [${ORCHESTRATE_CALENDAR_MARKER}]`;
+
 export interface GoogleCalendarListEntry {
     id: string;
     name: string;
@@ -37,6 +48,13 @@ export interface GoogleCalendarListEntry {
     primary: boolean;
     /** "owner" | "writer" | "reader" | "freeBusyReader" — write needs owner/writer. */
     accessRole?: string;
+    /** Calendar description — carries the Orchestrate marker for app-created calendars (v7.11). */
+    description?: string;
+}
+
+/** True when a calendar list entry carries the Orchestrate managed-calendar marker. */
+export function hasOrchestrateMarker(cal: GoogleCalendarListEntry): boolean {
+    return Boolean(cal.description?.includes(ORCHESTRATE_CALENDAR_MARKER));
 }
 
 interface CalendarListResponse {
@@ -47,30 +65,37 @@ interface CalendarListResponse {
         backgroundColor?: string;
         primary?: boolean;
         accessRole?: string;
+        description?: string;
     }>;
 }
 
 /**
  * Create a new secondary calendar and return its id (requires the calendar.app.created — or broad
- * calendar — scope). Used to provision the app-managed "Orchestrate" calendar.
+ * calendar — scope). Used to provision the app-managed "Orchestrate" calendar — always stamped
+ * with the durable marker description (v7.11).
  */
 export async function createCalendar(token: string, summary: string): Promise<{ id: string }> {
     const data = await calFetch<{ id: string }>(token, '/calendars', {
         method: 'POST',
-        body: JSON.stringify({ summary }),
+        body: JSON.stringify({ summary, description: ORCHESTRATE_CALENDAR_DESCRIPTION }),
     });
     return { id: data.id };
 }
 
 /**
- * Rename an existing calendar (PATCH its `summary`). Used when the user edits the Orchestrate
- * calendar name — renames the linked calendar in place rather than creating a duplicate. Requires
- * owner/writer access on the calendar (the calendar.app.created scope covers app-created ones).
+ * Patch an existing calendar's `summary` and/or `description`. Used to rename the Orchestrate
+ * calendar in place (never create a duplicate) and to backfill the marker description onto
+ * calendars that predate it. Requires owner/writer access on the calendar (the
+ * calendar.app.created scope covers app-created ones).
  */
-export async function patchCalendar(token: string, calendarId: string, summary: string): Promise<void> {
+export async function patchCalendar(
+    token: string,
+    calendarId: string,
+    patch: { summary?: string; description?: string },
+): Promise<void> {
     await calFetch<void>(token, `/calendars/${encodeURIComponent(calendarId)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ summary }),
+        body: JSON.stringify(patch),
     });
 }
 
@@ -83,6 +108,7 @@ export async function listCalendars(token: string): Promise<GoogleCalendarListEn
         color: c.backgroundColor,
         primary: Boolean(c.primary),
         accessRole: c.accessRole,
+        description: c.description,
     }));
 }
 

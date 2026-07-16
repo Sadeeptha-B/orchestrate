@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSlot } from '../../types';
-import { timeToMinutes } from '../../lib/time';
+import { minutesOfDay, timeToMinutes } from '../../lib/time';
 import {
     DEFAULT_TIMELINE_START_MINUTES,
     DEFAULT_TIMELINE_END_MINUTES,
@@ -90,6 +90,13 @@ export function SessionEditorTimeline({
     const trackRef = useRef<HTMLDivElement>(null);
     const [drag, setDrag] = useState<Drag | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
+
+    // Current-time indicator — re-render once per minute so the "now" line tracks the clock.
+    const [now, setNow] = useState(() => minutesOfDay(new Date()));
+    useEffect(() => {
+        const id = setInterval(() => setNow(minutesOfDay(new Date())), 60_000);
+        return () => clearInterval(id);
+    }, []);
 
     const clamp = (m: number) => Math.max(dayStart, Math.min(dayEnd, m));
 
@@ -307,6 +314,20 @@ export function SessionEditorTimeline({
                         </div>
                     );
                 })}
+
+                {/* Current-time indicator — a vertical accent line across the editing surface so
+                    sessions can be placed relative to "now". Re-rendered once a minute. */}
+                {now >= dayStart && now <= dayEnd && (
+                    <div
+                        className="absolute top-0 bottom-0 w-px bg-accent z-20 pointer-events-none -translate-x-1/2"
+                        style={{ left: `${minutesToPct(now, dayStart, totalMinutes)}%` }}
+                    >
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-accent" />
+                        <span className="absolute top-1 left-1 text-[9px] font-semibold text-accent whitespace-nowrap leading-none">
+                            {formatHour(now)}
+                        </span>
+                    </div>
+                )}
             </div>
 
             {/* Rename / delete / blocklist popover */}

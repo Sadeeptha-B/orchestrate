@@ -51,8 +51,10 @@ export function useHabitMutations() {
     // logged for debugging — same posture as the create/edit sync path).
     const deleteHabitTodoistTask = (habit: Habit) => {
         if (habit.kind !== 'habit' || !habit.todoistTaskId || !isTodoistConfigured) return;
-        void todoistActions.deleteTask(habit.todoistTaskId).catch((err) => {
-            console.error(`[habits] delete: Todoist task ${habit.todoistTaskId} failed:`, err);
+        void todoistActions.deleteTask(habit.todoistTaskId).then((deleted) => {
+            if (!deleted) {
+                console.error(`[habits] delete: Todoist task ${habit.todoistTaskId} failed.`);
+            }
         });
     };
 

@@ -1,6 +1,6 @@
 # Backup, import & restore — the scenario catalog
 
-This is the feature-level tour of **moving Orchestrate data between installations**: what the backup/import/export/reset flows actually do today, what happens in every realistic combination of backend and integration account, and — marked honestly throughout — **where the current behaviour has gaps**. It exists because the flows themselves are simple, but their *consequences* depend entirely on which store and which external accounts are on each side of the transfer, and that matrix is easy to get wrong from memory.
+This is the feature-level tour of **moving Orchestrate data between installations**: what the backup/import/export/reset flows do, the guard mechanisms that keep transfers duplicate-free, and what happens in every realistic combination of backend and integration account. It exists because the flows themselves are simple, but their *consequences* depend entirely on which store and which external accounts are on each side of the transfer, and that matrix is easy to get wrong from memory.
 
 Read [persistence.md](./persistence.md) first if you don't yet have the storage model (slices, the D1 sync sidecar, idempotent provisioning); this doc leans on it constantly and doesn't re-derive it. [backend.md](./backend.md) covers the identity/credential side. This doc's job is narrower: **the user-facing data-transfer features, scenario by scenario.**
 
@@ -16,84 +16,111 @@ Every scenario below is a point in a three-axis space. Internalize the axes and 
 2. **Which D1 database?** Installations that share a database (all your real devices on prod) **converge** through the sync sidecar — including the external-ID registry that prevents duplicates. Installations on separate databases (prod vs. local dev) never converge; a backup file is the only bridge.
 3. **Which external accounts?** The Todoist and Google accounts the installation is *connected to*. This axis — not the database axis — is what decides whether duplicates are possible: external IDs carried in app-state only resolve against the account that minted them.
 
-The one-sentence summary of the whole doc: **backup/import moves app-state faithfully across any of these boundaries; what it cannot move is the guarantee that the external IDs inside that state mean anything on the other side — and the reconciliation layer's response to unresolvable IDs is to create, automatically.**
+The one-sentence summary: **backup/import moves app-state faithfully across any of these boundaries; what it cannot move is the guarantee that the external IDs inside that state mean anything on the other side.** Two guard mechanisms (§2) cover the two ways that can go wrong — a *different account* on the other side (fingerprints pause and ask) and a *same account whose contents the store never met* (markers let it adopt instead of re-create).
 
 ---
 
-## 2. The flows, precisely
+## 2. The two guards, and the resolution ladder
+
+Everything that keeps transfers duplicate-free hangs off two pieces of writable identity, one on each side of the store↔account boundary.
+
+**Account fingerprints — "which accounts does this data belong to?"** `settings.todoistAccount` (Todoist user id+email, via `GET /user` through the proxy) and `settings.googleAccount` (the primary calendar's id, which *is* the account email) are stamped once at connect time when absent. Because they live in `settings`, they ride sync **and** backups automatically — one field, two checkpoints:
+
+- **At import** (§3.3): the backup's fingerprints, origin host, and export age are compared against the live connections; each mismatch becomes an explicit warning in the confirm modal.
+- **Before every auto-write**: the stored fingerprint is compared against the live account. On a mismatch **all habit-task writes halt** behind a red "account changed" chip/banner naming both accounts, whose only write path is an explicit *adopt this account* action (or reconnecting the original); Google's settings-prune and calendar auto-provision are gated the same way, with a notice + adopt affordance in Settings. Both integrations run one shared stamp/compare/adopt cycle ([`useAccountFingerprint`](../../src/hooks/useAccountFingerprint.ts)) whose verdict gates every writer — `ok`, `wait` (fingerprint stored but the identity fetch hasn't settled: writes hold rather than race it), or `blocked` (mismatch); a *failed* identity fetch degrades to ungated.
+
+**Durable markers — "is this external object ours?"** Written into the external objects themselves, so they live in the *account* where any store can find them — the account-carried approximation of the registry, for stores that lack it:
+
+- Every **habit task** carries two markers, split by role ([`habitsTodoistSync.ts`](../../src/lib/habitsTodoistSync.ts)):
+  - the **`orchestrate-habit` label** — the *class* marker ("this task is ours"). One shared label across all habit tasks; write-once, preserving the user's other labels.
+  - the **`[orchestrate:habit:<uuid>]` description token** — the *instance* marker (which habit, exactly). Backups carry habit uuids, so stores seeded from the same backup pair **exactly by token** — surviving renames and project moves. Corrected in place when stale, preserving the user's own description text.
+
+  Both are stamped at creation and backfilled onto older linked tasks by the reconcile pass. The split is deliberate: instance identity can't live in a label (each distinct label name mints a permanent, never-garbage-collected personal label — one per habit), and a token alone would leave no fallback rung when a description is hand-edited.
+- The **Orchestrate calendar** carries the **`orchestrate:managed-calendar` token in its description** — stamped at creation, re-stamped on rename, backfilled once per session onto the linked calendar. Best-effort: metadata patches can be denied on a calendar the app didn't create under the narrow `calendar.app.created` scope. See [`googleCalendarApi.ts`](../../src/lib/googleCalendarApi.ts).
+
+**The resolution ladder everywhere is: id → marker adoption → create.** The stored id is primary — exact and rename-proof; creation happens only when every rung misses, and stamps the markers. Marker adoption differs per side because pairing differs:
+
+- The **calendar is a singleton** — the marker alone identifies it, and it outranks a name match (a renamed Orchestrate calendar wins over a coincidentally "Orchestrate"-named one). The adopting store takes over the live name (the rename was the user's latest intent); same-name matching remains the last rung for pre-marker calendars.
+- **Tasks are many** — pairing runs exact-first: uuid token (adopted outright, wherever it is), then label + exact name in the target project (the rung for pairs with no shared uuid: hand-recreated habits, pre-token tasks). Both rungs skip checked tasks and tasks another habit already claims.
+
+**The guards' residuals, stated once** (the scenario verdicts below reference these rather than re-explaining):
+
+- **R1 — Cross-store renames without a shared uuid.** Stores seeded from the same backup share habit uuids, so a rename is absorbed by the token rung. The residual is the pair that shares *no* uuid (hand-recreated habit, stripped/pre-token task) **and** no exact name: it pairs with nothing and creates a fresh task beside the old one. (Only wrong when it was meant to be the *same* habit; a genuinely new habit creating a new task is the intended behavior.)
+- **R2 — Legacy data.** Pre-v7.11 objects carry no markers until the origin store runs one reconcile pass; pre-schema-7.7 backups/stores carry no fingerprints and no `_exportedAt` — their first account meeting behaves like the old ungated world, once, and the fingerprint is then stamped silently.
+- **R3 — Strippable / fallible.** A user can remove the label or description line; the Todoist identity fetch can fail (gate inactive for the session); the calendar description patch can 403 (name-only matching remains the fallback).
+- **R4 — Same-account resurrect: defused (v7.11).** The automatic pass can't tell "task lost, recreate it" from "task deliberately deleted in Todoist" — both read as a dangling id. So automatic passes are **adopt-only** for previously-linked habits: the benign rungs (id re-link, marker adoption) still heal, but a vanished task is never re-*created* silently — the habit surfaces as "missing" on the Habits page, where re-creation is explicit at either granularity: the **Re-sync** button (all missing), or the **recreate** action on each missing habit's chip (just that one). Declining is per-habit too: deactivate or delete the habit. Never-synced habits (no id ever) still auto-create — that's the feature, not a resurrect.
+
+---
+
+## 3. The flows, precisely
 
 All flows live in [`DataManagement.tsx`](../../src/components/settings/DataManagement.tsx) (Settings → Data) and are shared with the Welcome page's [`RestoreModal`](../../src/components/RestoreModal.tsx) via the [`useDataImport`](../../src/hooks/useDataImport.ts) hook. Validation lives in [`dataImport.ts`](../../src/lib/dataImport.ts); the mutations are reducer actions in [`DayPlanContext.tsx`](../../src/context/DayPlanContext.tsx).
 
-### 2.1 Full Backup (export)
+### 3.1 Full Backup (export)
 
-One JSON download: `{ settings, life, history, currentDay?, _backupVersion: 2, _schemaVersion }`. `currentDay` is the live working plan, included only when it has content (intentions exist or setup completed) — so a backup captures "today" even before it's saved to history.
+One JSON download: `{ settings, life, history, currentDay?, _schemaVersion, _exportedAt, _originHost }` (built by [`backup.ts`](../../src/lib/backup.ts), shared by the Export button, the Reset Everything opt-in, and the restore confirm's backup-first opt-in). `currentDay` is the live working plan, included only when it has content — so a backup captures "today" even before it's saved to history. `_exportedAt` / `_originHost` record when and from which origin the file was taken; the account fingerprints (§2) ride inside `settings`. (The retired `_backupVersion` stamp is ignored on import — `_schemaVersion` is the only version gate, and a backup without `currentDay` simply leaves the plan slice untouched.)
 
 **What's inside, by consequence:**
 
 | Carried | Why it matters downstream |
 |---|---|
-| All of `settings` | Includes the integration *references*: `habitsTodoistProjectId`, `orchestrateCalendarId`, `orchestrateCalendarName`, `googleCalendarIds`, the `googleCalendarConnected` hint, plus onboarding flag and preferences. |
-| All of `life` | Includes every habit's `todoistTaskId` / `todoistProjectId` — **the dedup registry** that decides create-vs-update on sync — plus backlog entries' linked-task `todoistId`s and the engagement archive. |
+| All of `settings` | The integration *references* (`habitsTodoistProjectId`, `orchestrateCalendarId`, `orchestrateCalendarName`, `googleCalendarIds`, the connected hint) **and the account fingerprints** (§2), plus onboarding flag and preferences. |
+| All of `life` | Every habit's `todoistTaskId` / `todoistProjectId` — **the dedup registry** that decides create-vs-update on sync — plus backlog entries' linked-task `todoistId`s and the engagement archive. |
 | `history`, `currentDay` | Saved and live plans, whose linked tasks carry `todoistId`s and whose plan may carry `sessionCalendarEventIds` (events in the origin account's calendar). |
 
-**What's deliberately not inside:** credentials (server-side only), the identity stamp, the sync meta clock, the reset-pending markers, the Todoist cache, and device prefs (theme, music, Focus toggles). A backup is **data + references, never secrets or bookkeeping**.
+**What's deliberately not inside:** credentials (server-side only), the identity stamp, the sync meta clock, the reset-pending markers, the Todoist cache, and device prefs (theme, music, Focus toggles). A backup is **data + references + provenance, never secrets or bookkeeping**.
 
-> **Gap (provenance).** A backup records *nothing about where it came from* — no origin host, no Access identity, no fingerprint of the connected Todoist/Google accounts. The import side therefore cannot warn "this data was minted against a different account/environment than the one you're restoring into," which is the precondition for every duplication scenario in §4. The IDs are in the file; the context that makes them resolvable is not.
+### 3.2 Export All Sessions
 
-### 2.2 Export All Sessions
+A bare `SavedDayPlan[]` dump of `history`. No top-level schema stamp — each entry's `plan._schemaVersion` is the per-entry gate. Re-importable through Import Day Plan (§3.4). Carries linked-task `todoistId`s like everything else, but since saved sessions are read-only records, dangling IDs here degrade to `titleSnapshot` fallbacks rather than triggering any write.
 
-A bare `SavedDayPlan[]` dump of `history`. No top-level schema stamp — each entry's `plan._schemaVersion` is the per-entry gate. Re-importable through Import Day Plan (§2.4). Carries linked-task `todoistId`s like everything else, but since saved sessions are read-only records, dangling IDs here degrade to `titleSnapshot` fallbacks rather than triggering any write.
-
-### 2.3 Import Full Backup
+### 3.3 Import Full Backup
 
 The pipeline, in order ([`useDataImport.ts`](../../src/hooks/useDataImport.ts) → [`IMPORT_BACKUP`](../../src/context/DayPlanContext.tsx)):
 
-1. **Parse + gate.** JSON parse → must be an object → top-level `_schemaVersion` must sit in `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` (the same numeric gate the loaders use — see [persistence.md §2.2](./persistence.md)). Below-floor or unstamped backups are refused with an explicit error, never partially applied.
-2. **Validate shape.** `validateBackup` checks each carried slice structurally; every `history` entry and `currentDay` is individually schema-gated. One malformed entry rejects the whole file (all-or-nothing).
-3. **Confirm if destructive.** If any local data exists (history, seasons, habits, backlog, templates, a started plan, or a set `userName`), the validated backup is parked and a modal confirms: *"This replaces your current … — a restore, not a merge."* A pristine install commits immediately.
-4. **Replace.** Each slice **the backup carries** replaces the local one wholesale; absent slices are untouched (a partial backup restores only what it has). `life` is normalized (arrays defaulted, `activeSeasonId` validated against the imported seasons, engagement archive pruned to its rolling window); `history` entries are floor-filtered and migrated; `currentDay` is migrated and **re-dated to today** so it survives the rollover gate and becomes the active plan.
-5. **Aftermath — the part that isn't in the modal.** See §3. The import is not done when the reducer returns.
+1. **Parse + gate.** JSON parse → `validateBackup` classifies the file: a bare array is called out as a sessions export (wrong importer — a pointed message routes it to Import Day Plan); a non-backup shape is refused; a top-level `_schemaVersion` outside `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` (the same numeric gate the loaders use — see [persistence.md §2.2](./persistence.md)) is refused with an explicit error, never partially applied.
+2. **Validate shape.** Each carried slice is checked structurally; every `history` entry and `currentDay` is individually schema-gated. One malformed entry rejects the whole file (all-or-nothing).
+3. **Provenance check.** The backup's fingerprints and origin host are compared against the live connections (or this store's own fingerprints when nothing is connected); `_exportedAt` is compared against the **newest local-change stamp** (the sync meta clock, which carries adopted-remote timestamps too, so it's correct on a freshly-synced device). A different Todoist account, a different Google account, a different origin host, or a backup >~5 minutes older than the live data each produce an explicit warning — the age warning spells out that the restore rolls everything back and syncs the rollback to other devices.
+4. **Confirm — always.** The validated backup is parked and the shared confirm modal ([`RestoreConfirmModal`](../../src/components/RestoreConfirmModal.tsx)) runs on every import: *"This replaces your current … — a restore, not a merge, and it syncs to your other devices,"* plus the export timestamp, any warnings in amber, and a default-on **"download a Full Backup of this device's current data first"** opt-in — the same escape hatch Reset Everything offers, so a restore is always one file away from reversible.
+5. **Replace.** Each slice **the backup carries** replaces the local one wholesale; absent slices are untouched. `life` is normalized (arrays defaulted, `activeSeasonId` validated, engagement archive pruned to its rolling window); `history` entries are floor-filtered and migrated; `currentDay` is migrated and **re-dated to today** so it becomes the active plan. The Todoist cache is cleared alongside, so pre-restore task rows can't render against the imported registry.
+6. **Aftermath.** See §4 — the import is not done when the reducer returns.
 
-Import semantics are deliberately **authoritative, not merge**: recovery means "make this installation look like the backup." That is the right call and this doc does not question it — the gaps are all in steps the pipeline *doesn't* have, not in the replace semantic.
+Import semantics are deliberately **authoritative, not merge**: recovery means "make this installation look like the backup."
 
-### 2.4 Import Day Plan
+### 3.4 Import Day Plan
 
-The one merge-flavoured import: accepts a single `SavedDayPlan` or an array (i.e. an Export All Sessions file), validates each entry, and prepends into `history` **deduped by `savedAt`**. Nothing is replaced, nothing external is touched, re-import is idempotent. Benign by construction; it earns no scenario entries below.
+The one merge-flavoured import: accepts a single `SavedDayPlan` or an array (i.e. an Export All Sessions file), validates each entry, and prepends into `history` **deduped by `savedAt`**. Nothing is replaced, nothing external is touched, re-import is idempotent. Benign by construction.
 
-### 2.5 Resets
+### 3.5 Resets
 
 - **Reset Today's Plan** (`RESET_DAY`): replaces `plan` with a fresh one (sessions re-seeded from settings/defaults). Local to the plan slice; propagates through sync like any edit. Todoist untouched.
-- **Reset Everything** (`RESET_ALL`): factory-resets all four slices and clears the Todoist cache. Server-side tokens are *not* touched (disconnect lives in Settings → Integrations), and — critically — **the habit tasks in Todoist are not touched either**. The wipe pushes to the cloud and converges to every device sharing the database.
+- **Reset Everything** (`RESET_ALL`): factory-resets all four slices and clears the Todoist cache. Server-side tokens are *not* touched (disconnect lives in Settings → Integrations). The confirm modal states that the wipe syncs to other devices and that habit tasks left behind become **orphans**, and offers two opt-ins:
+  - **Download a Full Backup first** (default **on**) — the pre-wipe snapshot, since the wipe converges to every device sharing the database.
+  - **Also delete the habit tasks Orchestrate created in Todoist** (default **off**; disabled when Todoist isn't connected or no habits are linked) — ids snapshotted before the wipe, deleted best-effort afterwards. Declining is fine too: the orphans keep their marker label, so re-creating same-named habits later *adopts* them (§2) rather than duplicating (scenario D1).
 
-> **Gap (orphan warning).** The `RESET_ALL` confirm modal says Todoist tasks aren't modified, but not the corollary: the uuid→`todoistTaskId` registry just died, so the recurring habit tasks are now **orphans**, and re-creating those habits later mints a *second* set (§4, scenario D1). The docs know this; the UI doesn't say it.
->
-> **Gap (propagation asymmetry, minor).** Reset flows and imports rely on the normal push path. That's correct, but note the ErrorBoundary's "Reset Day & Reload" is the only reset that also arms the reset-pending marker (`markLocalReset`) — Settings-initiated resets don't need it (no reload race) but the asymmetry is worth knowing when reasoning about "why did my cleared slice come back."
-
----
-
-## 3. What happens *after* an import — the aftermath chain
-
-The modal describes the reducer's replace. Two automatic machines then act on the imported state, and both matter more than the replace itself.
-
-**3a. The sync push.** Each persist effect fires with changed content → `notifyChanged` stamps the slice `Date.now()`, marks it dirty, and pushes (~2.5s debounce). The imported state **replaces the cloud copy for this database**, and every other device sharing it adopts the imported state on its next cold-start pull.
-
-> **Gap (restore propagates, silently and unconditionally).** The confirm modal speaks only of "your current data" on *this device*. Restoring a month-old backup on one prod device rolls back **every** prod device — by design (LWW, import stamps "now"), but nothing warns about it, and nothing compares the backup's age against the data it's about to displace. There is no "this backup appears older than what you have" check; the file doesn't even carry an export timestamp outside the filename. Recovery from a mistaken restore is D1 Time Travel or another backup file.
-
-**3b. The reconciliation pass.** `ReconciliationProvider`'s *detection* recomputes immediately from the imported `life` against the current `taskMap`; its *repair* pass runs on the next trigger — window focus (≥5 min since the last pass) or the next app load, the first-hydration trigger having already been consumed this session. The repair auto-creates a Todoist task for every active habit flagged needs-sync, with no confirmation and no distinction between its two reasons (`never-synced` vs `missing-in-todoist`) — see [persistence.md §5.6](./persistence.md) for why the detection *cannot* distinguish "deleted upstream" from "different account." Whether this pass re-links or mass-creates is decided entirely by the account axis, which is what §4 catalogues.
-
-> **Gap (stale cache at the mismatch moment).** Identity switches and `RESET_ALL` clear the Todoist cache; **import does not**. A backup restored within the cache's 5-minute freshness window is reconciled against the *previous* connection's task snapshot (`tasksHydrated` flips true straight from a fresh cache, no fetch). The wrong-account scenarios below are therefore reachable a few minutes *earlier* than the fetch cycle would suggest — the pass acts on a taskMap the imported data was never meant to meet.
-
-The Google side has a softer aftermath: `reconcileCalendarSettings` ([GoogleCalendarContext.tsx](../../src/context/GoogleCalendarContext.tsx)) prunes imported `googleCalendarIds`/`orchestrateCalendarId` that don't exist in the connected account, and the auto-provision effect then adopts-by-name or creates the Orchestrate calendar. So dangling calendar references self-heal to *one* fresh container (duplicate only if the original was renamed — §4, C2); dangling `sessionCalendarEventIds` simply go inert. There is no calendar equivalent of the habit-task mass-creation problem.
+> **Minor asymmetry.** The ErrorBoundary's "Reset Day & Reload" is the only reset that also arms the reset-pending marker (`markLocalReset`) — Settings-initiated resets don't need it (no reload race), but it's worth knowing when reasoning about "why did my cleared slice come back."
 
 ---
 
-## 4. The scenario catalog
+## 4. What happens *after* an import — the aftermath chain
 
-Verdict key: ✅ behaves well · ⚠️ works with sharp edges · ❌ produces duplicates or silent data displacement.
+The modal describes the reducer's replace. Two automatic machines then act on the imported state.
+
+**4a. The sync push.** Each persist effect fires with changed content → `notifyChanged` stamps the slice `Date.now()`, marks it dirty, and pushes (~2.5s debounce). The imported state **replaces the cloud copy for this database**, and every other device sharing it adopts it on its next cold-start pull. This rollback-by-restore is by design (LWW, import stamps "now") and is what the §3.3 age warning + "syncs to your other devices" copy make an *informed* choice; recovery from a confirmed mistake is D1 Time Travel or another backup file.
+
+**4b. The reconciliation pass.** Detection recomputes immediately from the imported `life` against the current `taskMap`; the repair pass runs on the next trigger (focus / next load) — through the fingerprint gate and the resolution ladder of §2. In short: matching account → link-less habits adopt marked tasks before anything is created, and marker backfill runs (previously-linked habits whose task has vanished are **adopt-only** — re-creation waits for the explicit Re-sync, per R4); mismatched account → all writes pause behind the adopt-or-reconnect banner (an imported foreign registry arms the gate automatically, because the fingerprint rides inside the backup's `settings`); unverifiable → wait, then degrade to ungated only if the identity fetch fails outright.
+
+The Google side is the same shape with smaller stakes: on a mismatch, `reconcileCalendarSettings` pruning and calendar auto-provision pause (notice + adopt in Settings); on a match, provisioning walks the §2 ladder, so even a renamed calendar is adopted rather than re-created. Dangling `sessionCalendarEventIds` simply go inert.
+
+> (The Todoist cache is cleared at commit — §3.3 step 5 — so the pass runs against freshly-fetched tasks rather than a pre-restore snapshot. The write gate keys on fingerprints, not `taskMap` contents, so this is hygiene, not a guard.)
+
+---
+
+## 5. The scenario catalog
+
+Verdict key: ✅ behaves well · ⚠️ works, with residuals from §2 to know about.
 
 ### The catalog at a glance
-
-Follow the tree from the situation you're in down to a scenario node (colored by verdict). Dotted edges point at the gaps (§5) that make that outcome possible or worse. The prose below remains the authoritative detail; this is the navigation aid.
 
 ```mermaid
 flowchart TD
@@ -105,121 +132,72 @@ flowchart TD
     Start --> RESET["Resetting"]
     Start --> SESSIONS["Sessions file<br/>(Export All / Import Day Plan)"]
 
-    %% Shared database — sync, not backup
-    DEVICE --> A1["A1 ✅ Sync handles it:<br/>cold-start pull adopts the cloud snapshot,<br/>the ID registry arrives with it — nothing created"]
+    DEVICE --> A1["A1 ✅ Sync adopts the cloud snapshot —<br/>the ID registry arrives with it, nothing created"]
 
-    %% Sessions-only files
     SESSIONS --> E1["E1 ✅ Merge into history, savedAt dedup,<br/>no external writes, idempotent"]
 
-    %% Resets
     RESET --> RQ{Which reset?}
     RQ -->|Reset Today's Plan| D2["D2 ✅ Plan slice only —<br/>registry and accounts untouched"]
-    RQ -->|Reset Everything| D1["D1 ❌ Registry wiped, habit tasks orphaned;<br/>re-created habits duplicate them.<br/>Wipe propagates to all synced devices"]
+    RQ -->|Reset Everything| D1["D1 ⚠️ Backup-first + optional task deletion<br/>offered; declined orphans keep their marker<br/>and are re-adopted by same-named habits (R1)"]
 
-    %% Full Backup import
-    BACKUP --> BQ{"Same external accounts<br/>on both sides?<br/>(the file won't tell you)"}
+    BACKUP --> BQ{"Same external accounts<br/>on both sides?<br/>(the import compares<br/>fingerprints and warns)"}
     BQ -->|Yes| AGEQ{"Backup older than<br/>the data it replaces?"}
     AGEQ -->|"No, or target is empty"| A2["A2 ✅ IDs resolve → reconciliation re-links,<br/>nothing created — the flagship recovery path"]
-    AGEQ -->|Yes| A3["A3 ⚠️ Import stamps 'now' → old snapshot<br/>pushed to cloud → every synced device<br/>rolls back, silently"]
-    BQ -->|"No — different account<br/>(incl. B4: dev backup carrying<br/>sandbox IDs into prod)"| C1["C1 ❌ Every habit reads missing-in-todoist →<br/>next repair pass mass-creates tasks in the<br/>connected account, no confirmation"]
+    AGEQ -->|Yes| A3["A3 ✅ 'Older backup' warning + 'syncs to<br/>your other devices' — an informed rollback"]
+    BQ -->|"No — different account<br/>(incl. B4: dev backup carrying<br/>sandbox IDs into prod)"| C1["C1 ⚠️ Fingerprint mismatch pauses all<br/>habit-task writes until explicit adoption (R2)"]
 
-    %% Local dev
     DEV --> DQ{Which accounts is<br/>dev connected to?}
     DQ -->|Disposable sandbox| B3["B3 ✅ Different accounts can't touch<br/>each other's tasks — recommended default"]
-    DQ -->|"Real accounts, seeded<br/>from a prod backup"| B1["B1 ⚠️ Re-links like A2, but dev must never<br/>originate habits — separate D1s never converge,<br/>and dev writes hit the real accounts live"]
-    DQ -->|"Real accounts,<br/>fresh empty store"| B2["B2 ❌ First habit synced has no ID →<br/>createTask → duplicate recurring task<br/>in real Todoist (C2 ⚠️ if the<br/>Orchestrate calendar was renamed)"]
-
-    %% Gap register
-    subgraph GAPS["Gap register (§5) — dotted edges = enabled/worsened by"]
-        G1["G1 auto-create on missing-in-todoist,<br/>no confirmation"]
-        G2["G2 no provenance /<br/>account fingerprint"]
-        G3["G3 no name-based adoption<br/>for habit tasks"]
-        G4["G4 propagation & age<br/>unstated at restore"]
-        G5["G5 RESET_ALL orphan<br/>consequence unstated"]
-        G6["G6 Todoist cache not<br/>cleared on import"]
-        G7["G7 rename defeats<br/>calendar name-adoption"]
-        G8["G8 backups are<br/>manual-only"]
-    end
-
-    C1 -.-> G1 & G2 & G6
-    B2 -.-> G1 & G3 & G7
-    B1 -.-> G2
-    D1 -.-> G1 & G3 & G5
-    A3 -.-> G4 & G8
+    DQ -->|"Real accounts, seeded<br/>from a prod backup"| B1["B1 ⚠️ Re-links like A2, but dev writes<br/>hit the real accounts live"]
+    DQ -->|"Real accounts,<br/>fresh empty store"| B2["B2 ⚠️ Marker adoption converges: same-named<br/>habits adopt labeled tasks, the calendar is<br/>adopted by its description marker (R1, R2)"]
 
     classDef safe fill:#e8f5e9,stroke:#2e7d32,color:#1b3c1e
     classDef warn fill:#fff8e1,stroke:#f9a825,color:#4d3b00
-    classDef danger fill:#fdecea,stroke:#c62828,color:#5c1210
-    classDef gap fill:#fdecea00,stroke:#c62828,stroke-dasharray:4 3,color:#c62828
     classDef q fill:#ede7f6,stroke:#5e35b1,color:#2c1a52
 
-    class A1,A2,B3,D2,E1 safe
-    class A3,B1 warn
-    class B2,C1,D1 danger
-    class G1,G2,G3,G4,G5,G6,G7,G8 gap
+    class A1,A2,A3,B3,D2,E1 safe
+    class B1,B2,C1,D1 warn
     class BQ,AGEQ,DQ,RQ q
 ```
 
-Two things the tree encodes that are easy to miss in prose: the first question on the backup branch ("same accounts?") is one **the system cannot answer for you** — that's G2, which is why it's phrased as something you must know yourself; and every ❌ node routes through G1's unprompted create-path — remove that one behaviour and all three red nodes degrade to recoverable ⚠️s.
+The two guards are complementary and the tree shows the split: **fingerprints** decide the cross-account branches (mismatch → pause and ask), **markers** decide the same-account ones (registry-less stores adopt instead of re-create). Every ⚠️ is a §2 residual, not a missing mechanism.
 
-### A. Same database, same accounts (the sanctioned paths)
+### The scenarios, one by one
 
-**A1 — New device joins prod. ✅ No backup involved.** Sign in, cold-start pull adopts the cloud snapshot, external IDs arrive *with* their registry, reconciliation finds every `todoistTaskId` present and does nothing. This is the design working; backup is not the cross-device mechanism — sync is.
+Families follow the diagram: **A** same database + same accounts · **B** prod ↔ local dev (separate databases) · **C** a different account on either side · **D** resets · **E** sessions files.
 
-**A2 — Restore a backup onto prod after data loss (same accounts). ✅ The flagship recovery path.** The backup's habit `todoistTaskId`s resolve in the connected account's `taskMap`, so reconciliation **re-links instead of re-creating**; `habitsTodoistProjectId` and `orchestrateCalendarId` resolve likewise. This is the import-time face of idempotent provisioning, and it's the reason backups carry IDs at all.
-
-**A3 — Restore an *old* backup onto a live prod. ⚠️ Works, silently rolls back everything.** Same mechanics as A2, but the aftermath (§3a) pushes the old snapshot over newer cloud state and every other device follows. No age check, no propagation warning (gap in §3a). The user's only signal is the modal's generic "replaces your current data."
-
-### B. Prod ↔ local dev (separate databases)
-
-**B1 — Seed local dev from a prod backup, connected to the same real accounts. ⚠️ The *safe* way to give dev real data — with a discipline requirement.** The import carries the ID registry, so reconciliation re-links against the real account exactly as in A2; nothing is created. The discipline: from then on, **dev must not originate habits** (or otherwise trigger create-paths) against the real account — anything dev creates gets a fresh uuid with no counterpart in prod's registry, and prod's next reconcile can't know about it (separate databases never converge). Writes from dev also hit the real calendar/tasks live — the D1s are isolated; the external accounts are not.
-
-**B2 — Fresh local dev (empty life) on the real accounts, creating habits. ❌ The classic duplication bug, still live.** A habit created in dev has no `todoistTaskId`; first sync falls through to `createTask` → a second recurring task in real Todoist. The containers are protected (adopted by name); the contents are not. Nothing in the UI signals that this installation's registry and the account's contents have never met.
-
-**B3 — Local dev on disposable sandbox accounts. ✅ Fully safe, recommended default.** Different accounts can't touch each other's tasks at all. Dev provisions its own containers and tasks in the sandbox; prod is untouchable. The only cost is maintaining the sandbox accounts and knowing dev's data is fake.
-
-**B4 — Backup travels dev → prod. ⚠️→❌ depending on dev's accounts.** If dev was seeded per B1 (same accounts), the round-trip is A2-safe — but it also *replaces* prod's state with dev's (A3's rollback caveat applies, plus any WIP-schema oddities dev produced). If dev ran on sandbox accounts (B3), the imported registry points at sandbox objects: every habit's `todoistTaskId` is absent from the real account's `taskMap`, and the next repair pass **creates the full habit set in real Todoist** (C1's mechanics). The file gives no hint which of these it is (provenance gap, §2.1).
-
-### C. Different account on either side
-
-**C1 — A populated store meets a different Todoist account. ❌ Mass auto-creation, no user action required.** Whether by importing a backup and connecting a different account, or switching the connected account under existing data: every habit reads as `missing-in-todoist`, and the next repair pass creates a task per habit *and repoints the local registry at the new account* (the old account's tasks are now orphans). Inert if the account is a sandbox being deliberately populated — which is exactly why the behaviour exists — a real incident if it isn't. The system cannot currently tell those intents apart, and asks nobody.
-
-**C2 — Renamed Orchestrate calendar meets a store without the synced ID. ⚠️ One duplicate container.** Name-adoption is the containers' *backstop*; the synced `orchestrateCalendarId` is the primary guard. An installation lacking it (fresh store, backup from before the rename) searches for the *configured name*, misses the renamed calendar, and creates a fresh one. Small blast radius (one calendar, no events lost), self-inflicted only via rename.
-
-### D. Resets
-
-**D1 — `RESET_ALL`, then re-create the same habits. ❌ Duplicates by design gap.** The wipe orphans the account's habit tasks (registry gone, tasks alive); re-created habits mint fresh uuids and fresh tasks beside the orphans. Same-account, single-store, no dev environment needed — the cheapest route to duplicates in the whole catalog. The confirm modal doesn't mention it (§2.5 gap). The wipe also propagates to all devices sharing the database (documented, but worth repeating: "just reopen the other device" is not a recovery path).
-
-**D2 — `RESET_DAY`. ✅ Benign.** Plan slice only; habits, registry, and external accounts untouched.
-
-### E. Day-plan / sessions import
-
-**E1 — Any direction, any accounts. ✅ Benign.** Merge semantics, `savedAt` dedup, no external writes, dangling IDs degrade to snapshots. The contrast with Full Backup is instructive: this flow is safe *because* it neither replaces state nor feeds the reconciliation layer.
+| # | Scenario | What the mechanisms do | Verdict · residuals |
+|---|---|---|---|
+| **A1** | New device joins prod | No backup involved — sync is the cross-device mechanism. The cold-start pull adopts the cloud snapshot, the ID registry arrives with it, reconciliation finds every id present and does nothing. | ✅ |
+| **A2** | Restore a backup after data loss (same accounts) | **The flagship recovery path.** The backup's `todoistTaskId`s and `orchestrateCalendarId` resolve in the connected account, so reconciliation **re-links instead of re-creating** — the reason backups carry IDs at all. | ✅ |
+| **A3** | Restore an *old* backup onto live prod | Same mechanics as A2; the **"Older backup"** warning names both timestamps and the copy states the rollback syncs to every device — a deliberate rollback, never an accidental one. | ✅ · pre-7.7 backups skip the age warning (R2) |
+| **B1** | Seed local dev from a prod backup (real accounts) | Registry + fingerprints arrive together; re-links like A2, nothing created. But **dev acts on the real accounts live**, and anything dev *originates* exists only in dev's registry — the markers let prod adopt it later instead of duplicating. | ⚠️ live writes to real accounts |
+| **B2** | Fresh local dev (empty `life`) on the real accounts | Fingerprints match by construction, so the markers do the work: hand-recreated habits adopt by label + exact name (uuids differ here by construction); the calendar adopts by id or marker even if renamed. | ⚠️ R1, R2 |
+| **B3** | Local dev on disposable sandbox accounts | Different accounts can't touch each other's objects. The sandbox fingerprint stamped in dev's settings is also what protects a later dev→prod crossing (B4). | ✅ recommended default |
+| **B4** | Backup travels dev → prod | Same accounts (per B1): A2-safe but *replaces* prod's state — flagged by the `_originHost` (and possibly age) warning. Sandbox accounts (per B3): warned at import, and the imported sandbox fingerprint arms the C1 gate instead of mass-creating in real Todoist. | ⚠️ warned + gated |
+| **C1** | Populated store meets a different Todoist account | Every habit reads as missing, but the fingerprint mismatch pauses all habit-task writes before the repair pass fires. The red banner offers reconnect-or-adopt; only an explicit re-sync after adopting populates the new account (the sandbox-populating flow, as opt-in). | ⚠️ R2, R3 |
+| **C2** | Renamed Orchestrate calendar meets a store without the synced id | The marker rung outranks any name match, so the renamed calendar wins even against a coincidentally "Orchestrate"-named one; the adopting store takes over the live name. | ✅ · R3 (name-only fallback if the marker patch was denied) |
+| **D1** | Reset Everything, then re-create the same habits | The modal offers a backup-first download and optional task deletion. Declined orphans keep their markers, so a habit re-created under the **same name** adopts its orphan. The wipe syncs to every device sharing the database — the offered backup is the recovery path. | ⚠️ R1 (a different name → fresh task beside the orphan) |
+| **D2** | Reset Today's Plan | Plan slice only; habits, registry, and external accounts untouched. | ✅ |
+| **E1** | Sessions export / Import Day Plan (any direction, any accounts) | Merge by `savedAt`, idempotent, no external writes; dangling ids degrade to `titleSnapshot` fallbacks. Safe *because* it neither replaces state nor feeds the reconciliation layer. | ✅ |
 
 ---
 
-## 5. The gap register
+## 6. Remaining sharp edges
 
-Consolidated, ordered by severity. "Scenarios" reference §4.
+The residuals R1–R3 are defined in §2 (R4 was defused in v7.11 — automatic passes never re-create a previously-linked habit's task); beyond those, what's genuinely still open:
 
-| # | Gap | Severity | Scenarios | Current behaviour |
-|---|---|---|---|---|
-| G1 | **Reconciliation auto-creates on `missing-in-todoist` with no confirmation** — cannot distinguish "deleted upstream" (self-heal correct) from "different account / foreign registry" (creation is the incident); fires on load/focus; also resurrects tasks the user deliberately deleted in Todoist | **High** | B2, B4, C1, D1 | Fully automatic; only post-hoc signal is the sync chip count |
-| G2 | **No provenance or account fingerprint anywhere** — backups don't record origin (host/identity/accounts), and no slice records which external accounts the registry was minted against, so neither import nor reconcile can detect a mismatch before writing | **High** (enabler of G1's worst cases) | B4, C1, and the reason B1 vs B2 is invisible | Import proceeds uniformly; mismatch is discovered only by its side-effects |
-| G3 | **No name-based adoption for habit tasks** — contents dedup rests solely on the store-local `todoistTaskId`; a same-named recurring task in the Habits project is never reused, unlike the containers | Medium | B2, D1 (would convert both to convergence) | `syncHabitToTodoist` create-path is unconditional when the ID is absent/unresolved |
-| G4 | **Restore's cloud propagation and age are unstated** — no "this rolls back your other devices," no backup-vs-current age comparison, no export timestamp in the payload | Medium | A3, B4 | Confirm modal describes local replacement only |
-| G5 | **`RESET_ALL` orphan consequence unstated in UI** | Medium | D1 | Modal says tasks are untouched; omits that re-creation will duplicate them |
-| G6 | **Todoist cache not cleared on backup import** — a fresh cache from the previous connection can satisfy `tasksHydrated` and let the repair pass run against a mismatched snapshot | Low | Sharpens C1/B4 timing | Cache cleared on identity switch and `RESET_ALL` only |
-| G7 | **Renamed calendar defeats name-adoption in ID-less stores** | Low | C2 | One duplicate container; recoverable by hand |
-| G8 | **Backup remains manual-only** — the sole file-level safety net for D1-external mistakes (A3 rollbacks, C1 incidents) depends on the user having recently clicked Export | Low (tracked in [roadmap §5-B](../roadmap/persistence_and_backend_migration.md)) | All recovery paths | No auto-export, no reminder |
-
-Where a future fix would attach, for orientation (decisions deliberately not made here): G1/G3 live in [`habitsTodoistSync.ts`](../../src/lib/habitsTodoistSync.ts) + [`ReconciliationContext.tsx`](../../src/context/ReconciliationContext.tsx) (the repair pass and its create-path); G2 spans the export payload ([`DataManagement.tsx`](../../src/components/settings/DataManagement.tsx)), the import pipeline ([`useDataImport.ts`](../../src/hooks/useDataImport.ts)), and wherever an account fingerprint would be stamped at connect time; G4–G6 are contained in the import/reset flows themselves.
+| Edge | Impact | Notes |
+|---|---|---|
+| **Cross-store renames (R1)** | A habit renamed in only one store can create a fresh task beside the old one | Only when no uuid token pairs them (hand-recreated habits, stripped tokens) — backup-seeded stores share uuids and pair exactly |
+| **Legacy data (R2)** | Pre-v7.11 objects/backups get one unguarded first meeting | Self-resolving: fingerprints stamp at first connect, markers backfill on the first reconcile pass |
+| **Backups are manual-only** | Every file-level recovery path depends on a recent export | Both destructive flows (Reset Everything, Import Full Backup) offer a pre-action download; the standing direction is per-slice D1 snapshots (see backlog) — file-sync was considered and dropped |
 
 ---
 
 ## See also
 
-- [persistence.md](./persistence.md) — the storage model this doc stands on: slices, the sync sidecar's merge, local-vs-remote D1 (§4), idempotent provisioning and its limits (§5.6), backup/restore mechanics (§7).
+- [persistence.md](./persistence.md) — the storage model this doc stands on: slices, the sync sidecar's merge, local-vs-remote D1 (§4), idempotent provisioning and the guard mechanisms' home ground (§5.6), backup/restore mechanics (§7).
 - [backend.md](./backend.md) — identity, the credential vault, and why tokens are never in a backup.
 - [../data-model.md](../data-model.md) — entity semantics and the schema/migration rules the import gate enforces.
-- [../roadmap/persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md) — the decision record behind the sync sidecar; option B (file-sync) is the standing answer to G8.
+- [../roadmap/persistence_and_backend_migration.md](../roadmap/persistence_and_backend_migration.md) — the decision record behind the sync sidecar.

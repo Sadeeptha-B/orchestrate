@@ -352,7 +352,9 @@ export function AsciiBuddy() {
                 </button>
 
                 {ambient ? (
-                    <div className="space-y-2">
+                    /* w-min: the unwrappable backdrop <pre> sets the card width; the chip row and
+                       caption wrap to fit it, so the diorama always spans the whole card. */
+                    <div className="space-y-2 w-min">
                         {/* Diorama — faint accent backdrop, buddy front and centre on the ground line */}
                         <div className="relative">
                             <span aria-hidden className="block whitespace-pre text-left font-mono text-[10px] leading-[1.35] text-accent opacity-40">

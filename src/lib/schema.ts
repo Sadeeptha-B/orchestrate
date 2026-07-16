@@ -26,8 +26,11 @@ import type { ContextNote } from '../types';
  * 7.6 (v7.8): wizard reorder — Sessions moved to step 1 (Sessions → Intentions → Refine → Schedule
  * → Ready) and the Start Music step replaced by the Ready recap. A persisted `plan.wizardStep` from
  * the old layout points at a different step now, so it's remapped forward (see `migratePlan_7_5_to_7_6`).
+ * 7.7 (v7.11): purely additive optionals — `AppSettings.todoistAccount` / `googleAccount` account
+ * fingerprints (provenance guards for cross-account duplicate prevention), and backup-level
+ * `_exportedAt` / `_originHost`. No forward-migration step (absent fields read as undefined).
  */
-export const SCHEMA_VERSION = 7.6;
+export const SCHEMA_VERSION = 7.7;
 
 /** Oldest schema the app still understands. Data stamped below this is rejected rather than migrated. */
 export const MIN_SUPPORTED_SCHEMA = 7.1;

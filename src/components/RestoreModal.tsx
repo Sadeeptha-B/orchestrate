@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { useDayPlan } from '../hooks/useDayPlan';
 import { useDataImport } from '../hooks/useDataImport';
 import { Modal } from './ui/Modal';
-import { ConfirmModal } from './ui/ConfirmModal';
+import { RestoreConfirmModal } from './RestoreConfirmModal';
 import { Button } from './ui/Button';
 
 interface RestoreModalProps {
@@ -139,23 +139,11 @@ export function RestoreModal({ open, onClose }: RestoreModalProps) {
                 )}
             </div>
 
-            <ConfirmModal
-                open={pendingBackup !== null}
-                onClose={cancelBackupImport}
+            <RestoreConfirmModal
+                pending={pendingBackup}
                 onConfirm={confirmBackupImport}
-                title="Restore from this backup?"
-                confirmLabel="Replace & Restore"
-            >
-                <p className="text-sm text-text-light mb-3">
-                    This <strong>replaces</strong> your current{' '}
-                    {pendingBackup?.summary.join(', ')} with the backup's. Local entries not in the
-                    backup are removed — this is a restore, not a merge.
-                </p>
-                <p className="text-sm text-text-light mb-4">
-                    Export a Full Backup first if you want to keep your current data. This cannot be
-                    undone.
-                </p>
-            </ConfirmModal>
+                onCancel={cancelBackupImport}
+            />
         </Modal>
     );
 }

@@ -13,8 +13,10 @@ import {
     createCalendarEvent,
     deleteCalendarEvent,
     GoogleAuthError,
+    hasOrchestrateMarker,
     listCalendars,
     listEvents,
+    ORCHESTRATE_CALENDAR_DESCRIPTION,
     patchCalendar,
     patchCalendarEvent,
     type CalendarEvent,
@@ -24,6 +26,8 @@ import {
     type GoogleCalendarListEntry,
 } from '../lib/googleCalendarApi';
 import { isVisibleOnSurface, type CalendarSurface } from '../lib/googleCalendar';
+import { useAccountFingerprint, type AccountMismatch } from '../hooks/useAccountFingerprint';
+import type { ExternalAccountRef } from '../types';
 
 // ─── Context shapes (mirrors the Todoist data/actions split) ───────────────────
 
@@ -39,6 +43,11 @@ export interface GoogleCalendarDataValue {
     /** v7.7: the granted OAuth scope includes calendar creation (calendar.app.created / calendar).
      *  When false while connected, the user must reconnect to enable the Orchestrate calendar. */
     hasCalendarManageScope: boolean;
+    /** v7.11: the connected Google account differs from the account this store's calendar
+     *  references were minted against (`settings.googleAccount`) — the settings-prune and the
+     *  Orchestrate-calendar auto-provision are gated off while set. The live identity is the
+     *  primary calendar's id (which is the account email). */
+    accountMismatch: AccountMismatch | null;
     error: string | null;
 }
 
@@ -86,6 +95,9 @@ export interface GoogleCalendarActionsValue {
      * the linked id (or null).
      */
     renameOrchestrateCalendar: (name: string) => Promise<string | null>;
+    /** v7.11: stamp the currently connected Google account as this store's fingerprint, clearing
+     *  the mismatch gate; the normal prune/provision machinery then resumes on the new account. */
+    adoptCurrentAccount: () => void;
 }
 
 const GoogleCalendarDataContext = createContext<GoogleCalendarDataValue | null>(null);
@@ -125,13 +137,30 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     const calendarSettingsRef = useRef({
         googleCalendarIds: settings.googleCalendarIds,
         orchestrateCalendarId: settings.orchestrateCalendarId,
+        googleAccount: settings.googleAccount,
     });
     useEffect(() => {
         calendarSettingsRef.current = {
             googleCalendarIds: settings.googleCalendarIds,
             orchestrateCalendarId: settings.orchestrateCalendarId,
+            googleAccount: settings.googleAccount,
         };
-    }, [settings.googleCalendarIds, settings.orchestrateCalendarId]);
+    }, [settings.googleCalendarIds, settings.orchestrateCalendarId, settings.googleAccount]);
+
+    // ── v7.11: account provenance — the shared stamp/compare/adopt cycle lives in
+    // useAccountFingerprint. The live identity is the primary calendar's id (= the account
+    // email); it exists exactly when the calendar list has loaded, so there is no separate
+    // async "resolved" state. A mismatch gates the prune + auto-provision writers below.
+    const currentAccount = useMemo<ExternalAccountRef | null>(() => {
+        const primary = availableCalendars.find((c) => c.primary);
+        return primary ? { id: primary.id, email: primary.id } : null;
+    }, [availableCalendars]);
+    const { mismatch: accountMismatch, adoptCurrentAccount } = useAccountFingerprint({
+        key: 'googleAccount',
+        current: currentAccount,
+        resolved: currentAccount !== null,
+        connected: isConnected,
+    });
 
     // In-memory access-token cache (the refresh token lives server-side; this is just a short-lived
     // access token, re-minted by the Worker).
@@ -171,6 +200,14 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
     }, [dispatch]);
 
     const reconcileCalendarSettings = useCallback((calendars: GoogleCalendarListEntry[]) => {
+        // v7.11 provenance gate: never prune stored calendar references against an account they
+        // weren't minted in — an imported/foreign store would otherwise have its ids silently
+        // stripped and replaced by fresh provisioning. (Computed from the passed list + ref, since
+        // this runs with the fresh fetch before state settles.)
+        const primary = calendars.find((c) => c.primary);
+        const storedAccount = calendarSettingsRef.current.googleAccount;
+        if (primary && storedAccount && storedAccount.id !== primary.id) return;
+
         const currentSelections = calendarSettingsRef.current.googleCalendarIds ?? [];
         const availableIds = new Set(calendars.map((cal) => cal.id));
         const nextSelections = currentSelections.filter((entry) => availableIds.has(entry.id));
@@ -374,15 +411,45 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             const token = await getAccessToken();
             if (!token) return null;
             try {
-                // Reuse a same-named writable calendar (avoids duplicates across reconnects/devices),
-                // else create a fresh secondary calendar (needs the calendar.app.created scope).
-                const match = forceCreate
+                // v7.11 adoption ladder: stored id (above) → marker-carrying writable calendar →
+                // same-named writable calendar → create fresh (needs the calendar.app.created
+                // scope). The durable description marker IS the calendar's identity, so it
+                // outranks a name match: a renamed Orchestrate calendar must win over a
+                // coincidentally "Orchestrate"-named calendar the app never managed (adopting
+                // the latter would double-stamp the marker and split the singleton). Name-only
+                // matching remains the rung for pre-marker calendars.
+                const isWritable = (c: GoogleCalendarListEntry) =>
+                    c.accessRole === 'owner' || c.accessRole === 'writer';
+                const byMarker = forceCreate
                     ? undefined
-                    : availableCalendars.find(
-                        (c) => c.name === name && (c.accessRole === 'owner' || c.accessRole === 'writer'),
-                    );
+                    : availableCalendars.find((c) => hasOrchestrateMarker(c) && isWritable(c));
+                const byName = forceCreate || byMarker
+                    ? undefined
+                    : availableCalendars.find((c) => c.name === name && isWritable(c));
+                const match = byMarker ?? byName;
                 const id = match?.id ?? (await createCalendar(token, name)).id;
-                dispatch({ type: 'UPDATE_SETTINGS', settings: { orchestrateCalendarId: id } });
+                // Backfill the durable marker onto adopted calendars that predate it (created ones
+                // carry it from birth). Best-effort: metadata patches on a calendar the app didn't
+                // create can be denied under the narrow calendar.app.created scope.
+                if (match && !hasOrchestrateMarker(match)) {
+                    try {
+                        await patchCalendar(token, match.id, { description: ORCHESTRATE_CALENDAR_DESCRIPTION });
+                    } catch (e) {
+                        console.warn('[GCal] could not stamp the managed-calendar marker:', e);
+                    }
+                }
+                dispatch({
+                    type: 'UPDATE_SETTINGS',
+                    settings: {
+                        orchestrateCalendarId: id,
+                        // Marker adoption under a different name means the calendar was renamed
+                        // elsewhere — the live name is the user's latest intent, so adopt it
+                        // rather than renaming the calendar back to this store's stale default.
+                        ...(byMarker && byMarker.name !== name
+                            ? { orchestrateCalendarName: byMarker.name }
+                            : {}),
+                    },
+                });
                 await refreshCalendars();
                 return id;
             } catch (e) {
@@ -418,10 +485,12 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             if (availableCalendars.find((c) => c.id === id)?.name === name) return id;
             // Always rename the linked calendar in place — never switch to another same-named calendar.
             // (Same-named *reuse* only applies at creation time, in provisionOrchestrateCalendar.)
+            // v7.11: the rename also (re-)stamps the durable marker description, backfilling
+            // calendars that predate it.
             const token = await getAccessToken();
             if (!token) return id;
             try {
-                await patchCalendar(token, id, name);
+                await patchCalendar(token, id, { summary: name, description: ORCHESTRATE_CALENDAR_DESCRIPTION });
                 await refreshCalendars();
                 return id;
             } catch (e) {
@@ -447,9 +516,12 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
 
     // v7.7: once connected with the creation scope, provision the Orchestrate calendar if missing.
     // Waits for the calendar list (so same-named reuse works) and skips when already provisioned.
+    // v7.11: gated on account mismatch — never auto-create a calendar in an account the store's
+    // references weren't minted against.
     const ensuringRef = useRef(false);
     useEffect(() => {
         if (!isConnected || !hasCalendarManageScope || availableCalendars.length === 0) return;
+        if (accountMismatch) return;
         const id = settings.orchestrateCalendarId;
         if (id && availableCalendars.some((c) => c.id === id)) return;
         if (ensuringRef.current) return;
@@ -461,14 +533,40 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
         isConnected,
         hasCalendarManageScope,
         availableCalendars,
+        accountMismatch,
         settings.orchestrateCalendarId,
         settings.orchestrateCalendarName,
         ensureOrchestrateCalendar,
     ]);
 
+    // v7.11: backfill the durable marker onto the *linked* calendar when it predates it — the
+    // provisioning ladder only touches id-less stores, so without this a long-provisioned
+    // calendar would carry no marker until its next rename. Once per session; best-effort
+    // (metadata patches can be denied under the narrow calendar.app.created scope).
+    const markerBackfillRef = useRef(false);
+    useEffect(() => {
+        if (markerBackfillRef.current) return;
+        if (!isConnected || accountMismatch) return;
+        const id = settings.orchestrateCalendarId;
+        if (!id) return;
+        const linked = availableCalendars.find((c) => c.id === id);
+        if (!linked || hasOrchestrateMarker(linked)) return;
+        markerBackfillRef.current = true;
+        void (async () => {
+            const token = await getAccessToken();
+            if (!token) return;
+            try {
+                await patchCalendar(token, id, { description: ORCHESTRATE_CALENDAR_DESCRIPTION });
+                await refreshCalendars();
+            } catch (e) {
+                console.warn('[GCal] could not stamp the managed-calendar marker:', e);
+            }
+        })();
+    }, [isConnected, accountMismatch, settings.orchestrateCalendarId, availableCalendars, getAccessToken, refreshCalendars]);
+
     const dataValue = useMemo<GoogleCalendarDataValue>(
-        () => ({ isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error }),
-        [isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, error],
+        () => ({ isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, accountMismatch, error }),
+        [isConnected, connecting, authFailed, availableCalendars, hasCalendarManageScope, accountMismatch, error],
     );
 
     const actionsValue = useMemo<GoogleCalendarActionsValue>(
@@ -485,6 +583,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             ensureOrchestrateCalendar,
             recreateOrchestrateCalendar,
             renameOrchestrateCalendar,
+            adoptCurrentAccount,
         }),
         [
             connect,
@@ -499,6 +598,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
             ensureOrchestrateCalendar,
             recreateOrchestrateCalendar,
             renameOrchestrateCalendar,
+            adoptCurrentAccount,
         ],
     );
 
