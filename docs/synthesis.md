@@ -1,4 +1,4 @@
-> **Start here.** This is the canonical context document for Orchestrate. Deeper references: [vision.md](./vision.md) (durable "why"), [data-model.md](./data-model.md) (entity semantics, invariants, reducer actions, migrations), [backlog.md](./backlog.md) (forward-looking proposals). The in-app user guide lives in [`src/components/guide/UserGuide.tsx`](../src/components/guide/UserGuide.tsx). For current type definitions, read [`src/types/index.ts`](../src/types/index.ts) directly. Frozen historical artifacts live in [history/](./history/) — do not treat them as current state.
+> **Start here.** This is the canonical context document for Orchestrate. Deeper references: [vision.md](./vision.md) (durable "why"), [data-model.md](./data-model.md) (entity semantics, invariants, reducer actions, migrations — **the authoritative source for the term definitions summarized in §4**), [backlog.md](./backlog.md) (forward-looking proposals), and the subsystem walkthroughs in [reference/](./reference/) (backend, persistence, backup & restore, [focus-mode](./reference/focus-mode.md), [habits-sync](./reference/habits-sync.md)). The in-app user guide lives in [`src/components/guide/UserGuide.tsx`](../src/components/guide/UserGuide.tsx). For current type definitions, read [`src/types/index.ts`](../src/types/index.ts) directly. Frozen historical artifacts live in [history/](./history/) — do not treat them as current state. A full docs map is in [README.md](./README.md).
 
 # Orchestrate — Synthesis
 
@@ -58,7 +58,7 @@ StrictMode                         (main.tsx)
 ```
 
 - `ErrorBoundary` is the outermost component in `App.tsx` so a crash in any provider or route is caught gracefully.
-- `SyncGate` (v7.9) wraps `DayPlanProvider` and blocks the first render until the D1 sync sidecar's cold-start pull-and-merge resolves (`pullAndMerge`, [`src/lib/cloudSync.ts`](../src/lib/cloudSync.ts)) — it merges the remote whole-slice snapshot into localStorage (last-write-wins per slice) *before* `DayPlanProvider`'s loader runs, so the loader reconciles/migrates/rolls-over the winning state. It resolves fast (≤~2s cap; instant when offline or no app secret), so startup is never blocked for long. See §11.1.
+- `SyncGate` (v7.9) wraps `DayPlanProvider` and blocks the first render until the D1 sync sidecar's cold-start pull-and-merge resolves (`pullAndMerge`, [`src/lib/cloudSync.ts`](../src/lib/cloudSync.ts)) — it merges the remote whole-slice snapshot into localStorage (last-write-wins per slice) *before* `DayPlanProvider`'s loader runs, so the loader reconciles/migrates/rolls-over the winning state. It resolves fast (≤~2s cap; skipped instantly when offline), so startup is never blocked for long. See §11.1.
 - `GoogleCalendarProvider` reads `settings` (the `googleCalendarConnected` flag) + `dispatch` from `DayPlanProvider`; it is independent of Todoist/Reconciliation (its order relative to them does not matter). The **refresh token lives server-side** (Cloudflare Worker + KV, per user); the provider holds only a short-lived access token **in memory** (re-minted by the Worker on demand). Requests are authenticated by the Cloudflare Access session cookie — there is no in-app credential (v7.10).
 - `TodoistProvider` reads `settings` (connection state + habits project preference) and `plan` (linked tasks for reconciliation) from `DayPlanProvider`, so it must be nested inside it.
 - `ReconciliationProvider` reads both — habits + active season + plan-date from `DayPlanProvider`, taskMap + actions from `TodoistProvider` — so it sits below both. See [`src/context/ReconciliationContext.tsx`](../src/context/ReconciliationContext.tsx).
@@ -85,125 +85,17 @@ Eleven routes, all defined in `AppRoutes` inside `App.tsx`:
 
 Life routes are always reachable (no `setupComplete` gate) — `setupComplete` is a daily flag while seasons/habits are durable.
 
-### 3.3 Focus Mode (v7)
+### 3.3 Focus Mode
 
-Pressing **▶ Start** on a task in the Current Session card opens an engagement segment. Where it lands
-follows the strict toggle (v7.5/7.6): **strict** drops straight into `/focus` (the first-action capture
-happens there); **relaxed** runs the timer **in place** on the dashboard row and exposes a **◎** icon to
-enter `/focus` on demand. Focus is a distraction-free page; its target is derived via
-`findActiveFocusTask(plan)` (the engaged `LinkedTask` with an open segment), so it reflects Stop/Complete
-instantly and survives a reload. **Stop** closes the segment; **Complete** ticks the task in Todoist and
-returns to `/`. See the v7.6 state machine below for the in-page flow.
+Focus Mode (`/focus`) is the app's **execution surface** — the dashboard plans (*what* and *when*), Focus executes (*one thing now, where did I leave off*). Pressing **▶ Start** opens an engagement segment; in **strict** mode it drops into `/focus`, in **relaxed** it runs the timer in place with a **◎** icon to enter Focus on demand. The surface has two faces on one route: a **selection** picker (`FocusPicker`) when nothing is engaged, and an **execution** surface (`FocusActive`) — a four-phase state machine `firstAction → ramp → working ⇄ stopping` — when something is. Focus owns the execution-level concerns kept off the planning dashboard: the engagement timer, the per-task **re-entry breadcrumb** (`LinkedTask.contextTrail`) and its durable archive (`life.engagementHistory`), the day-wide **engagement timeline**, the **activation ramp**, the optional **Pomodoro** engine, the **music protocol**, and the strict/relaxed **note gates** (`settings.focusStrict`). A separate app-wide **engagement nudge** flags idle time in an active session.
 
-An optional **Pomodoro** engine (toggle persisted in `localStorage`) turns the task's estimate into a
-slot schedule via `computeFocusPlan(estimate)`: ≥45 min → 20-min work blocks with 5-min breaks; 30–44
-min → 10-min blocks; <30 min or unestimated → a single session. The blocks render as a vertical
-`FocusSlotPlan`, and when the engine runs (`resolveBlockAt`) it highlights the live block, counts it
-down, and fires a chime (`lib/sound.ts`) + notification at each work↔break boundary.
-
-Focus Mode is the app's **execution surface**, so the **music protocol** lives here: the shared
-`MusicProvider` wraps a card-less `PlaylistSelector` + `SpotifyPlayer` above the timer (v7.6). The
-dashboard no longer carries the Spotify embed. (The static transition-tips card was dropped in v7.6.)
-
-A separate **engagement nudge** (`useEngagementNudge`, run app-wide by `NotificationBridge` — v7.8,
-formerly `useFocusNudge` on the Dashboard) notifies the user if they've been idle in an active session
-without engaging anything (and the session still has incomplete work) past a **configurable threshold**
-(`settings.engagementNudgeMinutes`, default 10; `0` disables), repeating every 30 min while idle.
-**v7.8** anchors the elapsed clock to the **last engagement boundary** (`lastEngagementBoundary` — the
-most recent Start→Stop today) rather than the session start, so it reports "time since you last did
-something" (folded into hours via `formatDuration`), and is reworded away from "focus". The
-notification fires once at the threshold; thereafter a **persistent dashboard banner**
-(`useEngagementBanner`) stays visible until the user re-engages. Both share the pure `engagementIdleState`
-helper in `lib/engagement.ts`. No new entities, reducer actions, or schema migration — it's a view over
-the existing engagement-segment model.
-
-**v7.4 — re-entry breadcrumb + activation ramp.** Focus Mode is the execution surface, so the v7.4
-execution-friction features live here. A per-task **re-entry breadcrumb** is a cumulative trail
-(`LinkedTask.contextTrail`, Phase 2 — replacing the Phase-1 `reentryNote`/`firstAction` scalars). Focus
-renders the **whole trail** under a "Re-entry context" header plus a **"last worked Xm ago"** line read
-from the durable engagement archive (the re-entry moment surfaced at return). The "Next step" input
-holds a draft committed as one **`exit` note on Stop/Complete** (carried by `STOP_TASK_ENGAGEMENT` /
-`TOGGLE_TASK_COMPLETE`), and a **"+ Add"** affordance appends a breadcrumb mid-session
-(`APPEND_TASK_CONTEXT_NOTE`); the Step 2 entry point is an **`entry` note** (`APPEND_TASK_ENTRY_NOTE`, v7.6 — accumulates per engagement).
-Dashboard Current Session rows show a truncated `↩` preview of the latest note. **Deliberate gates:**
-you can't **Start** a task with an empty trail (dashboard ▶ prompts for a first concrete action first),
-can't **Stop** in Focus without a next-step note (Stop disabled until non-empty), and the dashboard ■
-on an engaged task routes to Focus so Stop is note-gated in one place. A **bounded activation ramp**
-(5/10-min presets, last choice persisted to `localStorage`) is a deliberate, *closing* pre-work window —
-it counts down, fires a chime + "begin work" notification at zero, and the engagement timer keeps
-running alongside. Ramp is still a local component feature (mirrors the Pomodoro toggle) — no
-schema/reducer change.
-
-**v7.5 — Focus entry + strictness config.** Starting a task no longer drops the user into Focus; **▶**
-starts the engagement timer in place and a separate **◎** row icon is the explicit way into `/focus`.
-The **first-concrete-action** modal now shows the task title, and (since `Modal` portals to `<body>`)
-it renders at full opacity even when the launching row sits inside a dimmed past-session card. A new
-`settings.focusStrict` flag (default **true**, toggled from a **🔒/🔓 Focus: Strict/Relaxed** pill in the
-dashboard *Today* header) governs the note gates: **strict** keeps the first-action note (on Start) and
-the next-step note (on Stop **and on leaving Focus**) *required*; **relaxed** makes both optional. The
-Focus header carries a **theme toggle**, and the **Exit** button is note-gated in strict mode — closing
-the prior escape hatch where Exit bypassed the Stop note (relaxed mode commits any draft as a breadcrumb
-on the way out). Additive settings field; no schema bump.
-
-**v7.6 — Focus Mode execution improvements.** This iteration turns Focus into a first-class execution
-surface built around an explicit state machine, and pushes execution-level metadata off the planning
-dashboard into Focus. There are two Focus surfaces:
-
-- **Selection — `FocusPicker`** (shown when nothing is engaged: fresh entry via the dashboard's **◎ Focus**
-  header button, or right after a Stop, so there's no "No task / Exit" dead-end). It lists today's
-  incomplete tasks grouped by intention (each with its latest `↩` breadcrumb — moved here from the
-  dashboard rows; **drag-to-reorder** within an intention via `REORDER_INTENTION_TASKS`), the
-  **day-context `SessionTimeline` bar** (moved out of the timer surface), and the **day-wide engagement
-  log** (`EngagementTimeline`, reusing `buildEngagementLog` — moved off the dashboard). Picking a task
-  engages it → the execution surface mounts.
-- **Execution — `FocusActive`**, a four-phase machine with exactly one phase owning the centre:
-  **`firstAction` → `ramp` → `working` ⇄ `stopping`**. `firstAction` (strict-only, when the trail has no
-  `entry` note) captures the concrete first move *inline in the card* (the old dashboard modal is gone) via
-  `UPSERT_TASK_ENTRY_NOTE`. `ramp` is the **default entry phase** (we always ease in before the timer)
-  and centres the activation-ramp countdown with the task timer de-emphasised beside it; Begin/Skip →
-  `working`, **Stop** → `stopping`. `working` centres the task count-up (or the Pomodoro block display).
-  A **shared bottom action bar** runs across `firstAction`/`ramp`/`working` (one Stop button → `stopping`;
-  Complete on ramp/working; Pomodoro toggle only while working) — so the first-move step can Stop too.
-  **Stop** swaps the centre for `stopping` — the next-step input — where **Continue** returns without
-  committing, **+ Add breadcrumb** appends an `exit` note mid-session (`APPEND_TASK_CONTEXT_NOTE`), and
-  **Stop** closes the segment (→ back to the picker). The in-card **`PhaseStepper`** shows machine position
-  (drops `firstAction` in relaxed mode) and is **clickable to navigate** — backwards to re-contextualize, or
-  forwards (e.g. `ramp` → Focused / Wrap up), the only gate being you can't skip *out* of `firstAction`.
-  Toggling the **strict/relaxed pill** mid-`firstAction` advances the machine in the same handler so it
-  never strands.
-
-The timer is an **ambient surface** (no hard card) at dashboard width (`max-w-5xl`), with a compact music
-panel on top. **The card body (`TimerTaskList`) is the intention's vertical task list**: the focused task
-expands to host the state machine, the others are compact rows (click to **switch focus** — `switchTo`,
-note-gated in strict). The header carries the intention name, an **intention carousel** (prev/next browses
-intentions *without* engaging — "moving out of the task outside the stop flow"), and an **✎ Edit toggle**
-that drops the list into a **drag-to-reorder** view (`REORDER_INTENTION_TASKS`). Beside the timer, the
-**`EngagementTimeline`** is the *same* day-wide log shown on the picker (shared `TimelineFrame` primitive),
-reused here with the **currently-executing task's cards highlighted**. It's laid out as an **hourly grid**
-bounded by the settings day-limits (`timelineStart/EndMinutes`): each engaged hour is a labelled row (runs
-of empty hours **collapse** into a compact `⋯` gap row) and each Start→Stop is **one card** (one segment =
-one card) placed in the hour it started, with its **start time pinned to the top and end time to the bottom** (open segments read "in progress"; closed durations break
-into hours — "2h 36m"). `entry`/`exit` notes — now **accumulated per engagement** and correlated to each
-segment by timestamp window — sit **outside** the card and are **deletable** (`DELETE_TASK_CONTEXT_NOTE`).
-The grid behaves like a **transcript** — it anchors to the latest engaged hour (a `[data-latest]` row, not
-the empty future) and shows a **jump-to-latest** affordance when scrolled away; hovering a card **portals a
-popover** (so the scroll container can't clip it) with that intention's tasks in order. The
-header surfaces the **re-entry metric** (`computeReentryStats`). A **back arrow** **peeks** the picker (router
-`state.pick`) without ending the engagement (timer keeps running; chooser hidden while peeking). Dashboard
-tidy-up: in **relaxed** mode the engaged **■** **stops in place** instead of routing to Focus (strict still
-routes to capture the required note); the low-value transition-tips card is gone. One small reducer add
-(`DELETE_TASK_CONTEXT_NOTE`); otherwise view/local-state — no schema change.
-
-**v7.4 Phase 2 — durable engagement history.** Every segment close (Stop/Complete/Skip, tasks +
-habits) is **written through** to `LifeContext.engagementHistory` — a durable `EngagementRecord[]`
-keyed by a durable source id (`todoistId` / `Habit.id`) so re-entry latency and streaks survive
-rollover. Bounded by a **90-day rolling prune** (transitional under localStorage). The **re-entry metric**
-(`computeReentryStats`) is computed from this history. Pure helpers in `lib/engagementHistory.ts`. (v7.6:
-the day's engagement log itself moved off the dashboard into the Focus picker as `DayEngagementTimeline`.)
+**Full behavior — the state machine, the two surfaces, the engagement timeline, Pomodoro/ramp, note gates, and the engagement nudge — is documented in [reference/focus-mode.md](./reference/focus-mode.md).** Execution-layer data shapes are in [data-model.md](./data-model.md).
 
 ---
 
 ## 4. Vocabulary
+
+> This table is a quick glossary. [data-model.md](./data-model.md) is the **authoritative** source for entity semantics, invariants, and lifecycle — when the two disagree, data-model.md wins and this table is stale.
 
 | Term | Meaning |
 |---|---|
@@ -264,9 +156,9 @@ The top-right fixed controls -- About, Settings, ThemeToggle -- are rendered by 
 
 A sequential flow captured in `plan.wizardStep` (1-indexed, persists across refreshes). `WizardLayout` wraps every step with a collapsible saved-sessions sidebar, header with step progress pills, and Back/Next footer. An "editing" mode supports returning from the dashboard.
 
-1. **Step 1 -- Sessions** (`Step1Sessions`). Define the day's work sessions **first** (v7.8: moved ahead of Intentions, so the session shape scopes intention planning) on a **drag-calendar** (`SessionEditorTimeline`): drag an empty area to add a block, drag a block to move, drag its edges to resize, click to rename/delete (15-min snapping, advisory overlap tint). v7.9: when Google Calendar is connected, that day's **external events render read-only** (shared positioning math in `lib/timelineEvents`) — meetings inform where sessions go. v7.10: every event surfaces as a chip in a **rail above the editable track** (row-packed so time-overlapping ones stack), kept entirely off the editing surface so nothing overlaps the blocks; chips are hoverable (`title` + the shared `tl-event-*` hover-expand styling). A **season-focus context banner** (`SeasonFocusBanner`, moved here from the Intentions step in v7.9) sits at the top: the active season's arc + supporting-goal chips and today's recurring habits (each with a ✓ to mark done). The day's sessions live on `DayPlan.sessionSlots` (seeded from the last-used day) and drive every surface thereafter. **Session Templates** (from the Life section) appear as quick-apply chips — applying one replaces the day's sessions (and clears assignments, with a confirm if any exist). A "Save as template" affordance persists the current layout to `LifeContext.sessionTemplates`. Granular reducer actions (`ADD_/UPDATE_/REMOVE_DAY_SESSION`, `APPLY_SESSION_TEMPLATE`) keep session ids stable so assignments survive a Back-edit. v7.10: when Google Calendar is *not* connected, a dismissible **calendar nudge** sits above the editor ("connect to see your meetings here"); dismissal persists to `settings.calendarNudgeDismissed`. (The old non-persistent integrations banner in Step 2 was removed — Todoist is guaranteed by the Welcome gate, and calendar encouragement lives here where it pays off.)
+1. **Step 1 -- Sessions** (`Step1Sessions`). The day's work sessions are defined **first**, so the session shape scopes the rest of planning, on a **drag-calendar** (`SessionEditorTimeline`): drag an empty area to add a block, drag a block to move, drag its edges to resize, click to rename/delete (15-min snapping, advisory overlap tint). A **season-focus context banner** (`SeasonFocusBanner`) sits at the top — the active season's arc + supporting-goal chips and today's recurring habits (each with a ✓ to mark done). The day's sessions live on `DayPlan.sessionSlots` (seeded from the last-used day) and drive every surface thereafter. When Google Calendar is connected, that day's **external events surface as chips in a row-packed rail above the editable track** (time-overlapping ones stack onto separate rows; hover raises and expands a chip), kept entirely off the editing surface so nothing overlaps the session blocks — meetings inform where sessions go without cluttering the edit. When it is *not* connected, a dismissible **calendar nudge** sits above the editor ("connect to see your meetings here"); dismissal persists to `settings.calendarNudgeDismissed`. **Session Templates** (from the Life section) appear as quick-apply chips — applying one replaces the day's sessions and clears assignments (with a confirm if any exist); a "Save as template" affordance persists the current layout to `LifeContext.sessionTemplates`. Granular reducer actions (`ADD_/UPDATE_/REMOVE_DAY_SESSION`, `APPLY_SESSION_TEMPLATE`) keep session ids stable so assignments survive a Back-edit.
 
-2. **Step 2 -- Intentions** (`Step2Intentions`). Two phases: (a) write down intentions, (b) sequentially map each to Todoist tasks via the embedded `TodoistPanel` (Link/Unlink buttons). The current intention's linked tasks render in `linkedTaskIds` order and are **drag-reorderable** (`REORDER_INTENTION_TASKS`); linking more than 5 tasks to one intention surfaces a scope-creep nudge ("this is probably an epic — split it"). The focused "Current" card can be **collapsed** to fold all not-yet-mapped intentions (the current one included) into a single drag-reorderable list (`REORDER_INTENTIONS`); picking "Map →" re-focuses one. Mapped intentions become collapsible panels showing their linked tasks. The step also fires `REFRESH_TODAYS_HABITS` to populate today's habits (both kinds) as `TodaysHabitInstance` rows, showing a chip count; each season-banner habit chip has a ✓ to mark it done for today (`useCompleteHabitInstance`). The `TodoistPanel` renders a non-actionable "Habit" label on rows backing a `TodaysHabitInstance`, and its task rows support **drag-reorder within a sibling group** (writes Todoist `child_order` via `item_reorder`). Each intention row has archive-to-backlog and delete buttons (both unschedule linked Todoist tasks via `useIntentionRemoval`). (The season-focus context banner moved to Step 1 in v7.9, but recurring-focus chips it surfaces still add intentions here in plan order.)
+2. **Step 2 -- Intentions** (`Step2Intentions`). Two phases: (a) write down intentions, (b) sequentially map each to Todoist tasks via the embedded `TodoistPanel` (Link/Unlink buttons). The current intention's linked tasks render in `linkedTaskIds` order and are **drag-reorderable** (`REORDER_INTENTION_TASKS`); linking more than 5 tasks to one intention surfaces a scope-creep nudge ("this is probably an epic — split it"). The focused "Current" card can be **collapsed** to fold all not-yet-mapped intentions (the current one included) into a single drag-reorderable list (`REORDER_INTENTIONS`); picking "Map →" re-focuses one. Mapped intentions become collapsible panels showing their linked tasks. The step also fires `REFRESH_TODAYS_HABITS` to populate today's habits (both kinds) as `TodaysHabitInstance` rows, showing a chip count; each season-banner habit chip has a ✓ to mark it done for today (`useCompleteHabitInstance`). The `TodoistPanel` renders a non-actionable "Habit" label on rows backing a `TodaysHabitInstance`, and its task rows support **drag-reorder within a sibling group** (writes Todoist `child_order` via `item_reorder`). Each intention row has archive-to-backlog and delete buttons (both unschedule linked Todoist tasks via `useIntentionRemoval`). Intentions seeded by the Step 1 season banner's recurring-focus chips appear in this list in plan order.
 
 3. **Step 3 -- Refine** (`Step3Refine`). Per-intention sequential flow: categorize each linked task as **main** or **background**, set an **estimate** (preset pills or custom). Background tasks clamp to `taskCapDefaults.manualBackground`. Tasks > 60 min trigger a nudge to break down via the TodoistPanel. v7.4: **main** tasks also get an optional **"First concrete action"** input (`SET_TASK_FIRST_ACTION` → `LinkedTask.firstAction`) — a concrete entry point that seeds the Focus Mode re-entry breadcrumb. Strictly optional; never gates advancing.
 
@@ -325,11 +217,11 @@ Manages:
 - **`history`** -- array of `SavedDayPlan` entries for past sessions.
 - **`life`** -- persistent `LifeContext` (seasons, habits, activeSeasonId, backlog, rest cues, session templates (v7.1), engagementHistory (v7.4 Phase 2 — durable, 90-day-pruned engagement archive)).
 
-**Architecture:** `useReducer` with a ~60-action discriminated union. State is initialized lazily via `loadInitialState()` which calls `loadPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day rollover in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
+**Architecture:** `useReducer` over a large discriminated-union `Action` type (full catalog in [data-model.md](./data-model.md) §3). State is initialized lazily via `loadInitialState()` which calls `loadPlan()` + `loadLifeContext()` + `loadHistory()` + `loadSettings()` and handles day rollover in one place. Four `useEffect` hooks persist each slice back to `localStorage` on every change.
 
 **Plan date freshness + rollover:** `loadPlan()` returns the current-schema persisted plan without a date gate. If the date is stale, `loadInitialState` runs `harvestStalePlan(plan)` to compute `BacklogEntry[]` for unfinished intentions, appending them to `life.backlog` with `reason: 'rollover'`. No automatic save to `SavedDayPlan` history at rollover -- the backlog preserves the meaningful unfinished part. Manual `SAVE_DAY` is the only writer to history. Auto-rollover does NOT touch Todoist -- yesterday's tasks remain visibly overdue.
 
-**Schema guard (floor-and-migrate from 7.1):** every persisted slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` (current `SCHEMA_VERSION` = `7.6`, a JSON float; constants + gate helpers in `src/lib/schema.ts`). The posture is a **supported floor**, not exact-match: `MIN_SUPPORTED_SCHEMA` (= `7.1`) is the oldest version understood. On load, an artifact stamped within `[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]` is **accepted and migrated forward** to the current shape via the `migrateToCurrent` seam; anything **below the floor** (or unstamped) is rejected — a stale/foreign plan/settings/life slice becomes fresh defaults, `loadHistory` drops out-of-range saved plans, and imports (Full Backup / Sessions) are refused. The **7.1 → 7.4** step (v7.4 Phase 2, the first real bump) folds the old `firstAction`/`reentryNote` scalars into `contextTrail` and defaults `life.engagementHistory`; saved/imported plans go through the same step via `migrateSavedPlan`. Helpers `isSupportedSchemaVersion` (numeric, exported — so the DataManagement import path gates identically to the loaders) and `migrateToCurrent` centralize the logic. **Non-additive changes are a first-class option:** bump `SCHEMA_VERSION` and add a single forward step at the seam — compat is kept from the floor upward only, and the floor is raised (deleting now-dead steps) when carrying an old version forward gets too expensive. The deep v1→7.1 chain was deleted for that cost reason (see [history/plan_v7/plan_v7.3.md](./history/plan_v7/plan_v7.3.md)) and lives in git history. See [data-model.md](./data-model.md) §4.
+**Schema guard (floor-and-migrate):** every persisted slice (plan / settings / life) and every saved-session plan is stamped with `_schemaVersion` on write; on load, an artifact within the supported range (`[MIN_SUPPORTED_SCHEMA, SCHEMA_VERSION]`, both in `src/lib/schema.ts`) is **accepted and migrated forward** via the `migrateToCurrent` seam, while anything below the floor (or unstamped) is rejected — the slice falls back to fresh defaults, out-of-range saved plans are dropped, and imports are refused. The numeric gate `isSupportedSchemaVersion` is shared by the loaders and the DataManagement import path so they stay aligned. Non-additive changes are a first-class option (bump the version, add one forward step; raise the floor and delete dead steps when an old step gets expensive). **The version numbers, the individual migration steps, and the compatibility posture are owned by [data-model.md](./data-model.md) §4 — see there, not here.**
 
 **Cross-slice invariants the reducer enforces:**
 - Activating a season auto-deactivates the previously active one.
@@ -442,25 +334,19 @@ Season-scoped recurring *work-threads* on `Season.recurringFocuses[]` (`{ id, ti
 
 ### Habit-Task Sync
 
-**File:** `src/lib/habitsTodoistSync.ts`
+**Core file:** `src/lib/habitsTodoistSync.ts` (**'habit' kind only** — micro-gaps never touch Todoist).
+Saving a 'habit'-kind entry syncs a recurring Todoist task (`buildDueString` → `ensureHabitsProject` →
+`resolveHabitProjectId` → `syncHabitToTodoist`), resolved via a durable-marker adoption ladder so a
+link-less habit adopts an existing task instead of duplicating. A day-of layer (`useTodaysHabitsSync`)
+feeds `computeTodaysHabitInstances` + `computeTodaysMicroGapInstances` into `REFRESH_TODAYS_HABITS` and
+prunes stale rows. A central `ReconciliationProvider` (mounted between `TodoistProvider` and `AppRoutes`)
+runs needs-sync repair + overdue bump on hydration and focus, surfaced app-wide by the `HabitSyncChip`.
+Skip posts a Todoist comment then completes; reschedule is always in-place; delete propagates to Todoist
+best-effort via `useHabitMutations`.
 
-**Sync layer** (on 'habit'-kind save — v6.7): `buildDueString(habit)` -> `ensureHabitsProject(...)` -> `resolveHabitProjectId(...)` -> `syncHabitToTodoist(...)`. Creates/updates/moves the recurring Todoist task (timed → "every day at HH:mm", untimed → "every day"). Self-heals stale project references and recreates deleted tasks. Sync failures are non-blocking. **Micro-gaps never sync** — `syncHabitToTodoist`/`findNeedsSyncHabits`/`findOverdueHabits` early-skip them.
-
-**Delete propagation** (`useHabitMutations`, not the reducer — shared by HabitsLibrary + LifeView): deleting a habit also removes its backing recurring Todoist task (`todoistActions.deleteTask`), and editing a habit's kind from `habit` → `micro-gap` deletes the now-orphaned task (HabitForm drops `todoistTaskId` for non-habit kinds). Both are best-effort / non-blocking — a failure leaves an orphan task (logged), never blocking the local change. Pausing a habit (`TOGGLE_HABIT_ACTIVE`) deliberately leaves the Todoist task intact, since deactivation is reversible.
-
-**Day-of layer** (`useTodaysHabitsSync`, on Step 1 + dashboard mount): `computeTodaysHabitInstances(...)` ('habit' kind, Todoist-gated) + `computeTodaysMicroGapInstances(...)` ('micro-gap' kind, no Todoist) both feed `REFRESH_TODAYS_HABITS`. Honors season scope; timed habits get `targetTime`. **v6.8: a due-today habit is always surfaced regardless of `windowBehavior`** — `strict` no longer hides a past-window row; instead it stays a `planned`, actionable instance that surfaces *present* as "missed" (greyed) via the derived `isHabitInstanceMissed(...)` helper (so the day's record is kept and a habit done before planning is still completable). v6.8 also *rescues* a timed **lenient** ("surface anyway") habit whose time has passed but whose recurring task Todoist rolled forward to tomorrow (today's slot is gone) — so a habit created/edited after its target time still surfaces today (unless already completed/skipped). No session auto-assignment -- `targetTime` drives timeline positioning only. Because `REFRESH_TODAYS_HABITS` only appends/refreshes (never removes), the hook also runs `findStaleTodaysHabitInstances(...)` → `PRUNE_STALE_HABIT_INSTANCES` (gated on `tasksHydrated`) to drop `planned` instances whose Todoist task was completed / moved off today out-of-band — sharing the `isLenientPastWindow` predicate with the compute path so a rescued row isn't pruned right back out.
-
-**Central reconciliation** (v6.5; **'habit' kind only** since v6.7 — micro-gaps never sync, [`ReconciliationProvider`](../src/context/ReconciliationContext.tsx)): both the overdue bump (v6.4) and the needs-sync repair (v6.1, previously manual-only on `/habits`) are now driven from a single provider mounted between `TodoistProvider` and `AppRoutes`. Detection uses `findOverdueHabits(...)` and `findNeedsSyncHabits(...)`; the action is `triggerReconcile()` which runs needs-sync first (creating/recreating Todoist tasks for 'habit'-kind entries without a live link) then overdue bump. The provider auto-fires on first hydration (when Todoist is configured + `tasksHydrated` — so a legitimately empty task list still triggers needs-sync) and on window focus (gated by 5-min staleness); `useHabitReconciliation()` exposes the status + manual trigger to consumers. Surfaces:
-
-  - **Step 1** no longer fires reconcile directly — the provider handles it.
-  - **HabitsLibrary** "Migrate / Re-sync" button now delegates to `triggerReconcile()`.
-  - **`HabitSyncChip`** mounted in the shared `HeaderControls` surfaces needs-sync count, error state, and in-flight pulse across the whole app; click navigates to `/habits`.
-
-**Overdue bump details** (v6.4): `reconcileOverdueHabits(...)` bumps each overdue habit's Todoist task via `updateTask({ due_string, due_lang, due_datetime | due_date })` — re-passing the existing recurrence rule so Todoist's engine has unambiguous "rule unchanged, next occurrence is this date" semantics — and returns a patch map populated from Todoist's authoritative server responses so `computeTodaysHabitInstances` can run against the bumped state without waiting for React to re-render. Date comparisons in both helpers go through `dueDateLocal(...)` which handles Todoist's floating vs fixed-timezone semantics so late-evening habits in non-UTC zones aren't misclassified. **Skip-as-completion** (v6.4): `SKIP_HABIT_INSTANCE` in the UI posts a `"Skipped via Orchestrate on <date>"` comment on the Todoist task (so the skip is traceable in Todoist's own history — Todoist has no native skip semantic), then fires `completeTask` so the recurrence engine advances cleanly. The Orchestrate-side `'skipped'` status preserves the user-facing distinction.
-
-**Reschedule semantics** (v6.4; **'habit'-kind only** — micro-gaps are untimed and not reschedulable): `RESCHEDULE_HABIT_INSTANCE` is **always in-place** — it updates `targetTime`, stamps `rescheduledAt`, and appends a `RescheduleEventEntry` (`{ at, fromTime?, toTime? }`) to the instance's `rescheduleHistory`. The instance keeps its `id`, `status`, and `segments` (an engaged instance keeps its open segment running at the new time). Every reschedule is recorded regardless of engagement, and surfaces as a "⤴ … {from} → {to} · Rescheduled" row in the dashboard engagement log — *not* as a tag in the Today view. The recurring Todoist task's `due_string` stays unchanged. (This replaced an earlier v6.3 clone-on-engagement mechanic; the historical `'unfinished'` status is gone.)
-
-**Habits Library** (`/habits`): groups active habits into **Habits** and **Micro-gaps** sections (+ collapsible Inactive). Shows a "needs sync" banner for **'habit'-kind** entries that are unsynced or whose Todoist task is missing (micro-gaps never sync, so they're excluded); the banner **names each affected habit** as a chip (a ⚠ marks a task that's gone missing in Todoist) and offers — alongside Migrate / Re-sync — a confirm-gated **bulk "Delete habits"** escape hatch for habits the user would rather drop than push to Todoist. Bulk sync resolves the default project once to avoid duplicate creation. Habit-save is locked out during migration to prevent races. CRUD (create / edit / pause / delete) and the create/edit/anchor-delete **modal stack** run through the shared `useHabitForms` hook (over `useHabitMutations`), also used by `LifeView`, so the two surfaces share one mutation + form path; the needs-sync banner and bulk-delete modal stay library-only.
+**Full module walkthrough — the sync/delete/day-of/reconcile layers, overdue bump, skip/reschedule
+semantics, and the Habits Library — is in [reference/habits-sync.md](./reference/habits-sync.md).**
+Entity semantics + reducer actions are in [data-model.md](./data-model.md).
 
 ### Intentions Backlog
 

@@ -217,7 +217,7 @@ SessionTemplate  1 --> N  SessionSlot (LifeContext.sessionTemplates; quick-appli
 
 ## 3. Reducer Action Catalog
 
-All state mutations flow through the `DayPlanContext` reducer (`src/context/DayPlanContext.tsx`). The `Action` type is a discriminated union of ~57 variants.
+All state mutations flow through the `DayPlanContext` reducer (`src/context/DayPlanContext.tsx`). The `Action` type is a discriminated union of ~70 variants.
 
 ### 3.1 Intention Actions
 
