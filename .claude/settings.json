@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "g=\"graphify-out/graph.json\"; [ -f \"$g\" ] || exit 0; n=$(find docs CLAUDE.md README.md -name \"*.md\" -newer \"$g\" 2>/dev/null | wc -l | tr -d \" \"); if [ \"$n\" -ge 3 ] || { [ \"$n\" -ge 1 ] && [ -n \"$(find \"$g\" -mtime +7 2>/dev/null)\" ]; }; then echo \"Knowledge graph is stale: $n doc file(s) changed since the last graph build. Consider running /graphify . --update (see docs/graphify.md). Below-threshold changes are fine to ignore.\"; fi",
+            "timeout": 15,
+            "statusMessage": "Checking knowledge-graph staleness"
+          }
+        ]
+      }
+    ]
+  }
+}
