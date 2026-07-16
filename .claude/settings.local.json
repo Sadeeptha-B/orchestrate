@@ -11,7 +11,8 @@
       "PowerShell(npx tsc -p functions/tsconfig.json --noEmit 2>&1 | Select-Object -Last 15; \"functions tsc exit: $LASTEXITCODE\")",
       "PowerShell(npm run build)",
       "PowerShell(npm run lint)",
-      "Bash(npx wrangler *)"
+      "Bash(npx wrangler *)",
+      "WebSearch"
     ]
   }
 }
