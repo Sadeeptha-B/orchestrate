@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { useTodoistData, useTodoistActions } from '../../hooks/useTodoist';
+import { useTodoistGate } from '../../hooks/useTodoistGate';
 import type { TodoistTask, TodoistProject, TodoistSection } from '../../hooks/useTodoist';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { addMinutesToTime, timeToMinutes, todayISO } from '../../lib/time';
@@ -196,6 +197,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
         refreshProjects,
         refreshSections,
     } = useTodoistActions();
+    const { writesBlocked } = useTodoistGate();
 
     const { plan, life, dispatch } = useDayPlan();
 
@@ -304,20 +306,22 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
 
     // Wrap complete/delete to also update the day plan
     const handleCompleteTask = useCallback(
-        async (taskId: string) => {
+        async (taskId: string): Promise<boolean> => {
             const linked = plan.linkedTasks.find((lt) => lt.todoistId === taskId);
+            const instanceId = habitInstanceByTodoistId.get(taskId);
+            const completed = await completeTask(taskId);
+            if (!completed) return false;
             if (linked && !linked.completed) {
-                // Snapshot the title before Todoist removes it from active tasks
+                // Snapshot the title before Todoist removes it from active tasks.
                 const title = tasks.find((t) => t.id === taskId)?.content;
                 dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: taskId, titleSnapshot: title });
             }
-            const instanceId = habitInstanceByTodoistId.get(taskId);
-            const completed = await completeTask(taskId);
             // If this task backs a habit instance, keep the Habits surface in sync only after the
             // recurring Todoist occurrence actually advanced.
-            if (instanceId && completed) {
+            if (instanceId) {
                 dispatch({ type: 'COMPLETE_HABIT_INSTANCE', instanceId, now: new Date().toISOString() });
             }
+            return true;
         },
         [completeTask, plan.linkedTasks, tasks, dispatch, habitInstanceByTodoistId],
     );
@@ -491,6 +495,7 @@ export function TodoistPanel({ mode = 'full', onSetup, linking, filterToTaskIds,
                         onReorderSiblings={handleReorderSiblings}
                         subTaskMap={subTaskMap}
                         compact={mode === 'compact'}
+                        completionDisabled={writesBlocked}
                         linking={linking}
                         persistentLinks={persistentLinks}
                         estimateMap={estimateMap}
@@ -573,6 +578,7 @@ function ProjectTreeNode({
     onReorderSiblings,
     subTaskMap,
     compact,
+    completionDisabled,
     linking,
     persistentLinks,
     estimateMap,
@@ -580,7 +586,7 @@ function ProjectTreeNode({
 }: {
     node: ProjectNode;
     depth: number;
-    onComplete: (id: string) => void;
+    onComplete: (id: string) => Promise<boolean>;
     onCreateTask: (content: string, opts?: { project_id?: string }) => Promise<unknown>;
     onDeleteTask: (id: string) => void;
     onDeleteProject: (id: string) => void;
@@ -590,6 +596,7 @@ function ProjectTreeNode({
     onReorderSiblings: (orderedIds: string[]) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
+    completionDisabled: boolean;
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
     estimateMap: Map<string, number>;
@@ -755,6 +762,7 @@ function ProjectTreeNode({
                             reorder={unsectionedReorder(task.id, unsectionedTasks.length > 1)}
                             subTaskMap={subTaskMap}
                             compact={compact}
+                            completionDisabled={completionDisabled}
                             linking={linking}
                             persistentLinks={persistentLinks}
                             estimateMap={estimateMap}
@@ -781,6 +789,7 @@ function ProjectTreeNode({
                                 onReorderSiblings={onReorderSiblings}
                                 subTaskMap={subTaskMap}
                                 compact={compact}
+                                completionDisabled={completionDisabled}
                                 persistentLinks={persistentLinks}
                                 estimateMap={estimateMap}
                                 habitTodoistIds={habitTodoistIds}
@@ -804,6 +813,7 @@ function ProjectTreeNode({
                             onReorderSiblings={onReorderSiblings}
                             subTaskMap={subTaskMap}
                             compact={compact}
+                            completionDisabled={completionDisabled}
                             linking={linking}
                             persistentLinks={persistentLinks}
                             estimateMap={estimateMap}
@@ -830,6 +840,7 @@ function SectionGroup({
     onReorderSiblings,
     subTaskMap,
     compact,
+    completionDisabled,
     linking,
     persistentLinks,
     estimateMap,
@@ -838,7 +849,7 @@ function SectionGroup({
     section: TodoistSection;
     tasks: TodoistTask[];
     depth: number;
-    onComplete: (id: string) => void;
+    onComplete: (id: string) => Promise<boolean>;
     onDelete: (id: string) => void;
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
@@ -846,6 +857,7 @@ function SectionGroup({
     onReorderSiblings: (orderedIds: string[]) => void;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
+    completionDisabled: boolean;
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
     estimateMap: Map<string, number>;
@@ -889,6 +901,7 @@ function SectionGroup({
                         reorder={reorder(task.id, tasks.length > 1)}
                         subTaskMap={subTaskMap}
                         compact={compact}
+                        completionDisabled={completionDisabled}
                         linking={linking}
                         persistentLinks={persistentLinks}
                         estimateMap={estimateMap}
@@ -913,6 +926,7 @@ function TaskRow({
     reorder,
     subTaskMap,
     compact,
+    completionDisabled,
     linking,
     persistentLinks,
     estimateMap,
@@ -920,7 +934,7 @@ function TaskRow({
 }: {
     task: TodoistTask;
     depth: number;
-    onComplete: (id: string) => void;
+    onComplete: (id: string) => Promise<boolean>;
     onDelete: (id: string) => void;
     onSchedule: (taskId: string, startTime: string, endTime: string) => void;
     onClearSchedule: (taskId: string) => void;
@@ -930,6 +944,7 @@ function TaskRow({
     reorder?: RowReorderState;
     subTaskMap: Map<string, TodoistTask[]>;
     compact: boolean;
+    completionDisabled: boolean;
     linking?: LinkingProps;
     persistentLinks: Map<string, string>;
     estimateMap: Map<string, number>;
@@ -1061,8 +1076,12 @@ function TaskRow({
                 )}
                 {/* Completion button (always visible) */}
                 <button
-                    onClick={(e) => {
+                    onClick={async (e) => {
+                        // Capture the button rect *before* awaiting — React nulls e.currentTarget
+                        // once the handler's synchronous phase returns, so reading it post-await throws.
                         const rect = e.currentTarget.getBoundingClientRect();
+                        const completed = await onComplete(task.id);
+                        if (!completed) return;
                         confetti({
                             particleCount: 40,
                             spread: 60,
@@ -1075,10 +1094,10 @@ function TaskRow({
                                 y: rect.top / window.innerHeight,
                             },
                         });
-                        onComplete(task.id);
                     }}
-                    className="w-4 h-4 mt-0.5 flex-shrink-0 rounded-full border border-border hover:border-accent hover:bg-accent/10 transition-colors cursor-pointer"
-                    title="Complete"
+                    disabled={completionDisabled}
+                    className={`w-4 h-4 mt-0.5 flex-shrink-0 rounded-full border border-border transition-colors ${completionDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:border-accent hover:bg-accent/10 cursor-pointer'}`}
+                    title={completionDisabled ? 'Reconnect Todoist to complete tasks' : 'Complete'}
                 />
                 <div className="min-w-0 flex-1">
                     {isEditing ? (
@@ -1250,6 +1269,7 @@ function TaskRow({
                         reorder={childReorder(child.id, children.length > 1)}
                         subTaskMap={subTaskMap}
                         compact={compact}
+                        completionDisabled={completionDisabled}
                         linking={linking}
                         persistentLinks={persistentLinks}
                         estimateMap={estimateMap}

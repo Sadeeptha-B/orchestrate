@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card } from '../ui/Card';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
+import { useTodoistGate } from '../../hooks/useTodoistGate';
 import { useHabitReschedule } from '../../hooks/useHabitReschedule';
 import { useToggleHabitInstance } from '../../hooks/useToggleHabitInstance';
 import { useCompleteHabitInstance } from '../../hooks/useCompleteHabitInstance';
@@ -34,6 +35,7 @@ const SECTION_HEADING = 'text-sm font-semibold text-text-light uppercase trackin
 export function HabitInstanceCard() {
     const { plan, life, dispatch } = useDayPlan();
     const { completeTask, createTaskComment } = useTodoistActions();
+    const { writesBlocked } = useTodoistGate();
     const reschedule = useHabitReschedule();
     const handleStartStop = useToggleHabitInstance();
     const completeInstance = useCompleteHabitInstance();
@@ -80,8 +82,8 @@ export function HabitInstanceCard() {
             <li
                 key={i.id}
                 className={`px-1.5 py-1 rounded transition-colors ${isEngaged ? 'bg-amber-50/50 dark:bg-amber-900/10'
-                        : isTerminal || isMissed ? 'opacity-60'
-                            : ''
+                    : isTerminal || isMissed ? 'opacity-60'
+                        : ''
                     }`}
             >
                 {/* Line 1: icon, title, pills, live timer */}
@@ -145,8 +147,9 @@ export function HabitInstanceCard() {
                                 </button>
                                 <button
                                     onClick={() => handleComplete(i)}
-                                    className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-success transition-colors cursor-pointer"
-                                    title="Mark complete"
+                                    disabled={writesBlocked}
+                                    className={`w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light transition-colors ${writesBlocked ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface-dark hover:text-success cursor-pointer'}`}
+                                    title={writesBlocked ? 'Reconnect Todoist to complete habits' : 'Mark complete'}
                                     aria-label="Complete habit"
                                 >
                                     ✓
@@ -161,8 +164,9 @@ export function HabitInstanceCard() {
                                 </button>
                                 <button
                                     onClick={() => handleSkip(i)}
-                                    className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light hover:bg-surface-dark hover:text-red-400 transition-colors cursor-pointer"
-                                    title="Skip for today"
+                                    disabled={writesBlocked}
+                                    className={`w-5 h-5 flex items-center justify-center rounded text-[10px] text-text-light transition-colors ${writesBlocked ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface-dark hover:text-red-400 cursor-pointer'}`}
+                                    title={writesBlocked ? 'Reconnect Todoist to skip habits' : 'Skip for today'}
                                     aria-label="Skip"
                                 >
                                     ✕

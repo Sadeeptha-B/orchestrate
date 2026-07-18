@@ -136,3 +136,5 @@ If a trigger fires, reach for the **smallest sufficient option**, not a rebuild.
 The companion doc, [engagement_record_strategy.md](./engagement_record_strategy.md), is the most concrete near-term driver of this question. Its **option E** (Google Calendar write via OAuth) is the single feature that most clearly benefits from infrastructure — a server holding the refresh token turns a fragile browser-only flow into a robust one.
 
 But note: that doc's **option A** (durable `life.engagementHistory`) needs **no backend at all** — it works within the current localStorage model. So durable engagement records and the persistence-migration question can, and should, proceed on independent timelines. Building option A does not wait on anything in this document.
+
+The multi-surface sequel to this document — the ambient Focus window, the browser extension, the LWW single-writer rules those surfaces demand, and the eventual Access→app-owned-sign-in swap — is [multi_surface_and_auth.md](./multi_surface_and_auth.md). Its conclusion extends this one: the shipped D1 sidecar covers that entire horizon with additive changes; no option-F-style migration appears on it.

@@ -133,7 +133,7 @@ export interface TodoistActionsValue {
     /** Reorder sibling tasks by writing new `child_order` values (1-based). Optimistic. */
     reorderTasks: (items: { id: string; child_order: number }[]) => Promise<boolean>;
     completeTask: (taskId: string) => Promise<boolean>;
-    reopenTask: (taskId: string) => Promise<void>;
+    reopenTask: (taskId: string) => Promise<boolean>;
     deleteTask: (taskId: string) => Promise<boolean>;
     createTaskComment: (taskId: string, content: string) => Promise<void>;
     createProject: (name: string, opts?: CreateProjectOpts) => Promise<TodoistProject | null>;
@@ -480,8 +480,8 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
         }
     }, [handleApiError, refreshTasks]);
 
-    const reopenTask = useCallback(async (taskId: string) => {
-        if (!isConfiguredRef.current) return;
+    const reopenTask = useCallback(async (taskId: string): Promise<boolean> => {
+        if (!isConfiguredRef.current) return false;
         try {
             await apiFetch('/sync', {
                 method: 'POST',
@@ -491,8 +491,10 @@ export function TodoistProvider({ children }: { children: ReactNode }) {
                 ]))}`,
             });
             await refreshTasks({ force: true });
+            return true;
         } catch (e) {
             handleApiError(e, 'Failed to reopen task');
+            return false;
         }
     }, [refreshTasks, handleApiError]);
 
