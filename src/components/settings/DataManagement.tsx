@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistActions, useTodoistData } from '../../hooks/useTodoist';
 import { useDataImport } from '../../hooks/useDataImport';
@@ -8,6 +9,8 @@ import { RestoreConfirmModal } from '../RestoreConfirmModal';
 import { useConfirmModal } from '../../hooks/useConfirmModal';
 import { downloadJSON } from '../../lib/download';
 import { downloadFullBackup } from '../../lib/backup';
+import { clearLocalStores, flushPendingAndWait } from '../../lib/cloudSync';
+import { setStoredUser } from '../../lib/identity';
 
 interface DataManagementProps {
     /** Optional handler to surface the Saved Sessions sidebar (closes modal + reveals panel). */
@@ -29,11 +32,14 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
     } = useDataImport();
     const { isConfigured } = useTodoistData();
     const { deleteTask } = useTodoistActions();
+    const navigate = useNavigate();
     const [resetInfo, setResetInfo] = useState<string | null>(null);
+    const [signingOut, setSigningOut] = useState(false);
     const dayPlanInputRef = useRef<HTMLInputElement>(null);
     const backupInputRef = useRef<HTMLInputElement>(null);
     const confirmResetDay = useConfirmModal<true>();
     const confirmResetAll = useConfirmModal<true>();
+    const confirmSignOut = useConfirmModal<true>();
     // Reset Everything options, re-defaulted each time the modal opens.
     const [backupBeforeReset, setBackupBeforeReset] = useState(true);
     const [deleteHabitTasks, setDeleteHabitTasks] = useState(false);
@@ -110,6 +116,32 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
     };
 
     const exportFullBackup = () => downloadFullBackup({ settings, life, history, plan });
+
+    // Re-enter the first-run onboarding walkthrough deliberately (integrations stay connected; the
+    // steps auto-reflect what's already connected, so it's a quick re-confirm). onboardingComplete
+    // is a settings flag synced per-account, so this re-runs on every device.
+    const handleRestartWalkthrough = () => {
+        dispatch({ type: 'UPDATE_SETTINGS', settings: { onboardingComplete: false } });
+        navigate('/');
+    };
+
+    // Sign out = end the Cloudflare Access session. Non-destructive to server data: D1 rows and the
+    // KV integration tokens are untouched and return on next sign-in. We flush any unpushed local
+    // edits up first, then clear the local working copy (localStorage isn't namespaced by account, so
+    // leaving it risks bleeding into the next Access user on a shared browser), forget the identity
+    // stamp, and hard-redirect to the Access logout endpoint (served on this origin). The full-page
+    // navigation prevents React from re-persisting — so no wipe is pushed to the server.
+    const handleSignOut = async () => {
+        setSigningOut(true);
+        try {
+            await flushPendingAndWait();
+        } catch {
+            // best-effort — proceed with sign out even if the final push fails
+        }
+        clearLocalStores();
+        setStoredUser('');
+        window.location.href = '/cdn-cgi/access/logout';
+    };
 
     const exportAllSessions = () => {
         downloadJSON(history, `orchestrate-all-sessions.json`);
@@ -216,6 +248,35 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                 </div>
             </div>
 
+            <div className="space-y-2 pt-3 border-t border-border">
+                <h4 className="text-xs font-semibold text-text-light uppercase tracking-wider">
+                    Account
+                </h4>
+                <p className="text-xs text-text-light">
+                    Re-run the setup walkthrough (your integrations stay connected), or sign out of this
+                    device. Signing out keeps your data synced to your account — it comes back when you
+                    sign in again.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRestartWalkthrough}
+                        title="Go through the connect-your-integrations walkthrough again"
+                    >
+                        Restart setup walkthrough
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => confirmSignOut.open(true)}
+                        title="End your session on this device (your data stays synced to your account)"
+                    >
+                        Sign out
+                    </Button>
+                </div>
+            </div>
+
             <input
                 ref={dayPlanInputRef}
                 type="file"
@@ -295,6 +356,9 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     adopts its old task instead of duplicating it. Delete them below if you'd
                     rather leave Todoist clean.
                 </p>
+                <p className="text-sm text-text-light mb-3">
+                    You stay signed in and are taken through the quick setup walkthrough again.
+                </p>
                 <div className="space-y-2 mb-3">
                     <label className="flex items-start gap-2 text-sm cursor-pointer">
                         <input
@@ -340,6 +404,20 @@ export function DataManagement({ onShowSavedSessions }: DataManagementProps) {
                     </label>
                 </div>
                 <p className="text-sm text-text-light mb-4">This cannot be undone.</p>
+            </ConfirmModal>
+
+            <ConfirmModal
+                open={confirmSignOut.value !== null}
+                onClose={confirmSignOut.close}
+                onConfirm={handleSignOut}
+                title="Sign out?"
+                confirmLabel={signingOut ? 'Signing out…' : 'Sign out'}
+            >
+                <p className="text-sm text-text-light mb-4">
+                    You'll be signed out of this device and sent to the login screen. Your data stays
+                    synced to your account and comes back when you sign in again — this doesn't delete
+                    anything or disconnect your integrations. The local copy on this device is cleared.
+                </p>
             </ConfirmModal>
         </div>
     );

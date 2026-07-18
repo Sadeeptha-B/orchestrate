@@ -83,7 +83,7 @@ Eleven routes, all defined in `AppRoutes` inside `App.tsx`:
 | `/guide` | `UserGuide` | Always reachable. In-app user guide. Linked from the About modal. |
 | `*` | Redirect to `/` | Catch-all |
 
-Life routes are always reachable (no `setupComplete` gate) — `setupComplete` is a daily flag while seasons/habits are durable.
+Life routes are always reachable (no `setupComplete` gate) — `setupComplete` is a daily flag while seasons/habits are durable. The full gating logic behind the `/`, `/setup`, and `/focus` guards — onboarding vs. the daily loop, and where the Todoist requirement applies — is in [reference/onboarding-and-gating.md](./reference/onboarding-and-gating.md).
 
 ### 3.3 Focus Mode
 
@@ -131,6 +131,8 @@ Onboarding (first run, per account) --> Welcome (hub) --> Wizard (5 steps) --> D
 ### 5.0 Onboarding (first run — v7.10)
 
 Before the daily loop, a one-time **onboarding flow** (`src/components/onboarding/Onboarding.tsx`) renders at `/` until `settings.onboardingComplete` is set (synced via D1, so it runs once per *account*, not per device). Three steps: what Orchestrate is (reuses `AboutContent`) → **connect Todoist** (required — Continue is disabled until `/status` reports configured) → **connect Google Calendar** (encouraged, skippable; the OAuth `return=home` target lands the callback back in the flow). Steps auto-reflect already-connected integrations, so an existing account clicks straight through. The reusable connect UIs are `TodoistConnectCard` and `GoogleConnectCard` (shared with Settings).
+
+**`onboardingComplete` (one-time, per-account) and `plan.setupComplete` (per-day) are independent flags; the Todoist requirement is a separate live signal (`useTodoistGate`) enforced app-wide** — a persistent gate banner + the `/setup` route guard + disabled Todoist-write controls, with planning entry hard-blocked and the Dashboard/Focus kept soft (viewable). Settings → Data also carries the three account actions (Restart walkthrough, Sign out, Reset Everything). The full entry-gating behavior is documented in [reference/onboarding-and-gating.md](./reference/onboarding-and-gating.md).
 
 ### 5.1 Welcome (Home Hub)
 

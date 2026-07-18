@@ -135,7 +135,9 @@ export function Welcome() {
                                 </Button>
                                 <button
                                     onClick={() => setQuickStartOpen(true)}
-                                    className="w-full text-xs text-text-light hover:text-accent transition-colors cursor-pointer py-1"
+                                    disabled={!statusResolved}
+                                    className="w-full text-xs text-text-light hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer py-1"
+                                    title={!statusResolved ? 'Checking Todoist connection…' : undefined}
                                 >
                                     ⚡ Quick start — skip planning, drop into Focus
                                 </button>

@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useTodoistData, useTodoistActions } from '../../hooks/useTodoist';
+import { useTodoistGate } from '../../hooks/useTodoistGate';
 import { useNotifications } from '../../hooks/useNotifications';
 import { EngagementTimer } from '../dashboard/EngagementTimer';
 import { MusicProvider, PlaylistSelector, SpotifyPlayer } from '../dashboard/MusicPanel';
@@ -785,6 +786,7 @@ function FocusActive({ task }: { task: LinkedTask }) {
     const { plan, settings, dispatch } = useDayPlan();
     const { taskMap } = useTodoistData();
     const { completeTask } = useTodoistActions();
+    const { writesBlocked } = useTodoistGate();
     const { sendNotification } = useNotifications();
     const navigate = useNavigate();
 
@@ -899,9 +901,10 @@ function FocusActive({ task }: { task: LinkedTask }) {
         dispatch({ type: 'STOP_TASK_ENGAGEMENT', todoistId: task.todoistId, now: new Date().toISOString(), exitNote: note });
     };
 
-    const handleComplete = () => {
+    const handleComplete = async () => {
+        const completed = await completeTask(task.todoistId);
+        if (!completed) return;
         dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: task.todoistId, titleSnapshot: title, exitNote: note });
-        completeTask(task.todoistId);
         navigate('/');
     };
 
@@ -1225,7 +1228,12 @@ function FocusActive({ task }: { task: LinkedTask }) {
                                             ■ Stop
                                         </Button>
                                         {phase !== 'firstAction' && (
-                                            <Button size="sm" onClick={handleComplete}>
+                                            <Button
+                                                size="sm"
+                                                onClick={handleComplete}
+                                                disabled={writesBlocked}
+                                                title={writesBlocked ? 'Reconnect Todoist to complete tasks' : undefined}
+                                            >
                                                 ✓ Complete
                                             </Button>
                                         )}

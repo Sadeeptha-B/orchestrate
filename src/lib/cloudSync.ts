@@ -109,22 +109,31 @@ function setPendingReset(slice: SliceKey, pending: boolean): void {
 const TODOIST_CACHE_KEY = 'orchestrate-todoist-cache';
 
 /**
+ * Remove all local app-state keys: the four synced slices plus the sync bookkeeping (meta,
+ * reset-pending) and the rebuildable Todoist cache. Used by the identity-switch guard and by an
+ * explicit Sign out — after this, a cold-start `pullAndMerge` re-hydrates cleanly from the server.
+ * Does NOT touch the `orchestrate-user` stamp (the caller decides whether to forget the identity)
+ * or device-cosmetic keys (theme, music, buddy).
+ */
+export function clearLocalStores(): void {
+    try {
+        for (const key of Object.values(SLICE_STORAGE_KEYS)) localStorage.removeItem(key);
+        localStorage.removeItem(META_KEY);
+        localStorage.removeItem(RESET_PENDING_KEY);
+        localStorage.removeItem(TODOIST_CACHE_KEY);
+    } catch {
+        // ignore storage failures
+    }
+}
+
+/**
  * localStorage is per browser profile, not per Access identity. If a different account signs in on
  * this machine, the previous user's local slices must not merge into (or push over) the new user's
  * cloud data — clear all local app state first, so the merge below adopts the new user's snapshot.
  */
 function guardIdentitySwitch(remoteUser: string): void {
     const previous = getStoredUser();
-    if (previous && previous !== remoteUser) {
-        try {
-            for (const key of Object.values(SLICE_STORAGE_KEYS)) localStorage.removeItem(key);
-            localStorage.removeItem(META_KEY);
-            localStorage.removeItem(RESET_PENDING_KEY);
-            localStorage.removeItem(TODOIST_CACHE_KEY);
-        } catch {
-            // ignore storage failures
-        }
-    }
+    if (previous && previous !== remoteUser) clearLocalStores();
     setStoredUser(remoteUser);
 }
 
@@ -285,6 +294,23 @@ export function flushPending(): void {
         }
         void doPush(slice, true);
     }
+}
+
+/**
+ * Awaitable flush of all dirty slices — for Sign out, where local state is about to be cleared and we
+ * must push any unpushed edits *first* so the server keeps the latest. Unlike `flushPending` this
+ * resolves once every push settles. Best-effort: individual push failures are swallowed by `doPush`.
+ */
+export async function flushPendingAndWait(): Promise<void> {
+    const pending = [...dirty];
+    for (const slice of pending) {
+        const timer = timers.get(slice);
+        if (timer) {
+            clearTimeout(timer);
+            timers.delete(slice);
+        }
+    }
+    await Promise.all(pending.map((slice) => doPush(slice, true)));
 }
 
 // ─── Push path ───────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ Deep dives on one subsystem each. Present-tense; the design narrative behind the
 
 | Doc | Subsystem |
 |---|---|
+| [reference/onboarding-and-gating.md](./reference/onboarding-and-gating.md) | What renders at `/`: the first-run onboarding flow, the `onboardingComplete`/`setupComplete` flags, route guards, and where the Todoist requirement is (and isn't) enforced. |
 | [reference/backend.md](./reference/backend.md) | The Cloudflare serverless backend: Access, KV credential vault, OAuth flows, Pages Functions. |
 | [reference/persistence.md](./reference/persistence.md) | Where data lives and how copies stay consistent: localStorage working store, D1 sync sidecar, caches. |
 | [reference/backup_and_restore.md](./reference/backup_and_restore.md) | Full Backup scope, restore flow, account-provenance fingerprints, durable markers. |
@@ -37,7 +38,7 @@ Per-iteration implementation plans (`plan_v{N}.md`) preserving *how* the app got
 
 Requirement sketches and framing not yet consolidated into the backlog. **Agents: ignore these unless explicitly directed to them.**
 
-- [roadmap/](./roadmap/) — persistence/backend migration analysis, engagement-record strategy, habits-ecosystem analysis, music routine, life-migration spec.
+- [roadmap/](./roadmap/) — persistence/backend migration analysis, multi-surface & auth horizon (ambient window, extension, LWW rules), engagement-record strategy, habits-ecosystem analysis, music routine, life-migration spec.
 
 ## problem-space/ — source material
 

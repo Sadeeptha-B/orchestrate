@@ -2,12 +2,14 @@ import { Suspense, lazy, type ComponentType } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { DayPlanProvider } from './context/DayPlanContext';
 import { useDayPlan } from './hooks/useDayPlan';
+import { useTodoistGate } from './hooks/useTodoistGate';
 import { TodoistProvider } from './context/TodoistContext';
 import { GoogleCalendarProvider } from './context/GoogleCalendarContext';
 import { ReconciliationProvider } from './context/ReconciliationContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { NotificationBridge } from './components/ui/NotificationBridge';
 import { AsciiBuddy } from './components/buddy/AsciiBuddy';
+import { TodoistGateBanner } from './components/ui/TodoistGateBanner';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { SyncGate } from './components/SyncGate';
 
@@ -30,7 +32,7 @@ function lazyWithReload<T extends ComponentType<object>>(factory: () => Promise<
             if (Date.now() - lastReload > 10_000) {
                 sessionStorage.setItem(KEY, String(Date.now()));
                 window.location.reload();
-                return new Promise<{ default: T }>(() => {}); // hold the Suspense fallback until reload
+                return new Promise<{ default: T }>(() => { }); // hold the Suspense fallback until reload
             }
             throw err;
         }
@@ -68,6 +70,11 @@ function AppRoutes() {
     const fromWelcome = (location.state as { fromWelcome?: boolean })?.fromWelcome === true;
     // First-run onboarding (per account — the flag syncs via D1) runs before the daily Welcome hub.
     const needsOnboarding = !settings.onboardingComplete;
+    // Planning is Todoist-driven, so the wizard route is hard-blocked while Todoist is unconfigured.
+    // AppRoutes re-renders on Todoist context change, so this also redirects if the token drops mid-wizard.
+    // While the first /status check is still in flight, hold /setup on a neutral loading state rather
+    // than briefly admitting the wizard before the gate verdict arrives.
+    const { planningBlocked, statusResolved } = useTodoistGate();
 
     return (
         <Suspense fallback={<RouteFallback />}>
@@ -79,9 +86,11 @@ function AppRoutes() {
                 <Route
                     path="/setup"
                     element={
-                        plan.setupComplete || fromWelcome
-                            ? <Wizard />
-                            : <Navigate to="/" replace />
+                        !statusResolved
+                            ? <RouteFallback />
+                            : (plan.setupComplete || fromWelcome) && !planningBlocked
+                                ? <Wizard />
+                                : <Navigate to="/" replace />
                     }
                 />
                 <Route path="/life" element={<LifeView />} />
@@ -113,6 +122,8 @@ export default function App() {
                                     <NotificationBridge />
                                     {/* Mounted outside <Routes> so the buddy survives navigation without its animation resetting. */}
                                     <AsciiBuddy />
+                                    {/* App-wide Todoist connection-health bar, above the routed page on every surface. */}
+                                    <TodoistGateBanner />
                                     <AppRoutes />
                                 </ReconciliationProvider>
                             </TodoistProvider>

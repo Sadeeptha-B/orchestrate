@@ -7,6 +7,7 @@ import { SessionCapacityBanner } from './SessionCapacityBanner';
 import { useDayPlan } from '../../hooks/useDayPlan';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTodoistData, useTodoistActions, type TodoistTask } from '../../hooks/useTodoist';
+import { useTodoistGate } from '../../hooks/useTodoistGate';
 import { addMinutesToTime, todayISO } from '../../lib/time';
 import { computeSessionCapacity } from '../../lib/capacity';
 import { buildLinkedTaskMap, getLinkedTasksByIds, unscheduledTasks } from '../../lib/tasks';
@@ -102,6 +103,7 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
     const { moveTask } = useTaskPlacement();
     const navigate = useNavigate();
     const { completeTask, reopenTask } = useTodoistActions();
+    const { writesBlocked } = useTodoistGate();
     const [menuOpen, setMenuOpen] = useState(false);
     // Within-session reorder is only available when rendered under a session with a drag controller.
     const canReorder = drag != null && sessionId != null;
@@ -113,13 +115,12 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
     const liveSegment = isEngaged ? openSegment(linkedTask.segments) : undefined;
     const strict = settings.focusStrict ?? true;
 
-    const handleToggle = () => {
+    const handleToggle = async () => {
+        const synced = linkedTask.completed
+            ? await reopenTask(linkedTask.todoistId)
+            : await completeTask(linkedTask.todoistId);
+        if (!synced) return;
         dispatch({ type: 'TOGGLE_TASK_COMPLETE', todoistId: linkedTask.todoistId, titleSnapshot: title });
-        if (linkedTask.completed) {
-            reopenTask(linkedTask.todoistId);
-        } else {
-            completeTask(linkedTask.todoistId);
-        }
     };
 
     const openFocus = () => navigate('/focus');
@@ -216,11 +217,13 @@ function TaskRow({ linkedTask, title, isStale, sessionId, drag, scheduledRange }
 
             <button
                 onClick={handleToggle}
-                className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${linkedTask.completed
+                disabled={writesBlocked}
+                className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${writesBlocked ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${linkedTask.completed
                     ? 'bg-success border-success text-white'
                     : 'border-border hover:border-accent'
                     }`}
                 aria-label={`Mark task as ${linkedTask.completed ? 'incomplete' : 'complete'}`}
+                title={writesBlocked ? 'Reconnect Todoist to complete tasks' : undefined}
             >
                 {linkedTask.completed && (
                     <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
